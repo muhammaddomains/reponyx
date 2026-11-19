@@ -5,13 +5,18 @@
 RepoNyx: Tauri 2 + React 19 desktop app that syncs GitHub repositories
 (GitHub App primary, fine-grained PAT alternative) to a local machine as
 Git mirror archives / working clones, with a background agent. Windows-first,
-portable to macOS/Linux. Current phase: **Phase 1 — Foundation**.
+portable to macOS/Linux. Current phase: **Phase 1 — Foundation (complete,
+merged to `main` 2026-11-18); Phase 2 not started, awaiting go-ahead**.
 See `ai/memory/PROJECT_STATUS.md` for the honest current state.
 
 ## Branch & safety
 
-- Work on `feature/reponyx-foundation` (current branch). Never merge to
-  `main` unless explicitly instructed. Never force-push / rewrite history.
+- Work on `main` (current branch, per the user's 2026-11-18 instruction
+  "move to main branch. and use it"). Never force-push / rewrite history.
+  The old `feature/reponyx-foundation` branch was deleted on GitHub
+  2026-11-18 after merging; keep the local copy only as the record of
+  the original Phase 1 + rename commits (`49a44bf`, `977be27`) — do not
+  delete it locally and do not recreate it remotely.
 - Never commit secrets, private keys, tokens, or build artifacts.
   `.gitignore` covers `.env`, `*.pem`, `*.key`, `*.sqlite`.
 - No GitHub App creation, no credentials, no deployment, no publishing

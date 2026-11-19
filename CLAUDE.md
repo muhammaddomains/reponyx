@@ -5,7 +5,8 @@
 RepoNyx — "Your Git. Your Machine. Always in Sync." Tauri 2 desktop app
 (React 19, TypeScript strict, Vite 8, Tailwind 4, shadcn/ui-style
 primitives, Lucide icons) + Rust backend (Tokio, SQLx/SQLite, tracing,
-Git CLI). Windows-first, portable to macOS/Linux. Phase 1 — Foundation.
+Git CLI). Windows-first, portable to macOS/Linux. Phase 1 — Foundation
+(complete, merged to `main` 2026-11-18 as `9cc87b9`); Phase 2 not started.
 
 ## Development commands
 

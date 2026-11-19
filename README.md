@@ -7,11 +7,13 @@ discovers their accessible repositories, and synchronizes those repositories
 to a central local machine — as Git mirror archives and/or working clones —
 with scheduled, background synchronization independent of the desktop UI.
 
-> **Status: Phase 1 — Foundation (in progress).** The desktop foundation
-> builds and runs; repository discovery, authentication, scheduling, and the
-> background agent are planned in later phases and are **not** yet
-> implemented. See `ai/memory/PROJECT_STATUS.md` for the honest, current
-> state. Nothing in this repo pretends to sync repositories yet.
+> **Status: Phase 1 — Foundation (complete, merged to `main` 2026-11-18
+> as `9cc87b9`).** The desktop foundation builds and runs; repository
+> discovery, authentication, scheduling, and the background agent are
+> planned in later phases and are **not** yet implemented — Phase 2
+> (Core Database and Domain) has not started. See
+> `ai/memory/PROJECT_STATUS.md` for the honest, current state. Nothing
+> in this repo pretends to sync repositories yet.
 
 ## Features (target)
 
@@ -64,7 +66,7 @@ Phase 7 / Phase 10 verification items — not claimed done here.
 ```bash
 # Rust (rustup) and pnpm first, then:
 git clone <repo> && cd reponyx
-git checkout feature/reponyx-foundation
+git checkout main
 pnpm install
 cargo test --workspace
 pnpm --filter @reponyx/desktop build

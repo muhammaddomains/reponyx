@@ -7,6 +7,22 @@ All notable changes to RepoNyx are documented here. Format follows
 
 ### Changed
 
+- **Phase 1 re-check (2026-11-18): user's 8 commits incorporated
+  into `main` (merge `d3adc8c`) and all dependencies updated to
+  latest stable.** Fixes to the user's edits: root `package.json`
+  was invalid JSON (missing comma — fixed); `packageManager` restored
+  from pnpm 12.19.0 to 12.21.0; `tauri "=2"` in `Cargo.toml` would
+  have pinned exactly Tauri 2.0.0 (fixed to `"2"` → 2.12.7); `sqlx`
+  0.8 → 0.9.1; TypeScript pinned at 6.0.3, not latest 7.0.2, because
+  typescript-eslint 8.73.0 refuses TS 7.0 (TS 7.1 stable not released
+  yet — only a beta exists); the updater the user configured is now
+  actually wired in Rust (`tauri-plugin-updater` 2.14.1 +
+  `Builder::new().build()`), and the missing app icons it references
+  were generated. Re-verified: fmt/clippy pass (0 warnings), `cargo
+  test` 36 passed / 0 failed, typecheck/lint/desktop build pass.
+  Tauri binary build still blocked on this VM by missing `gdk-3.0` /
+  WebViewGTK system libraries — not claimed passed.
+
 - **Renamed from working name Gitora to RepoNyx on 2026-11-18.**
   Gitora was unusable because gitora.com is an existing Oracle Git
   product. Renamed: repo directory (`~/workspace/reponyx`), branch

@@ -1,4 +1,3 @@
-
 const WINDOWS_APP_MANIFEST: &str = r#"
 <?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <assembly xmlns="urn:schemas-microsoft-com:asm.v1"
@@ -29,12 +28,9 @@ const WINDOWS_APP_MANIFEST: &str = r#"
 "#;
 
 fn main() {
-    let attrs = tauri_build::Attributes::new()
-        .windows_attributes(
-            tauri_build::WindowsAttributes::new()
-                .app_manifest(WINDOWS_APP_MANIFEST),
-        );
+    let attrs = tauri_build::Attributes::new().windows_attributes(
+        tauri_build::WindowsAttributes::new().app_manifest(WINDOWS_APP_MANIFEST),
+    );
 
-    tauri_build::try_build(attrs)
-        .expect("failed to run tauri-build");
+    tauri_build::try_build(attrs).expect("failed to run tauri-build");
 }

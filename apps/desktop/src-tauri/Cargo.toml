@@ -17,6 +17,7 @@ reponyx-git-engine.workspace = true
 reponyx-logging.workspace = true
 serde.workspace = true
 tauri.workspace = true
+tauri-plugin-updater.workspace = true
 tokio.workspace = true
 tracing.workspace = true
 

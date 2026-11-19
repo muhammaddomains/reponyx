@@ -58,6 +58,7 @@ function commandMessage(error: unknown): string {
 export default function Accounts() {
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [broker, setBroker] = useState<BrokerStatus | null>(null);
+  const [brokerError, setBrokerError] = useState<string | null>(null);
   const [installations, setInstallations] = useState<BrokerInstallation[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
@@ -71,18 +72,31 @@ export default function Accounts() {
   const [setupToken, setSetupToken] = useState("");
   const [pairing, setPairing] = useState<PairingInfo | null>(null);
 
+  // Accounts and broker status load independently: in the web preview
+  // (plain browser, no Tauri backend) both fail, but a broker failure
+  // must not blank the accounts list, and must resolve the "Checking
+  // the Auth Broker…" line to a real error instead of spinning forever.
   const refresh = useCallback(async () => {
-    const [loadedAccounts, brokerStatus] = await Promise.all([
+    const [accountsResult, brokerResult] = await Promise.allSettled([
       listAccounts(),
       getBrokerStatus(),
     ]);
-    setAccounts(loadedAccounts);
-    setBroker(brokerStatus);
-    if (brokerStatus.configured) {
-      setInstallations(await listBrokerInstallations());
+    if (brokerResult.status === "fulfilled") {
+      setBroker(brokerResult.value);
+      setBrokerError(null);
+      setInstallations(
+        brokerResult.value.configured
+          ? await listBrokerInstallations()
+          : [],
+      );
     } else {
-      setInstallations([]);
+      setBroker(null);
+      setBrokerError(commandMessage(brokerResult.reason));
     }
+    if (accountsResult.status === "rejected") {
+      throw accountsResult.reason;
+    }
+    setAccounts(accountsResult.value);
   }, []);
 
   useEffect(() => {
@@ -366,7 +380,7 @@ export default function Accounts() {
         <Card className="space-y-3 p-4">
           <p className="text-sm text-zinc-600 dark:text-zinc-400">
             {broker == null
-              ? "Checking the Auth Broker…"
+              ? (brokerError ?? "Checking the Auth Broker…")
               : broker.configured
                 ? `Broker at ${broker.baseUrl} is ${broker.reachable ? "reachable" : "not reachable"}; setup token is configured.`
                 : `Broker at ${broker.baseUrl} — enter the setup token supplied when the broker was started.`}

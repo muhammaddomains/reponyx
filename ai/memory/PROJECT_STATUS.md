@@ -828,6 +828,20 @@ Phase 1 handoff). Top level: `Cargo.toml`, `package.json`,
   were verified individually (see table above).
 - Windows installer / Task Scheduler / Credential Manager cannot be
   verified on this Linux VM — explicit Phase 7/10 items.
+- **Web preview (plain browser) showed a cryptic error (fixed
+  2026-11-19, unreleased):** opening the Vite dev server at
+  localhost:1420 in a plain browser made the Accounts and Overview
+  pages show `Cannot read properties of undefined (reading
+  'invoke')`, and the Git / Auth Broker checks spun on "checking…"
+  forever. Cause: `invoke` reads `window.__TAURI_INTERNALS__`,
+  which only exists inside the Tauri webview. Fix: every api-client
+  call goes through a guard that throws a clear "Tauri backend is
+  unavailable in the web preview" message instead; Overview and
+  Accounts load their data sources independently and resolve a
+  failed check to an "unavailable" state. The Repositories
+  placeholder (which claimed Phase 4 — the backend is done, only the
+  page is Phase 8) and Overview's stale "Next steps" text were
+  corrected at the same time.
 
 ## Blockers
 

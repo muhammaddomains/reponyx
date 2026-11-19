@@ -5,6 +5,25 @@ All notable changes to RepoNyx are documented here. Format follows
 
 ## [Unreleased]
 
+### Fixed — web preview (plain browser, no Tauri backend)
+
+- **Cryptic `invoke` error:** opening the Vite dev server in a plain
+  browser showed `Cannot read properties of undefined (reading
+  'invoke')` on the Accounts and Overview pages. All api-client calls
+  now go through a guard that detects the missing Tauri backend and
+  throws a clear message instead ("Tauri backend is unavailable —
+  this page is running in a plain browser (web preview) instead of
+  the RepoNyx desktop app").
+- **Spinning "checking…" states:** the Overview Git check and the
+  Accounts Auth Broker check never resolved in the web preview. Both
+  pages now load their data sources independently, and a failed check
+  resolves to an "unavailable" state with the error instead of
+  spinning forever.
+- **Stale page text:** the Repositories placeholder claimed Phase 4
+  (the discovery backend is done — only the page is Phase 8 UI work),
+  and Overview's "Next steps" claimed account connection "arrives in
+  Phase 5". Both now state the actual status.
+
 ### Added — Phase 7 (partial: scheduler crate only)
 
 - **Scheduler crate (`crates/scheduler`, `chrono-tz` 0.10.4):**

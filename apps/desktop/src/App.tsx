@@ -13,7 +13,7 @@ export default function App() {
           <Route path="accounts" element={<Accounts />} />
           <Route
             path="repositories"
-            element={<Placeholder title="Repositories" phase={4} />}
+            element={<Placeholder title="Repositories" phase={8} />}
           />
           <Route
             path="synchronization"

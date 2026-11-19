@@ -1,5 +1,12 @@
 /** Typed Tauri `invoke` wrapper used by the desktop frontend.
- *  Every command result is validated with zod before it is used. */
+ *  Every command result is validated with zod before it is used.
+ *
+ *  Web-preview guard: the app also runs as a plain Vite dev server in
+ *  a browser (localhost:1420), where there is no Tauri backend.
+ *  `invoke` would then throw the cryptic `Cannot read properties of
+ *  undefined (reading 'invoke')` because `window.__TAURI_INTERNALS__`
+ *  does not exist. Every call goes through `invokeCommand`, which
+ *  detects that case first and throws a clear, actionable error. */
 
 import { invoke } from "@tauri-apps/api/core";
 import { z } from "zod";
@@ -36,22 +43,47 @@ import type {
 } from "@reponyx/shared";
 
 export async function getAppInfo(): Promise<AppInfo> {
-  return appInfoSchema.parse(await invoke("get_app_info"));
+  return appInfoSchema.parse(await invokeCommand("get_app_info"));
+}
+
+/** True only inside the Tauri webview, where the backend exists. */
+export function isTauriAvailable(): boolean {
+  if (typeof window === "undefined") return false;
+  const internals = (
+    window as unknown as { __TAURI_INTERNALS__?: unknown }
+  ).__TAURI_INTERNALS__;
+  return internals !== undefined && internals !== null;
+}
+
+/** Call a Tauri command, or fail with a clear message when the page
+ *  is running in a plain browser (web preview) instead of the
+ *  desktop app. Without this guard, `invoke` throws the cryptic
+ *  `Cannot read properties of undefined (reading 'invoke')`. */
+async function invokeCommand(
+  cmd: string,
+  args?: Record<string, unknown>,
+): Promise<unknown> {
+  if (!isTauriAvailable()) {
+    throw new Error(
+      "Tauri backend is unavailable — this page is running in a plain browser (web preview) instead of the RepoNyx desktop app",
+    );
+  }
+  return invoke(cmd, args);
 }
 
 export async function getGitStatus(): Promise<GitStatus> {
-  return gitStatusSchema.parse(await invoke("get_git_status"));
+  return gitStatusSchema.parse(await invokeCommand("get_git_status"));
 }
 
 export async function getDashboardCounts(): Promise<DashboardCounts> {
-  return dashboardCountsSchema.parse(await invoke("get_dashboard_counts"));
+  return dashboardCountsSchema.parse(await invokeCommand("get_dashboard_counts"));
 }
 
 /** Phase 5 auth commands (Tauri `auth.rs`). Invoke argument names
  *  are snake_case, matching the Rust parameter names. */
 
 export async function listAccounts(): Promise<Account[]> {
-  return z.array(accountSchema).parse(await invoke("list_accounts_command"));
+  return z.array(accountSchema).parse(await invokeCommand("list_accounts_command"));
 }
 
 export async function addPatAccount(input: {
@@ -60,7 +92,7 @@ export async function addPatAccount(input: {
   account_type: "personal" | "organization";
   expires_at?: string | null;
 }): Promise<Account> {
-  return accountSchema.parse(await invoke("add_pat_account_command", input));
+  return accountSchema.parse(await invokeCommand("add_pat_account_command", input));
 }
 
 export async function replacePatAccount(input: {
@@ -69,19 +101,19 @@ export async function replacePatAccount(input: {
   expires_at?: string | null;
 }): Promise<Account> {
   return accountSchema.parse(
-    await invoke("replace_pat_account_command", input),
+    await invokeCommand("replace_pat_account_command", input),
   );
 }
 
 export async function removePatAccount(accountId: string): Promise<Account> {
   return accountSchema.parse(
-    await invoke("remove_pat_account_command", { account_id: accountId }),
+    await invokeCommand("remove_pat_account_command", { account_id: accountId }),
   );
 }
 
 export async function reconnectPatAccount(accountId: string): Promise<Account> {
   return accountSchema.parse(
-    await invoke("reconnect_pat_account_command", { account_id: accountId }),
+    await invokeCommand("reconnect_pat_account_command", { account_id: accountId }),
   );
 }
 
@@ -89,7 +121,7 @@ export async function validatePatAccount(
   accountId: string,
 ): Promise<ProviderAccountInfo> {
   return providerAccountInfoSchema.parse(
-    await invoke("validate_pat_account_command", { account_id: accountId }),
+    await invokeCommand("validate_pat_account_command", { account_id: accountId }),
   );
 }
 
@@ -97,7 +129,7 @@ export async function validateGithubAppAccount(
   accountId: string,
 ): Promise<ProviderAccountInfo> {
   return providerAccountInfoSchema.parse(
-    await invoke("validate_github_app_account_command", {
+    await invokeCommand("validate_github_app_account_command", {
       account_id: accountId,
     }),
   );
@@ -107,29 +139,29 @@ export async function getPatExpiryStatus(
   accountId: string,
 ): Promise<PatExpiry> {
   return patExpirySchema.parse(
-    await invoke("get_pat_expiry_status_command", { account_id: accountId }),
+    await invokeCommand("get_pat_expiry_status_command", { account_id: accountId }),
   );
 }
 
 export async function setBrokerSetupToken(token: string): Promise<void> {
-  await invoke("set_broker_setup_token_command", { token });
+  await invokeCommand("set_broker_setup_token_command", { token });
 }
 
 export async function getBrokerStatus(): Promise<BrokerStatus> {
-  return brokerStatusSchema.parse(await invoke("get_broker_status_command"));
+  return brokerStatusSchema.parse(await invokeCommand("get_broker_status_command"));
 }
 
 export async function listBrokerInstallations(): Promise<BrokerInstallation[]> {
   return z
     .array(brokerInstallationSchema)
-    .parse(await invoke("list_broker_installations_command"));
+    .parse(await invokeCommand("list_broker_installations_command"));
 }
 
 export async function startPairing(
   installationId: string,
 ): Promise<PairingInfo> {
   return pairingInfoSchema.parse(
-    await invoke("start_pairing_command", { installation_id: installationId }),
+    await invokeCommand("start_pairing_command", { installation_id: installationId }),
   );
 }
 
@@ -137,7 +169,7 @@ export async function completePairing(
   pairingCode: string,
 ): Promise<Account> {
   return accountSchema.parse(
-    await invoke("complete_pairing_command", { pairing_code: pairingCode }),
+    await invokeCommand("complete_pairing_command", { pairing_code: pairingCode }),
   );
 }
 
@@ -147,7 +179,7 @@ export async function revokeDevicePairing(
   return z
     .boolean()
     .parse(
-      await invoke("revoke_device_pairing_command", {
+      await invokeCommand("revoke_device_pairing_command", {
         device_identifier: deviceIdentifier,
       }),
     );
@@ -161,14 +193,14 @@ export async function revokeDevicePairing(
 export async function listSchedules(): Promise<ScheduleWithNextRun[]> {
   return z
     .array(scheduleWithNextRunSchema)
-    .parse(await invoke("list_schedules_command"));
+    .parse(await invokeCommand("list_schedules_command"));
 }
 
 export async function createSchedule(
   input: NewScheduleInput,
 ): Promise<ScheduleWithNextRun> {
   return scheduleWithNextRunSchema.parse(
-    await invoke("create_schedule_command", {
+    await invokeCommand("create_schedule_command", {
       scope: input.scope,
       account_id: input.accountId ?? null,
       repository_id: input.repositoryId ?? null,
@@ -188,7 +220,7 @@ export async function updateSchedule(input: {
   enabled?: boolean | null;
 }): Promise<ScheduleWithNextRun> {
   return scheduleWithNextRunSchema.parse(
-    await invoke("update_schedule_command", {
+    await invokeCommand("update_schedule_command", {
       id: input.id,
       interval_type: input.interval_type ?? null,
       interval_value: input.interval_value ?? null,
@@ -199,7 +231,7 @@ export async function updateSchedule(input: {
 }
 
 export async function deleteSchedule(id: string): Promise<boolean> {
-  return z.boolean().parse(await invoke("delete_schedule_command", { id }));
+  return z.boolean().parse(await invokeCommand("delete_schedule_command", { id }));
 }
 
 export async function previewNextRuns(input: {
@@ -208,7 +240,7 @@ export async function previewNextRuns(input: {
   display_timezone?: string | null;
 }): Promise<NextRunPreview[]> {
   return z.array(nextRunPreviewSchema).parse(
-    await invoke("preview_next_runs_command", {
+    await invokeCommand("preview_next_runs_command", {
       schedule_id: input.schedule_id,
       count: input.count,
       display_timezone: input.display_timezone ?? null,
@@ -218,7 +250,7 @@ export async function previewNextRuns(input: {
 
 export async function materializeDue(): Promise<MaterializeReport> {
   return materializeReportSchema.parse(
-    await invoke("materialize_due_command"),
+    await invokeCommand("materialize_due_command"),
   );
 }
 
@@ -226,7 +258,7 @@ export async function effectiveSchedule(
   repositoryId: string,
 ): Promise<EffectiveSchedule | null> {
   return effectiveScheduleSchema.nullable().parse(
-    await invoke("effective_schedule_command", {
+    await invokeCommand("effective_schedule_command", {
       repository_id: repositoryId,
     }),
   );

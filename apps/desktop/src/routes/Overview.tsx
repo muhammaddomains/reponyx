@@ -19,17 +19,31 @@ export default function Overview() {
   const [git, setGit] = useState<GitStatus | null>(null);
   const [error, setError] = useState<string | null>(null);
 
+  // Counts and Git status load independently: in the web preview
+  // (plain browser, no Tauri backend) both fail, but a Git failure
+  // must not blank the counts, and a failed Git check must resolve
+  // to "unavailable" instead of spinning on "checking…" forever.
   useEffect(() => {
     let cancelled = false;
-    Promise.all([getDashboardCounts(), getGitStatus()])
-      .then(([c, g]) => {
-        if (!cancelled) {
-          setCounts(c);
-          setGit(g);
-        }
+    getDashboardCounts()
+      .then((c) => {
+        if (!cancelled) setCounts(c);
       })
       .catch((e: unknown) => {
         if (!cancelled) setError(e instanceof Error ? e.message : String(e));
+      });
+    getGitStatus()
+      .then((g) => {
+        if (!cancelled) setGit(g);
+      })
+      .catch((e: unknown) => {
+        if (!cancelled) {
+          setGit({
+            available: false,
+            supported: false,
+            error: e instanceof Error ? e.message : String(e),
+          });
+        }
       });
     return () => {
       cancelled = true;
@@ -47,8 +61,7 @@ export default function Overview() {
 
       {error && (
         <Card className="border-red-200 bg-red-50 p-4 text-sm text-red-800 dark:border-red-900 dark:bg-red-950 dark:text-red-200">
-          Could not load dashboard data: {error}. If you are running the web
-          preview outside Tauri, the backend commands are unavailable.
+          Could not load dashboard data: {error}
         </Card>
       )}
 
@@ -84,9 +97,10 @@ export default function Overview() {
       <Card className="p-4">
         <h2 className="font-medium">Next steps</h2>
         <p className="mt-2 text-sm text-zinc-600 dark:text-zinc-400">
-          Connect a GitHub account to start discovering repositories. Account
-          connection (GitHub App / PAT) arrives in Phase 5; repository
-          discovery in Phase 4.
+          Connect a GitHub account on the Accounts page to start
+          discovering repositories. Account connection (GitHub App / PAT)
+          and repository discovery are implemented; the Repositories page
+          itself arrives in Phase 8.
         </p>
       </Card>
     </div>

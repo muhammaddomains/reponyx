@@ -174,6 +174,13 @@ export interface GitStatus {
   error?: string | null;
 }
 
+export interface LfsStatus {
+  installed: boolean;
+  path?: string | null;
+  version?: string | null;
+  error?: string | null;
+}
+
 export interface AppInfo {
   name: string;
   version: string;

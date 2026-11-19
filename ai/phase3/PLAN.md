@@ -1,6 +1,6 @@
 # Phase 3 — Git Engine
 
-- Status: Not started
+- Status: Complete (2026-11-18, on `main`)
 - Depends on: Phase 1 (detection, builders, process, paths already exist)
 
 ## Objectives
@@ -20,12 +20,12 @@ branch discovery, cancellation, error handling, repository locks.
 
 ## Implementation tasks
 
-- [ ] Repository lock manager
-- [ ] Mirror clone/fetch operations with progress reporting
-- [ ] Working-clone fetch + status/dirty detection
-- [ ] Credential helper integration
-- [ ] LFS availability detection (sync itself is Phase 9)
-- [ ] Recovery: interrupted/locked/corrupt repo handling
+- [x] Repository lock manager
+- [x] Mirror clone/fetch operations with progress reporting
+- [x] Working-clone fetch + status/dirty detection
+- [x] Credential helper integration
+- [x] LFS availability detection (sync itself is Phase 9)
+- [x] Recovery: interrupted/locked/corrupt repo handling
 
 ## Dependencies
 
@@ -45,8 +45,30 @@ Phase 1 git-engine + database (job persistence in Phase 6).
 
 ## Known issues
 
-None yet.
+- This VM's `/tmp` (tmpfs) intermittently returns ETXTBSY
+  ("Text file busy") when a freshly written script is executed
+  immediately under parallel load — reproduced independently at
+  ~5% with a write/chmod/exec stress loop; exec of an unchanged
+  file never flakes. The LFS-shim test retries detection up to 5
+  times for that reason (test only).
+- Tests run as root (uid 0) on this VM, so the read-only-parent
+  clone test skips itself there (permission bits do not stop
+  root). The RLIMIT_FSIZE disk-full test is the real write-failure
+  coverage.
+- git-lfs is not installed on this VM; the LFS "present" path is
+  covered by a fake shim in tests.
 
 ## Completion status
 
-Not started.
+Complete 2026-11-18. Verification (actual): `cargo fmt --check`
+pass; clippy (`--workspace --exclude reponyx-desktop
+--all-targets`) pass, 0 warnings; `cargo test --workspace
+--exclude reponyx-desktop` **156 passed, 0 failed** (core 11,
+database 54, git-engine 87, logging 4, provider-abstractions 0);
+`pnpm -r typecheck` pass; `pnpm --filter @reponyx/desktop build`
+pass (2305 modules, 1.82 s). Git-engine suite re-run 3×
+consecutively: 87 passed, 0 failed each run. Tauri binary build
+still blocked on this VM by missing `gdk-3.0` / WebViewGTK system
+libraries — not claimed passed. Deliberately not done: LFS sync
+(Phase 9), repair of corrupt repos (diagnosis only), desktop/UI
+changes.

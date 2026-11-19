@@ -13,6 +13,10 @@ pub struct GitCommand {
     pub args: Vec<String>,
     /// Working directory, if the command needs one.
     pub current_dir: Option<PathBuf>,
+    /// Extra environment variables for the child process. Secrets must
+    /// never be passed here except via the credential-helper mechanism
+    /// (`credentials`), which sets them explicitly and documents why.
+    pub env: Vec<(String, String)>,
 }
 
 impl GitCommand {
@@ -21,6 +25,7 @@ impl GitCommand {
             program: program.into(),
             args,
             current_dir: None,
+            env: Vec::new(),
         }
     }
 
@@ -29,7 +34,14 @@ impl GitCommand {
         self
     }
 
+    /// Add one environment variable for the child process.
+    pub fn with_env(mut self, key: impl Into<String>, value: impl Into<String>) -> Self {
+        self.env.push((key.into(), value.into()));
+        self
+    }
+
     /// argv as it would appear to the process (program + args).
+    /// Environment variables are never part of argv.
     pub fn argv(&self) -> Vec<String> {
         std::iter::once(self.program.to_string_lossy().into_owned())
             .chain(self.args.iter().cloned())
@@ -93,6 +105,123 @@ pub fn build_fetch_all(git: &Path, git_dir: &Path) -> GitCommand {
 /// `git ls-remote <url>` — probe reachability / refs without cloning.
 pub fn build_ls_remote(git: &Path, url: &str) -> GitCommand {
     GitCommand::new(git, vec!["ls-remote".into(), url.to_string()])
+}
+
+/// `git clone --mirror --progress <url> <dest>` — mirror clone with
+/// progress output forced on (stderr is not a TTY when piped).
+pub fn build_clone_mirror_progress(git: &Path, url: &str, destination: &Path) -> GitCommand {
+    GitCommand::new(
+        git,
+        vec![
+            "clone".into(),
+            "--mirror".into(),
+            "--progress".into(),
+            url.to_string(),
+            destination.to_string_lossy().into_owned(),
+        ],
+    )
+}
+
+/// `git --git-dir=<path> fetch --prune [--tags] --progress`.
+pub fn build_fetch_progress(git: &Path, git_dir: &Path, fetch_tags: bool) -> GitCommand {
+    let mut args = vec![
+        format!("--git-dir={}", git_dir.to_string_lossy()),
+        "fetch".into(),
+        "--prune".into(),
+    ];
+    if fetch_tags {
+        args.push("--tags".into());
+    }
+    args.push("--progress".into());
+    GitCommand::new(git, args)
+}
+
+/// `git --git-dir=<path> fetch --all --prune --tags --progress`.
+pub fn build_fetch_all_progress(git: &Path, git_dir: &Path) -> GitCommand {
+    GitCommand::new(
+        git,
+        vec![
+            format!("--git-dir={}", git_dir.to_string_lossy()),
+            "fetch".into(),
+            "--all".into(),
+            "--prune".into(),
+            "--tags".into(),
+            "--progress".into(),
+        ],
+    )
+}
+
+/// `git --git-dir=<path> for-each-ref --format=<format> <patterns...>`
+/// — branch / tag / ref discovery.
+pub fn build_for_each_ref(
+    git: &Path,
+    git_dir: &Path,
+    format: &str,
+    patterns: &[&str],
+) -> GitCommand {
+    let mut args = vec![
+        format!("--git-dir={}", git_dir.to_string_lossy()),
+        "for-each-ref".into(),
+        format!("--format={format}"),
+    ];
+    args.extend(patterns.iter().map(|p| (*p).to_string()));
+    GitCommand::new(git, args)
+}
+
+/// `git -C <dir> rev-list --left-right --count <range>` — divergence
+/// (ahead/behind) between two refs, e.g. `HEAD...@{upstream}`.
+pub fn build_rev_list_count(git: &Path, dir: &Path, range: &str) -> GitCommand {
+    GitCommand::new(
+        git,
+        vec![
+            "-C".into(),
+            dir.to_string_lossy().into_owned(),
+            "rev-list".into(),
+            "--left-right".into(),
+            "--count".into(),
+            range.to_string(),
+        ],
+    )
+}
+
+/// `git --git-dir=<path> fsck --no-dangling` — integrity check.
+pub fn build_fsck(git: &Path, git_dir: &Path) -> GitCommand {
+    GitCommand::new(
+        git,
+        vec![
+            format!("--git-dir={}", git_dir.to_string_lossy()),
+            "fsck".into(),
+            "--no-dangling".into(),
+        ],
+    )
+}
+
+/// `git --git-dir=<path> rev-parse --is-bare-repository`.
+pub fn build_is_bare(git: &Path, git_dir: &Path) -> GitCommand {
+    GitCommand::new(
+        git,
+        vec![
+            format!("--git-dir={}", git_dir.to_string_lossy()),
+            "rev-parse".into(),
+            "--is-bare-repository".into(),
+        ],
+    )
+}
+
+/// `git -C <dir> rev-parse --symbolic-full-name <ref>@{upstream}`
+/// — the upstream of a branch (or HEAD), as a full ref such as
+/// `refs/remotes/origin/main`.
+pub fn build_rev_parse_upstream(git: &Path, dir: &Path, reference: &str) -> GitCommand {
+    GitCommand::new(
+        git,
+        vec![
+            "-C".into(),
+            dir.to_string_lossy().into_owned(),
+            "rev-parse".into(),
+            "--symbolic-full-name".into(),
+            format!("{reference}@{{upstream}}"),
+        ],
+    )
 }
 
 /// `git --git-dir=<path> rev-parse --abbrev-ref HEAD` etc.
@@ -202,5 +331,119 @@ mod tests {
             Path::new("/data/x.git"),
         );
         assert_eq!(cmd.args[2], "https://github.com/owner/repo name.git");
+    }
+
+    #[test]
+    fn progress_builders_force_progress_output() {
+        assert_eq!(
+            build_clone_mirror_progress(
+                &git_path(),
+                "https://github.com/o/r.git",
+                Path::new("/data/r.git")
+            )
+            .argv(),
+            [
+                "git",
+                "clone",
+                "--mirror",
+                "--progress",
+                "https://github.com/o/r.git",
+                "/data/r.git"
+            ]
+        );
+        assert_eq!(
+            build_fetch_progress(&git_path(), Path::new("/data/r.git"), true).argv(),
+            [
+                "git",
+                "--git-dir=/data/r.git",
+                "fetch",
+                "--prune",
+                "--tags",
+                "--progress"
+            ]
+        );
+        assert_eq!(
+            build_fetch_all_progress(&git_path(), Path::new("/data/r.git")).argv(),
+            [
+                "git",
+                "--git-dir=/data/r.git",
+                "fetch",
+                "--all",
+                "--prune",
+                "--tags",
+                "--progress"
+            ]
+        );
+    }
+
+    #[test]
+    fn discovery_and_health_builders() {
+        assert_eq!(
+            build_for_each_ref(
+                &git_path(),
+                Path::new("/data/r.git"),
+                "%(refname)%00%(objectname)",
+                &["refs/heads/", "refs/remotes/"]
+            )
+            .argv(),
+            [
+                "git",
+                "--git-dir=/data/r.git",
+                "for-each-ref",
+                "--format=%(refname)%00%(objectname)",
+                "refs/heads/",
+                "refs/remotes/"
+            ]
+        );
+        assert_eq!(
+            build_rev_list_count(&git_path(), Path::new("/work/r"), "HEAD...@{upstream}").argv(),
+            [
+                "git",
+                "-C",
+                "/work/r",
+                "rev-list",
+                "--left-right",
+                "--count",
+                "HEAD...@{upstream}"
+            ]
+        );
+        assert_eq!(
+            build_fsck(&git_path(), Path::new("/data/r.git")).argv(),
+            ["git", "--git-dir=/data/r.git", "fsck", "--no-dangling"]
+        );
+        assert_eq!(
+            build_is_bare(&git_path(), Path::new("/data/r.git")).argv(),
+            [
+                "git",
+                "--git-dir=/data/r.git",
+                "rev-parse",
+                "--is-bare-repository"
+            ]
+        );
+        assert_eq!(
+            build_rev_parse_upstream(&git_path(), Path::new("/work/r"), "HEAD").argv(),
+            [
+                "git",
+                "-C",
+                "/work/r",
+                "rev-parse",
+                "--symbolic-full-name",
+                "HEAD@{upstream}"
+            ]
+        );
+    }
+
+    #[test]
+    fn env_is_not_part_of_argv() {
+        let cmd = GitCommand::new("git", vec!["--version".into()])
+            .with_env("REPONYX_GIT_CREDENTIAL_PASSWORD", "s3cr3t");
+        assert_eq!(cmd.argv(), ["git", "--version"]);
+        assert_eq!(
+            cmd.env,
+            [(
+                "REPONYX_GIT_CREDENTIAL_PASSWORD".to_string(),
+                "s3cr3t".to_string()
+            )]
+        );
     }
 }

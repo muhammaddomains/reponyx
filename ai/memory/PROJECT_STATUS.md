@@ -1,16 +1,113 @@
 # RepoNyx — Project Status
 
-Last updated: 2026-11-18 (Phase 1 re-check: user's 8 commits incorporated,
-dependencies updated to latest stable, re-verified — see below)
+Last updated: 2026-11-18 (Phase 3: Git engine complete — see below)
 
 ## Current phase
 
 **Phase 1 — Foundation (complete, merged to `main` 2026-11-18 as
 `9cc87b9`, PR #1). Phase 2 — Core Database and Domain — complete
-2026-11-18 (see below).** Work is on `main` going forward.
+2026-11-18. Phase 3 — Git Engine — complete 2026-11-18 (see
+below).** Work is on `main` going forward.
 
 ## Completed tasks
 
+- **Phase 3 — Git Engine (actual, 2026-11-18, on `main`):**
+  repository lock manager (`crates/git-engine/src/locks.rs`):
+  in-process async mutex per canonical path + cross-process
+  advisory file lock via `fs2` (lock file lives next to the repo as
+  `.reponyx-<name>.lock`, never deleted — the OS releases an
+  advisory lock when its holder dies, so a leftover file is never
+  stale; deleting it would reintroduce the unlink race);
+  `try_acquire` (fail fast with `RepositoryLocked`), blocking
+  acquire with timeout, RAII release on drop. Mirror clone/fetch
+  (`mirror.rs`): `mirror_clone` (`clone --mirror --progress`,
+  verifies bare + refs, partial dest left for diagnosis, never
+  deleted) and `mirror_fetch` (`fetch --prune --tags --progress`,
+  returns added/pruned ref diff). Working clones (`working.rs`):
+  `working_fetch` (`fetch --all --prune --tags` only — never
+  checkout/reset/clean), `working_status` (`status --porcelain=v1`,
+  Conflicted > Staged > Modified > UntrackedOnly > Clean), and
+  `divergence` (`rev-list --left-right --count` vs upstream; no
+  upstream is `None`, not an error). Branch/tag discovery
+  (`refs.rs`): `list_branches` / `list_tags` / `head_sha` via
+  `git for-each-ref` (NUL-separated; annotated tags carry the
+  peeled commit SHA). Credential helper (`credentials.rs`):
+  temp-dir helper script containing no secret; the credential
+  travels only via `REPONYX_GIT_CREDENTIAL_*` env vars to the git
+  child, `GIT_TERMINAL_PROMPT=0` so git never prompts, temp dir
+  (0700) deleted on drop even on failure/cancellation; URLs with
+  embedded credentials are rejected. Progress (`progress.rs` +
+  streaming runner in `process.rs`): git `--progress` stderr
+  parsed into structured `ProgressEvent`s (Counting/Compressing/
+  Receiving/Resolving/CheckingOut/UpdatingFiles/Other) — only
+  numbers git emits are reported, percentages never invented.
+  LFS detection (`detect.rs` + `LfsStatus` in `crates/core` and
+  `packages/shared`): `detect_lfs()` / `lfs_status()`; version
+  parser handles both `git-lfs version 3.5.1` and `git-lfs/3.5.1`
+  forms (git-lfs is NOT installed on this VM — the present path is
+  covered by a fake shim in tests). Recovery (`health.rs`):
+  `verify_repository` returns a structured `RepositoryDiagnosis`
+  (never `Err`, never modifies anything): NotARepository,
+  IncompleteClone (interrupted clone: missing HEAD/objects),
+  Locked (reponyx file lock, or `index.lock` — stale if mtime >
+  1 h, documented heuristic), Corrupt (`rev-parse`/`fsck`
+  failure), Healthy (incl. empty repo, head `None`); each status
+  carries a suggested action. Cancellation/timeouts end to end:
+  every long op takes `SyncOptions` (timeout 300 s default, lock
+  timeout 60 s, `CancellationToken`, progress channel, credential);
+  on cancel/timeout the child is killed and the lock released.
+  **Dependencies added (all latest stable, verified on
+  crates.io):** `fs2` 0.4.3, `tokio-util` 0.7.20 (CancellationToken
+  is under default features — there is no `sync` feature), `libc`
+  0.2.191 (dev-only; the `1.0.0-alpha.5` listing is pre-release and
+  was not used); `tempfile` 3.27.0 moved to regular deps (the
+  credential helper needs it at runtime). **Bugs found and fixed
+  during Phase 3 (caught by the new tests):** (1) `try_acquire`
+  returned success with no file lock when another process held it
+  (`Ok(None)` from the lock attempt was treated as acquired) —
+  now returns `RepositoryLocked`; (2) test-fixture collision: the
+  seed fixture's internal clone dir was named `work`, the same
+  path tests used for their own clones — renamed to `seed-work`;
+  (3) `build_rev_parse_upstream` passed both `--abbrev-ref` and
+  `--symbolic-full-name` and git let `--abbrev-ref` win
+  (`origin/main` instead of `refs/remotes/origin/main`) —
+  `--abbrev-ref` dropped. **Disk-full failure injection:** a true
+  ENOSPC was not feasible (a tiny tmpfs needs mount privileges the
+  VM does not grant; filling the real filesystem would endanger
+  the machine), so the test lowers `RLIMIT_FSIZE` to 1 MiB in the
+  test process (inherited by the git child) and clones a fixture
+  with 3 × 1 MiB incompressible pseudo-random blobs over a
+  `file://` URL (a plain local-path clone would hardlink and never
+  write pack data); the limit is set only around the clone and
+  restored by an RAII guard, and the file holds exactly one test
+  because a process-wide rlimit is unsafe with parallel tests. A
+  read-only-parent clone test is skipped when running as root
+  (this VM runs tests as uid 0, for whom permission bits do not
+  block writes). **Environment quirk found:** this VM's `/tmp`
+  (tmpfs) intermittently returns ETXTBSY ("Text file busy") when a
+  freshly written script is executed immediately under parallel
+  load — reproduced independently at ~5% with a write/chmod/exec
+  stress loop, while exec of an unchanged file never flakes and
+  `sh <script>` never flakes; a 2 ms delay nearly eliminates it.
+  The LFS-shim test retries detection up to 5 times for that
+  reason (test only — production `git-lfs` is installed, never
+  freshly written, and git's own startup latency covers the
+  credential helper). **Verification (actual, 2026-11-18):**
+  `cargo fmt --check` pass; clippy (`--workspace --exclude
+  reponyx-desktop --all-targets`) pass, 0 warnings; `cargo test
+  --workspace --exclude reponyx-desktop` **156 passed, 0 failed**
+  (core 11, database 54, git-engine 87 — lib 58, cancellation 3,
+  credentials 4, disk_full 1, health 6, locks 3, mirror 6,
+  mirror_clone 1, refs 1, working 4 — logging 4,
+  provider-abstractions 0); `pnpm -r typecheck` pass (Node
+  26.13.1); `pnpm --filter @reponyx/desktop build` pass (2305
+  modules, 1.82 s). Git-engine suite re-run 3× consecutively with
+  the same result. Tauri binary build still blocked on this VM by
+  missing `gdk-3.0` / WebViewGTK system libraries — not claimed
+  passed. Deliberately NOT done in Phase 3: LFS sync itself
+  (Phase 9), repair of corrupt repos (diagnosis only here — a
+  later phase), any desktop/UI changes, any dependency changes
+  beyond the three additions above.
 - **Phase 2 — Core Database and Domain (actual, 2026-11-18, on
   `main`):** repository-pattern data access for all 9 V1 tables in
   `crates/database` (one module per table: `accounts`,
@@ -220,6 +317,21 @@ rename with the same results (desktop build 1.39 s on the re-run).
 | cargo check -p reponyx-desktop | **FAIL — blocked**: `gdk-sys v0.18.2` build script: `Package gdk-3.0 was not found in the pkg-config search path` |
 | cargo tauri build (Linux) | **not run to completion — blocked** by the same missing system libraries; see below |
 
+### Phase 3 — 2026-11-18 (Git engine, on `main`)
+
+All commands actually run. Node 26.13.1, pnpm 12.21.0, Rust 1.100.0,
+Git 2.43.0 (git-lfs not installed on this VM).
+
+| Check | Result |
+| --- | --- |
+| cargo fmt --check | pass |
+| cargo clippy --workspace --exclude reponyx-desktop --all-targets | pass, 0 warnings |
+| cargo test --workspace --exclude reponyx-desktop | **156 passed, 0 failed** — core 11, database 54, git-engine 87 (lib 58, cancellation 3, credentials 4, disk_full 1, health 6, locks 3, mirror 6, mirror_clone 1, refs 1, working 4), logging 4, provider-abstractions 0 |
+| cargo test -p reponyx-git-engine (3 consecutive runs) | 87 passed, 0 failed each run |
+| pnpm -r typecheck | pass (shared, ui, api-client, desktop) |
+| pnpm --filter @reponyx/desktop build (vite) | pass (2305 modules, 1.82 s) |
+| cargo check -p reponyx-desktop | **FAIL — blocked**: same missing `gdk-3.0` / WebViewGTK system libraries as Phase 1 |
+
 ### Re-check 2026-11-18 (user's 8 commits + dependency updates, on `main`)
 
 All commands actually run, after the merge (`d3adc8c`) and the fixes
@@ -300,7 +412,9 @@ Phase 1 handoff). Top level: `Cargo.toml`, `package.json`,
 2. ~~Phase 2: domain repositories on top of the V1 schema
    (`ai/phase2/PLAN.md`) — awaiting the user's go-ahead.~~ **Done
    2026-11-18** (see "Completed tasks" above).
-3. Phase 3: Git engine (`ai/phase3/PLAN.md`) — awaiting the user's
-   go-ahead.
-4. On a machine with the WebViewGTK dev libraries (or Windows):
+3. ~~Phase 3: Git engine (`ai/phase3/PLAN.md`) — awaiting the user's
+   go-ahead.~~ **Done 2026-11-18** (see "Completed tasks" above).
+4. Phase 4: GitHub integration (`ai/phase4/PLAN.md`) — awaiting the
+   user's go-ahead.
+5. On a machine with the WebViewGTK dev libraries (or Windows):
    re-run `cargo check -p reponyx-desktop` and `cargo tauri build`.

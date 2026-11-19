@@ -9,10 +9,14 @@ description = "Safe Git CLI execution engine: detection, command builders, mirro
 [dependencies]
 reponyx-core.workspace = true
 reponyx-logging.workspace = true
+fs2 = "0.4"
 serde.workspace = true
+tempfile = "3"
 tokio.workspace = true
+tokio-util = "0.7"
 tracing.workspace = true
 
 [dev-dependencies]
+libc = "0.2"
 tempfile = "3"
 tokio = { version = "1", features = ["full"] }

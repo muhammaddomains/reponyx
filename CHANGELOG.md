@@ -5,6 +5,86 @@ All notable changes to RepoNyx are documented here. Format follows
 
 ## [Unreleased]
 
+### Added — Phase 3 (Git Engine)
+
+- **Repository lock manager** (`crates/git-engine/src/locks.rs`):
+  one operation at a time per local path — in-process async mutex
+  per canonical path plus a cross-process advisory file lock via
+  `fs2` (lock file lives next to the repo as
+  `.reponyx-<name>.lock` and is never deleted; the OS releases an
+  advisory lock when its holder dies, so a leftover file is never
+  stale). `try_acquire` fails fast with `RepositoryLocked`,
+  blocking acquire takes a timeout, the lock is released on drop
+  (RAII guard).
+- **Mirror clone + incremental fetch with progress reporting**
+  (`mirror.rs`, `progress.rs`): `mirror_clone` (`clone --mirror
+  --progress`, verifies bare + refs after) and `mirror_fetch`
+  (`fetch --prune --tags --progress`, returns added/pruned ref
+  diff). Progress is streamed as structured `ProgressEvent`s
+  parsed from git's `--progress` stderr — only numbers git emits
+  are reported, percentages are never invented.
+- **Working-clone fetch + status/dirty detection + divergence**
+  (`working.rs`): `working_fetch` (`fetch --all --prune --tags`
+  only — never checkout/reset/clean), `working_status`
+  (`status --porcelain=v1`: Conflicted > Staged > Modified >
+  UntrackedOnly > Clean, with file lists), `divergence`
+  (`rev-list --left-right --count` vs upstream; no upstream is
+  `None`, not an error).
+- **Branch/tag discovery from a mirror** (`refs.rs`):
+  `list_branches` / `list_tags` / `head_sha` via `git
+  for-each-ref` (NUL-separated; annotated tags carry the peeled
+  commit SHA).
+- **Credential helper integration** (`credentials.rs`): a
+  short-lived helper script containing no secret; the credential
+  travels only via `REPONYX_GIT_CREDENTIAL_*` env vars to the git
+  child, `GIT_TERMINAL_PROMPT=0` so git never prompts, and the
+  temp dir (0700) is deleted on drop even on failure/cancellation.
+  URLs with embedded credentials are rejected, and the token never
+  appears in argv, logs, or captured output.
+- **LFS availability detection** (`detect.rs` + `LfsStatus` in
+  `crates/core` and `packages/shared`): `detect_lfs()` /
+  `lfs_status()`; version parser handles both `git-lfs version
+  3.5.1` and `git-lfs/3.5.1` forms. Detection only — LFS sync
+  itself is Phase 9.
+- **Recovery — repository health diagnosis** (`health.rs`):
+  `verify_repository` returns a structured `RepositoryDiagnosis`
+  (never `Err`, never modifies anything): NotARepository,
+  IncompleteClone (interrupted clone), Locked (reponyx file lock
+  or `index.lock` — stale if mtime > 1 h, documented heuristic),
+  Corrupt (`rev-parse`/`fsck` failure), Healthy (including an
+  empty repo). Each status carries a suggested action. No
+  auto-delete or auto-repair — diagnosis only.
+- **Cancellation + timeouts end to end**: every long operation
+  takes `SyncOptions` (timeout 300 s default, lock timeout 60 s,
+  `CancellationToken`, progress channel, credential); on
+  cancel/timeout the child process is killed and the lock is
+  released, and the error is `OperationCancelled` /
+  `OperationTimedOut`.
+- **Tests: 65 new git-engine tests** (37 new lib unit tests and
+  28 new integration tests; git-engine total is now 87, up from
+  22): mirror clone, fetch after new commits, prune of deleted
+  branches, tag preservation, lock contention, cancellation,
+  corrupt-repo detection, credential-helper secrecy (fake local
+  HTTP auth server), and disk-full failure injection. **Disk-full
+  test:** a true ENOSPC was not feasible (a tiny tmpfs needs mount
+  privileges this VM does not grant; filling the real filesystem
+  would endanger the machine), so the test lowers `RLIMIT_FSIZE`
+  to 1 MiB around a clone of a fixture with 3 × 1 MiB
+  incompressible pseudo-random blobs over a `file://` URL. **Bugs
+  found and fixed:** `try_acquire` returned success with no file
+  lock when another process held it; test-fixture path collision
+  (`work` dir); `--abbrev-ref` beating `--symbolic-full-name` in
+  the upstream rev-parse builder. Re-verified: `cargo test
+  --workspace --exclude reponyx-desktop` **156 passed, 0 failed**
+  (core 11, database 54, git-engine 87, logging 4,
+  provider-abstractions 0); `cargo fmt --check` pass; clippy pass,
+  0 warnings; `pnpm -r typecheck` pass; desktop build pass.
+  Tauri binary build still blocked on this VM by missing `gdk-3.0`
+  / WebViewGTK system libraries — not claimed passed.
+- **Dependencies added (all latest stable):** `fs2` 0.4.3,
+  `tokio-util` 0.7.20, `libc` 0.2.191 (dev-only); `tempfile`
+  3.27.0 moved to regular dependencies (credential helper).
+
 ### Added — Phase 2 (Core Database and Domain)
 
 - **Repository-pattern data access for all 9 V1 tables** in

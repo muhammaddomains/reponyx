@@ -2,9 +2,12 @@
 //! redacted output. No shell is ever involved.
 
 use crate::commands::GitCommand;
+use crate::progress::{ProgressEvent, parse_progress_line};
 use reponyx_core::{ErrorCode, RepoNyxError};
 use std::time::Duration;
+use tokio::sync::mpsc;
 use tokio::time::timeout;
+use tokio_util::sync::CancellationToken;
 
 /// Outcome of a finished Git process.
 #[derive(Debug, Clone)]
@@ -33,6 +36,9 @@ pub async fn run_git_command(
     // Controlled environment: no inherited credential-bearing variables
     // are added here; credential injection (Phase 3+) sets explicit env.
     command.env_remove("GIT_ASKPASS");
+    for (key, value) in &cmd.env {
+        command.env(key, value);
+    }
     if let Some(dir) = &cmd.current_dir {
         command.current_dir(dir);
     }
@@ -122,6 +128,156 @@ pub async fn run_git_command(
     })
 }
 
+/// Run a [`GitCommand`] with a timeout, cancellation token, and
+/// streaming progress reporting.
+///
+/// stderr is read in chunks and split on `\r` / `\n` (git's
+/// `--progress` output uses carriage returns, not newlines, so a
+/// line reader would never see updates until the command finished).
+/// Each complete segment is parsed into a [`ProgressEvent`] and sent
+/// to `progress` as it arrives; the full stdout/stderr are still
+/// collected and returned redacted in the [`ProcessOutput`].
+/// Cancellation and timeout kill the child process, exactly like
+/// [`run_git_command`].
+pub async fn run_git_command_streaming(
+    cmd: &GitCommand,
+    timeout_duration: Duration,
+    cancel: Option<&CancellationToken>,
+    progress: Option<mpsc::Sender<ProgressEvent>>,
+) -> Result<ProcessOutput, RepoNyxError> {
+    let mut command = tokio::process::Command::new(&cmd.program);
+    command.args(&cmd.args);
+    command.stdin(std::process::Stdio::null());
+    command.stdout(std::process::Stdio::piped());
+    command.stderr(std::process::Stdio::piped());
+    command.env_remove("GIT_ASKPASS");
+    for (key, value) in &cmd.env {
+        command.env(key, value);
+    }
+    if let Some(dir) = &cmd.current_dir {
+        command.current_dir(dir);
+    }
+
+    let mut child = command.spawn().map_err(|e| {
+        RepoNyxError::new(ErrorCode::GitCloneFailed, "Failed to start git process")
+            .with_details(e.to_string())
+    })?;
+
+    let stdout_reader = spawn_pipe_reader(child.stdout.take());
+    let stderr_reader = spawn_progress_reader(child.stderr.take(), progress);
+
+    let cancelled = async {
+        match cancel {
+            Some(token) => token.cancelled().await,
+            None => std::future::pending::<()>().await,
+        }
+    };
+
+    let run = async {
+        tokio::select! {
+            _ = cancelled => {
+                let _ = child.kill().await;
+                let _ = child.wait().await;
+                stdout_reader.abort();
+                stderr_reader.abort();
+                Err(RepoNyxError::new(
+                    ErrorCode::OperationCancelled,
+                    "Git operation cancelled",
+                ))
+            }
+            status = child.wait() => {
+                status.map_err(|e| {
+                    RepoNyxError::new(
+                        ErrorCode::GitFetchFailed,
+                        "Failed to read git output",
+                    )
+                    .with_details(e.to_string())
+                })
+            }
+        }
+    };
+
+    let status = match timeout(timeout_duration, run).await {
+        Ok(Ok(s)) => s,
+        Ok(Err(e)) => return Err(e),
+        Err(_) => {
+            let _ = child.kill().await;
+            let _ = child.wait().await;
+            stdout_reader.abort();
+            stderr_reader.abort();
+            return Err(RepoNyxError::new(
+                ErrorCode::OperationTimedOut,
+                format!(
+                    "Git operation timed out after {}s",
+                    timeout_duration.as_secs()
+                ),
+            ));
+        }
+    };
+
+    let stdout = stdout_reader.await.unwrap_or_default();
+    let stderr = stderr_reader.await.unwrap_or_default();
+
+    Ok(ProcessOutput {
+        success: status.success(),
+        exit_code: status.code(),
+        stdout: reponyx_logging::redact_secrets(&String::from_utf8_lossy(&stdout)),
+        stderr: reponyx_logging::redact_secrets(&String::from_utf8_lossy(&stderr)),
+    })
+}
+
+/// Read stderr in chunks, emitting a [`ProgressEvent`] for every
+/// complete `\r`/`\n`-separated segment, while collecting the raw
+/// bytes for the final [`ProcessOutput`].
+fn spawn_progress_reader(
+    mut pipe: Option<impl tokio::io::AsyncRead + Send + Unpin + 'static>,
+    progress: Option<mpsc::Sender<ProgressEvent>>,
+) -> tokio::task::JoinHandle<Vec<u8>> {
+    tokio::spawn(async move {
+        use tokio::io::AsyncReadExt;
+        let mut collected = Vec::new();
+        let mut pending: Vec<u8> = Vec::new();
+        let Some(pipe) = pipe.as_mut() else {
+            return collected;
+        };
+        let mut buf = [0u8; 8192];
+        loop {
+            match pipe.read(&mut buf).await {
+                Ok(0) => break,
+                Ok(n) => {
+                    collected.extend_from_slice(&buf[..n]);
+                    pending.extend_from_slice(&buf[..n]);
+                    let mut start = 0;
+                    for (i, byte) in pending.iter().enumerate() {
+                        if *byte == b'\r' || *byte == b'\n' {
+                            emit_segment(&pending[start..i], &progress).await;
+                            start = i + 1;
+                        }
+                    }
+                    pending.drain(..start);
+                }
+                Err(_) => break,
+            }
+        }
+        if !pending.is_empty() {
+            emit_segment(&pending, &progress).await;
+        }
+        collected
+    })
+}
+
+async fn emit_segment(segment: &[u8], progress: &Option<mpsc::Sender<ProgressEvent>>) {
+    let Some(tx) = progress else {
+        return;
+    };
+    let line = String::from_utf8_lossy(segment);
+    if let Some(event) = parse_progress_line(&line) {
+        // A dropped receiver means nobody listens anymore; progress
+        // is best-effort and must never fail the operation.
+        let _ = tx.send(event).await;
+    }
+}
+
 fn spawn_pipe_reader(
     mut pipe: Option<impl tokio::io::AsyncRead + Send + Unpin + 'static>,
 ) -> tokio::task::JoinHandle<Vec<u8>> {
@@ -133,6 +289,13 @@ fn spawn_pipe_reader(
         }
         buf
     })
+}
+
+/// A cancellation receiver that never fires, for operations that do
+/// not support cancellation (short local reads).
+pub fn never_cancel() -> tokio::sync::watch::Receiver<bool> {
+    let (_tx, rx) = tokio::sync::watch::channel(false);
+    rx
 }
 
 /// Map a failed process outcome to the most actionable error code.

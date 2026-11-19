@@ -7,7 +7,8 @@ RepoNyx: Tauri 2 + React 19 desktop app that syncs GitHub repositories
 Git mirror archives / working clones, with a background agent. Windows-first,
 portable to macOS/Linux. Current phase: **Phase 1 — Foundation (complete,
 merged to `main` 2026-11-18); Phase 2 — Core Database and Domain
-(complete 2026-11-18)**. See `ai/memory/PROJECT_STATUS.md` for the
+(complete 2026-11-18); Phase 3 — Git Engine (complete
+2026-11-18)**. See `ai/memory/PROJECT_STATUS.md` for the
 honest current state.
 
 ## Branch & safety

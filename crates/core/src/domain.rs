@@ -416,6 +416,18 @@ pub struct GitStatus {
     pub error: Option<String>,
 }
 
+/// Git LFS availability as reported by `reponyx-git-engine`.
+/// Detection only — LFS object sync itself is Phase 9.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LfsStatus {
+    /// `true` when a `git-lfs` executable was found and its version
+    /// could be parsed.
+    pub installed: bool,
+    pub path: Option<String>,
+    pub version: Option<String>,
+    pub error: Option<String>,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

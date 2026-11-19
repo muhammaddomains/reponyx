@@ -1,0 +1,13 @@
+[package]
+name = "reponyx-provider-abstractions"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Provider abstraction: GitProvider trait so GitHub/GitLab/Bitbucket can share the sync engine"
+
+[dependencies]
+async-trait.workspace = true
+chrono.workspace = true
+reponyx-core.workspace = true
+serde.workspace = true

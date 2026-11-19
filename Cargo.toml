@@ -1,0 +1,35 @@
+[workspace]
+resolver = "2"
+members = [
+    "apps/desktop/src-tauri",
+    "crates/core",
+    "crates/logging",
+    "crates/git-engine",
+    "crates/provider-abstractions",
+    "crates/database",
+]
+
+[workspace.package]
+edition = "2024"
+rust-version = "1.90"
+license = "MIT"
+
+[workspace.dependencies]
+reponyx-core = { path = "crates/core" }
+reponyx-logging = { path = "crates/logging" }
+reponyx-git-engine = { path = "crates/git-engine" }
+reponyx-database = { path = "crates/database" }
+
+async-trait = "0.1"
+chrono = { version = "0.4", default-features = false, features = ["clock", "serde"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sqlx = { version = "0.8", features = ["sqlite", "runtime-tokio", "migrate", "chrono"] }
+tauri = { version = "=2.12.7", features = ["tray-icon"] }
+tauri-build = "=2.7.6"
+thiserror = "2"
+tokio = { version = "1", features = ["full"] }
+tracing = "0.1"
+tracing-appender = "0.2"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt", "json"] }
+uuid = { version = "1", features = ["v4", "serde"] }

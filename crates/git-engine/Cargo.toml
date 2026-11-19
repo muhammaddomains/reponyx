@@ -1,0 +1,18 @@
+[package]
+name = "reponyx-git-engine"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Safe Git CLI execution engine: detection, command builders, mirror clone/fetch, locks"
+
+[dependencies]
+reponyx-core.workspace = true
+reponyx-logging.workspace = true
+serde.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+
+[dev-dependencies]
+tempfile = "3"
+tokio = { version = "1", features = ["full"] }

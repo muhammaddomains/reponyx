@@ -1,0 +1,1 @@
+{"exports":{".":"./package.json","./eslint/base.mjs":"./eslint/base.mjs","./typescript/base.json":"./typescript/base.json"},"name":"@reponyx/config","private":true,"type":"module","version":"0.1.0"}

@@ -1,0 +1,12 @@
+[package]
+name = "reponyx-logging"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "RepoNyx structured logging: tracing init, rotation, secret redaction"
+
+[dependencies]
+tracing.workspace = true
+tracing-appender.workspace = true
+tracing-subscriber.workspace = true

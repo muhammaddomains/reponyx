@@ -1,0 +1,35 @@
+# Build outputs
+/target/
+**/target/
+apps/desktop/dist/
+apps/desktop/src-tauri/target/
+node_modules/
+.pnpm-store/
+
+# Tauri / app data (local dev only)
+*.log
+
+# Env / secrets — NEVER commit credentials, private keys, or tokens.
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+*.pfx
+credentials*.json
+**/reponyx.sqlite
+**/reponyx.sqlite-*
+**/*.sqlite3
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.vscode/*
+!.vscode/extensions.json
+.idea/
+*.swp
+
+# pnpm / npm
+pnpm-debug.log
+npm-debug.log

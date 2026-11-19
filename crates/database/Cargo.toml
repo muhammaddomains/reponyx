@@ -1,0 +1,19 @@
+[package]
+name = "reponyx-database"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "RepoNyx SQLite persistence: SQLx, versioned migrations, WAL"
+
+[dependencies]
+chrono.workspace = true
+reponyx-core.workspace = true
+serde.workspace = true
+sqlx.workspace = true
+tokio.workspace = true
+uuid.workspace = true
+
+[dev-dependencies]
+tempfile = "3"
+tokio = { version = "1", features = ["full"] }

@@ -1,0 +1,53 @@
+# AGENTS.md — RepoNyx repository instructions
+
+## What this is
+
+RepoNyx: Tauri 2 + React 19 desktop app that syncs GitHub repositories
+(GitHub App primary, fine-grained PAT alternative) to a local machine as
+Git mirror archives / working clones, with a background agent. Windows-first,
+portable to macOS/Linux. Current phase: **Phase 1 — Foundation**.
+See `ai/memory/PROJECT_STATUS.md` for the honest current state.
+
+## Branch & safety
+
+- Work on `feature/reponyx-foundation` (current branch). Never merge to
+  `main` unless explicitly instructed. Never force-push / rewrite history.
+- Never commit secrets, private keys, tokens, or build artifacts.
+  `.gitignore` covers `.env`, `*.pem`, `*.key`, `*.sqlite`.
+- No GitHub App creation, no credentials, no deployment, no publishing
+  without explicit approval.
+
+## Commands
+
+```bash
+export PATH="$HOME/.cargo/bin:$PATH"
+cargo fmt --check && cargo clippy --workspace --all-targets && cargo test --workspace
+pnpm install
+pnpm -r typecheck
+pnpm --filter @reponyx/desktop build        # vite build
+cargo tauri build                          # apps/desktop; needs WebViewGTK dev libs on Linux
+```
+
+## Layout
+
+- `apps/desktop` — React frontend + Tauri backend (`src-tauri`)
+- `crates/{core,logging,git-engine,provider-abstractions,database}` — Rust libs
+- `packages/{shared,ui,api-client,config}` — shared TS
+- `docs/architecture`, `docs/decisions` (ADRs 001–010), `docs/security`
+- `ai/phaseN/PLAN.md`, `ai/memory/PROJECT_STATUS.md`
+
+Planned, not yet created: `apps/auth-broker`, `apps/background-agent`,
+`crates/{github-provider,scheduler,sync-queue,credential-store,ipc,testing}`.
+
+## Hard rules
+
+- Git via argument arrays only; no shell; timeouts + cancellation; redact
+  secrets from logs/process output; never put tokens in URLs or argv.
+- Never trust repo names as paths — validate in `git-engine` path module.
+- Never auto-delete local repos. Never fake sync results or UI actions.
+- PATs/tokens: OS credential store only, never SQLite/plaintext/logs.
+- GitHub App private key: Auth Broker only, never in the desktop binary.
+- Report actual test counts; never claim a pass you did not run.
+- Keep modules small; shared types in `packages/shared` / `crates/core`;
+  no duplicated business logic; no circular dependencies.
+- Update `CHANGELOG.md` and `ai/memory/PROJECT_STATUS.md` at phase end.

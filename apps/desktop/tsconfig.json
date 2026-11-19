@@ -1,1 +1,24 @@
-{"compilerOptions":{"jsx":"react-jsx","lib":["DOM","DOM.Iterable","ES2022"],"module":"ESNext","moduleResolution":"bundler","noEmit":true,"skipLibCheck":true,"strict":true,"target":"ES2022","types":["vite/client"]},"extends":"@reponyx/config/typescript/base.json","include":["src","vite.config.ts"]}
+{
+  "extends": "@reponyx/config/typescript/base.json",
+  "compilerOptions": {
+    "jsx": "react-jsx",
+    "lib": [
+      "DOM",
+      "DOM.Iterable",
+      "ES2022"
+    ],
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "noEmit": true,
+    "skipLibCheck": true,
+    "strict": true,
+    "target": "ES2022",
+    "types": [
+      "vite/client"
+    ]
+  },
+  "include": [
+    "src",
+    "vite.config.ts"
+  ]
+}

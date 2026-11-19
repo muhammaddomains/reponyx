@@ -5,6 +5,21 @@ All notable changes to RepoNyx are documented here. Format follows
 
 ## [Unreleased]
 
+### Fixed
+
+- **All JSON config files reformatted to the repo standard (2-space
+  indent, LF, final newline, proper key order — `name` first in
+  `package.json`, `extends` before `compilerOptions` in `tsconfig`).**
+  Six files were pasted as single lines (`packages/config/package.json`,
+  `packages/config/typescript/base.json`, and the four `tsconfig.json`
+  files); `capabilities/default.json` was compacted the same way.
+  No values changed — verified by comparing parsed JSON before/after.
+  Also fixed a real bug found while doing this: `tauri.conf.json` was
+  **invalid JSON** (missing the closing brace for `"bundle"`, so
+  `"plugins"` was nested inside it) — it had gone unnoticed because
+  the Vite build never parses it. Re-verified: `cargo fmt --check`
+  pass, `pnpm -r typecheck` pass, desktop build pass.
+
 ### Changed
 
 - **Phase 1 re-check (2026-11-18): user's 8 commits incorporated

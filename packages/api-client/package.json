@@ -1,4 +1,11 @@
 {
+  "name": "@reponyx/api-client",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "typecheck": "tsc --noEmit"
+  },
   "dependencies": {
     "@reponyx/shared": "workspace:*",
     "@tauri-apps/api": "^2.12.5"
@@ -12,12 +19,5 @@
       "import": "./src/index.ts",
       "types": "./src/index.ts"
     }
-  },
-  "name": "@reponyx/api-client",
-  "private": true,
-  "scripts": {
-    "typecheck": "tsc --noEmit"
-  },
-  "type": "module",
-  "version": "0.1.0"
+  }
 }

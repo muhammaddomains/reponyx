@@ -6,9 +6,22 @@
 //! - All timestamps are UTC (`TEXT` ISO-8601 via `chrono`).
 //! - **No authentication secrets are stored in any table** — credentials
 //!   live in the OS credential store (ADR-008).
+//! - One repository module per table (Phase 2); all SQL uses bound
+//!   parameters only.
 
+pub mod accounts;
+pub mod audit;
 pub mod counts;
+pub mod devices;
+pub mod history;
+pub mod installations;
+pub mod jobs;
 pub mod pool;
+pub mod repositories;
+pub mod schedules;
+pub mod settings;
+
+mod common;
 
 pub use counts::dashboard_counts;
 pub use pool::{Database, open_database};

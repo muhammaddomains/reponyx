@@ -2,6 +2,7 @@
 
 export type AuthenticationMethod = "github_app" | "fine_grained_pat";
 export type Provider = "github";
+export type AccountType = "personal" | "organization";
 export type AccountStatus =
   | "connected"
   | "paused"
@@ -30,6 +31,16 @@ export type JobType =
   | "fetch"
   | "lfs_fetch"
   | "submodule_sync";
+export type ScheduleScope = "global" | "account" | "repository";
+export type IntervalType =
+  | "interval_hours"
+  | "daily"
+  | "weekly"
+  | "custom";
+export type SyncResult = "success" | "failed" | "cancelled";
+export type DevicePairingStatus = "pending" | "paired" | "revoked";
+export type InstallationType = "user" | "organization";
+export type InstallationStatus = "active" | "suspended" | "deleted";
 
 export interface Account {
   id: string;
@@ -38,6 +49,7 @@ export interface Account {
   username: string;
   displayName?: string | null;
   label?: string | null;
+  accountType: AccountType;
   authenticationMethod: AuthenticationMethod;
   status: AccountStatus;
   lastValidatedAt?: string | null;
@@ -77,6 +89,71 @@ export interface SyncJob {
   errorCode?: string | null;
   errorMessage?: string | null;
   createdAt: string;
+}
+
+export interface Schedule {
+  id: string;
+  scope: ScheduleScope;
+  accountId?: string | null;
+  repositoryId?: string | null;
+  intervalType: IntervalType;
+  intervalValue?: string | null;
+  timezone: string;
+  enabled: boolean;
+  nextRunAt?: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface SyncHistory {
+  id: string;
+  repositoryId: string;
+  jobId?: string | null;
+  operation: string;
+  result: SyncResult;
+  durationMs?: number | null;
+  bytesReceived?: number | null;
+  startedAt: string;
+  completedAt?: string | null;
+}
+
+/** `id` is a plain string: V1 seeds settings with stable ids such as `setting-storage-root`. */
+export interface Setting {
+  id: string;
+  key: string;
+  value: string;
+  updatedAt: string;
+}
+
+export interface Device {
+  id: string;
+  deviceName: string;
+  deviceIdentifier: string;
+  pairingStatus: DevicePairingStatus;
+  createdAt: string;
+  lastSeenAt?: string | null;
+}
+
+/** Append-only: no update/delete API exists for audit logs. */
+export interface AuditLog {
+  id: string;
+  actor: string;
+  action: string;
+  resourceType: string;
+  resourceId?: string | null;
+  metadata: string;
+  createdAt: string;
+}
+
+export interface Installation {
+  id: string;
+  accountId: string;
+  installationId: string;
+  installationType: InstallationType;
+  installationStatus: InstallationStatus;
+  permissionsJson: string;
+  createdAt: string;
+  updatedAt: string;
 }
 
 /** Rust `DashboardCounts` serializes with snake_case field names. */

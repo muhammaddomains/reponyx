@@ -6,11 +6,58 @@ dependencies updated to latest stable, re-verified — see below)
 ## Current phase
 
 **Phase 1 — Foundation (complete, merged to `main` 2026-11-18 as
-`9cc87b9`, PR #1). Phase 2 — Core Database and Domain — not started,
-awaiting the user's go-ahead.** Work is on `main` going forward.
+`9cc87b9`, PR #1). Phase 2 — Core Database and Domain — complete
+2026-11-18 (see below).** Work is on `main` going forward.
 
 ## Completed tasks
 
+- **Phase 2 — Core Database and Domain (actual, 2026-11-18, on
+  `main`):** repository-pattern data access for all 9 V1 tables in
+  `crates/database` (one module per table: `accounts`,
+  `installations`, `repositories`, `schedules`, `jobs`, `history`,
+  `settings`, `devices`, `audit`), all SQL with bound parameters
+  only. Domain types added in `crates/core` (`Schedule`,
+  `SyncHistory`, `Setting`, `Device`, `AuditLog`, `Installation`,
+  `AccountType`, `ScheduleScope`, `IntervalType`, `SyncResult`,
+  `DevicePairingStatus`, `InstallationType`, `InstallationStatus`)
+  with explicit allowed-transition tables; `revoked` /
+  `token_expired` accounts return to `connected` only via explicit
+  `reconnect_account`. TS mirrors added in `packages/shared`
+  (including the previously missing `accountType` on `Account`).
+  Behaviours: upsert by `(account_id, provider_repository_id)` via
+  atomic `ON CONFLICT DO UPDATE` (preserves local state);
+  rename/ownership-change with full_name collision detection;
+  effective-schedule resolution (repository > account > global) +
+  `due_schedules`; atomic job claim via single `UPDATE ...
+  RETURNING` statement; job finish + history entry in one
+  transaction (`complete_job_with_history`); audit logs append-only
+  by design (no update/delete API). **Migration V2 was needed:**
+  `migrations/sqlite/0002_unique_full_name.sql` adds a UNIQUE index
+  on `repositories (account_id, full_name)` — code-level collision
+  checks can race under concurrent writes (SQLite transactions are
+  deferred by default), so the invariant is now enforced at the
+  storage layer; V1 was not edited. One dependency added:
+  `serde_json` to `reponyx-database` (already in the lockfile at
+  1.0.154, latest stable; used for audit-log metadata JSON).
+  **Bugs found and fixed during Phase 2 (caught by the new tests):**
+  (1) `transition_job` / `complete_job_with_history` were missing
+  the final `.bind(id)` — sqlx does not check bind counts for
+  `query()`, so `WHERE id = ?` matched NULL and the UPDATE silently
+  affected 0 rows; (2) `claim_next_job` used select-then-update in
+  a transaction, which deadlocks under contention (shared-lock
+  upgrade) — rewritten as a single atomic `UPDATE ... RETURNING`.
+  **Verification (actual, 2026-11-18):** `cargo fmt --check`
+  pass; clippy (5 buildable crates) pass, 0 warnings; `cargo test`
+  **91 passed, 0 failed** (core 11, database 54 — accounts 8,
+  installations 7, jobs 8, migrations 3, repositories 10, schedules
+  7, settings/devices/audit 7, transactions 4 — git-engine 22,
+  logging 4, provider-abstractions 0); `pnpm -r typecheck` pass
+  (4 packages); `pnpm --filter @reponyx/desktop build` pass
+  (1.81 s). `cargo test --workspace` exits 101 on this VM solely
+  because the desktop crate cannot build (`gdk-sys`: `Package
+  gdk-3.0 was not found`) — the known blocker, not claimed passed.
+  pnpm had vanished from this VM again and was reinstalled at
+  12.21.0 (latest stable).
 - Toolchains installed and verified: Rust 1.100.0, pnpm 12.21.0,
   Node 24.22.1, Git 2.43.0.
 - **Phase 1 re-check + dependency update (actual, 2026-11-18, on `main`):**
@@ -250,7 +297,10 @@ Phase 1 handoff). Top level: `Cargo.toml`, `package.json`,
    merging. The local branch is kept only as the record of the original
    commits `49a44bf` + `977be27`, which GitHub holds only as the single
    snapshot commit `83a68f99`.
-2. Phase 2: domain repositories on top of the V1 schema
-   (`ai/phase2/PLAN.md`) — awaiting the user's go-ahead.
-3. On a machine with the WebViewGTK dev libraries (or Windows):
+2. ~~Phase 2: domain repositories on top of the V1 schema
+   (`ai/phase2/PLAN.md`) — awaiting the user's go-ahead.~~ **Done
+   2026-11-18** (see "Completed tasks" above).
+3. Phase 3: Git engine (`ai/phase3/PLAN.md`) — awaiting the user's
+   go-ahead.
+4. On a machine with the WebViewGTK dev libraries (or Windows):
    re-run `cargo check -p reponyx-desktop` and `cargo tauri build`.

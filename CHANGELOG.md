@@ -5,6 +5,44 @@ All notable changes to RepoNyx are documented here. Format follows
 
 ## [Unreleased]
 
+### Added — Phase 2 (Core Database and Domain)
+
+- **Repository-pattern data access for all 9 V1 tables** in
+  `crates/database` (one module per table: accounts, installations,
+  repositories, schedules, jobs, history, settings, devices,
+  audit_logs), all SQL with bound parameters only. Domain types added
+  in `crates/core` (`Schedule`, `SyncHistory`, `Setting`, `Device`,
+  `AuditLog`, `Installation`, `AccountType`, `ScheduleScope`,
+  `IntervalType`, `SyncResult`, `DevicePairingStatus`,
+  `InstallationType`, `InstallationStatus`) with explicit
+  allowed-transition tables (`AccountStatus`, `JobStatus`,
+  `DevicePairingStatus`, `InstallationStatus`); TS mirrors added in
+  `packages/shared` (including the previously missing `accountType`
+  on `Account`). Highlights: upsert by `(account_id,
+  provider_repository_id)` via atomic `ON CONFLICT DO UPDATE`
+  (preserves local state); rename/ownership-change with
+  full_name collision detection; effective-schedule resolution
+  (repository > account > global) + `due_schedules`; atomic job
+  claim (`UPDATE ... RETURNING`); job finish + history entry in one
+  transaction (`complete_job_with_history`); audit logs append-only
+  by design (no update/delete API).
+- **Migration V2 (`0002_unique_full_name.sql`)**: UNIQUE index on
+  `repositories (account_id, full_name)` — code-level collision
+  checks can race under concurrent writes (deferred transactions),
+  so the invariant is now enforced at the storage layer. V1 untouched.
+- **Tests: 54 new database integration tests + 4 new core unit
+  tests**, all against temp SQLite with migrations applied — CRUD
+  round-trips, upsert identity, schedule precedence, atomic claim
+  (4 concurrent claimers, 3 jobs), job+history transaction, FK
+  violations, rollback on failure, invalid transitions, concurrent
+  writes (8 tasks × 5 repos) and concurrent upsert of one repo.
+  Re-verified: `cargo test` **91 passed, 0 failed** (core 11,
+  database 54, git-engine 22, logging 4, provider-abstractions 0);
+  `cargo fmt --check` pass; clippy (5 buildable crates) pass,
+  0 warnings; `pnpm -r typecheck` pass; desktop build pass. `cargo
+  test --workspace` still blocked on this VM by missing `gdk-3.0`
+  system libraries (desktop crate only) — not claimed passed.
+
 ### Fixed
 
 - **All JSON config files reformatted to the repo standard (2-space

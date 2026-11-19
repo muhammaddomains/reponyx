@@ -8,6 +8,7 @@ use reponyx_core::{ErrorCode, InstallationStatus, InstallationType};
 use reponyx_database::installations::{
     NewInstallation, create_installation, delete_installation, get_installation,
     get_installation_by_account_and_id, list_installations_for_account, set_installation_status,
+    upsert_installation,
 };
 use uuid::Uuid;
 
@@ -156,5 +157,36 @@ async fn delete_installation_removes_row() {
             .await
             .unwrap()
             .is_none()
+    );
+}
+
+#[tokio::test]
+async fn upsert_installation_creates_then_refreshes_in_place() {
+    let (_dir, db) = open_test_db().await;
+    let account = make_account(pool(&db), "octocat").await;
+    let first = upsert_installation(
+        pool(&db),
+        new_installation(account.id, "999"),
+        InstallationStatus::Active,
+    )
+    .await
+    .unwrap();
+    assert_eq!(first.installation_status, InstallationStatus::Active);
+    assert_eq!(first.permissions_json, r#"{"contents":"read"}"#);
+    let mut refreshed = new_installation(account.id, "999");
+    refreshed.permissions_json = r#"{"contents":"write"}"#.to_string();
+    let second = upsert_installation(pool(&db), refreshed, InstallationStatus::Suspended)
+        .await
+        .unwrap();
+    // Same row (same id), new permissions and status.
+    assert_eq!(second.id, first.id);
+    assert_eq!(second.installation_status, InstallationStatus::Suspended);
+    assert_eq!(second.permissions_json, r#"{"contents":"write"}"#);
+    assert_eq!(
+        list_installations_for_account(pool(&db), account.id)
+            .await
+            .unwrap()
+            .len(),
+        1
     );
 }

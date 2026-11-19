@@ -1,6 +1,6 @@
 # Phase 4 — GitHub Integration
 
-- Status: Not started
+- Status: Complete (2026-11-18, on `main`)
 - Depends on: Phase 1 (provider trait), Phase 2 (repositories)
 
 ## Objectives
@@ -20,11 +20,11 @@ discovery, account/installation metadata, permission validation.
 
 ## Implementation tasks
 
-- [ ] GitHub API client (reqwest, auth header injection, retries)
-- [ ] Repository discovery with pagination + cursors
-- [ ] Installation metadata + repository permission checks
-- [ ] Account metadata (username, avatar)
-- [ ] Mocked-API integration tests (no real credentials)
+- [x] GitHub API client (reqwest, auth header injection, retries)
+- [x] Repository discovery with pagination + cursors
+- [x] Installation metadata + repository permission checks
+- [x] Account metadata (username, avatar)
+- [x] Mocked-API integration tests (no real credentials)
 
 ## Dependencies
 
@@ -44,8 +44,18 @@ Phase 1 trait; Phase 2 DB repositories; Phase 5 for real credentials
 
 ## Known issues
 
-None yet.
+- wiremock-rs has no scenarios (that is a Java WireMock feature):
+  stateful multi-response sequences in tests use a
+  `SequencedResponder` (`tests/common.rs`) that answers successive
+  requests with queued responses, in order.
 
 ## Completion status
 
-Not started.
+Complete (2026-11-18, on `main`). Verification: `cargo fmt
+--check` pass; clippy (`--workspace --exclude reponyx-desktop
+--all-targets`) pass, 0 warnings; `cargo test --workspace --exclude
+reponyx-desktop` **215 passed, 0 failed** (core 11, database 55,
+git-engine 87, github-provider 58, logging 4,
+provider-abstractions 0); `pnpm -r typecheck` pass; desktop build
+pass. Tauri binary build still blocked on this VM — not claimed
+passed.

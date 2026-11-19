@@ -15,7 +15,10 @@ use serde::{Deserialize, Serialize};
 /// A short-lived credential for one Git operation. Issued fresh per
 /// operation (or per batch); never persisted, never logged, never placed
 /// in a stored clone URL.
-#[derive(Debug, Clone)]
+///
+/// `Debug` is implemented by hand and redacts the token: the derived
+/// impl would have printed it.
+#[derive(Clone)]
 pub struct ShortLivedCredential {
     /// Username for HTTP Basic auth (`x-access-token` for GitHub App
     /// installation tokens; the GitHub username for PATs).
@@ -24,6 +27,16 @@ pub struct ShortLivedCredential {
     pub token: String,
     /// Seconds until expiry, if known (GitHub installation tokens: ~3600).
     pub expires_in_secs: Option<u64>,
+}
+
+impl std::fmt::Debug for ShortLivedCredential {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ShortLivedCredential")
+            .field("username", &self.username)
+            .field("token", &"<redacted>")
+            .field("expires_in_secs", &self.expires_in_secs)
+            .finish()
+    }
 }
 
 /// Metadata for one discoverable repository, as returned by the provider.

@@ -6,11 +6,96 @@ Last updated: 2026-11-18 (Phase 3: Git engine complete — see below)
 
 **Phase 1 — Foundation (complete, merged to `main` 2026-11-18 as
 `9cc87b9`, PR #1). Phase 2 — Core Database and Domain — complete
-2026-11-18. Phase 3 — Git Engine — complete 2026-11-18 (see
-below).** Work is on `main` going forward.
+2026-11-18. Phase 3 — Git Engine — complete 2026-11-18. Phase 4 —
+GitHub Integration — complete 2026-11-18 (see below).** Work is on
+`main` going forward.
 
 ## Completed tasks
 
+- **Phase 4 — GitHub Integration (actual, 2026-11-18, on `main`):**
+  new crate `crates/github-provider` implementing the `GitProvider`
+  trait: `validate_auth`, paginated `discover_repositories`,
+  `clone_url`, `acquire_credential`, `capabilities()`,
+  `provider()`. API client (`client.rs`): reqwest with a 30 s
+  request timeout, `Authorization` header per token kind (`Bearer`
+  for installation tokens, `token` for PATs), `User-Agent:
+  RepoNyx/<version>`, retries with exponential backoff + jitter
+  (max 3 attempts) for 5xx / network errors only — never for
+  401/403. Error mapping: 401 → `AuthenticationExpired`, 403 with
+  a revoked/suspended message → `AuthenticationRevoked`, other 403
+  → `InsufficientPermissions`, 404 → `RepositoryNotFound`, 5xx
+  exhausted → `InternalError` (upstream failure, not a local
+  error), transport failure → `NetworkUnavailable` (timeout →
+  `OperationTimedOut`). Pagination (`pagination.rs`): parses the
+  `Link: rel="next"` header; the cursor is the next-page URL
+  itself, validated to stay on the configured API base (a plain
+  prefix match was a real bug — `api.github.com.evil…` passed it;
+  now the cursor must equal the base or continue it with `/`).
+  Missing/malformed `Link` header is treated as the last page,
+  never a crash. `discover_all_stream` yields one message per API
+  page over an mpsc channel, in order, so thousands of repos never
+  sit in memory at once; an error message is terminal. Discovery
+  uses `GET /user/repos?per_page=100&sort=full_name&direction=asc`
+  for a deterministic page order. Rate limits (`rate_limit.rs`):
+  `X-RateLimit-Limit/Remaining/Reset` and `Retry-After` parsed on
+  every response and exposed via `rate_limit()`; on 429 / 403-rate
+  -limit the client sleeps until reset, capped at 300 s per wait
+  and 3 waits per request, then resumes from the same cursor;
+  beyond the cap it returns `RateLimitExceeded` with the reset
+  time in `details`. Installations: `GET /user/installations`
+  and `GET /user/installations/{id}/repositories` (user-token
+  endpoints only — `GET /app/installations` and installation-token
+  minting need an App JWT and belong to Phase 5, which supplies a
+  broker-backed `CredentialSource`); `check_repository_access`
+  (`GET /repos/{o}/{r}`) reports Admin/Write/Read/None plus
+  `can_read_contents`. Discovery writes via the Phase 2
+  repositories (`sync.rs`): upserts preserve local state
+  (`sync_enabled`, `sync_mode`, `local_path`, `archive_status`);
+  local repos absent from discovery are returned in `not_seen`
+  and never deleted. `sync_installations` persists installations
+  via a new `upsert_installation` in `reponyx-database` (the only
+  database-crate change; it refreshes `permissions_json` and
+  status and deliberately bypasses the status transition table —
+  the API is the source of truth). Schema gap recorded: the V1
+  `installations` table has no columns for `app_id`, `app_slug`,
+  `repository_selection`, or the `suspended_at` timestamp (only
+  suspended-or-not is stored as the status) — needs a V3 migration
+  if a later phase wants them. Credentials: `CredentialSource`
+  trait lives in the provider crate (GitHub-specific token kinds);
+  `StaticTokenSource` for tests, `FailingTokenSource` for failure
+  tests; Phase 5 must supply a broker-backed installation-token
+  source (cache until near expiry, refresh on 401) and a PAT
+  source (PAT from the OS credential store, GitHub login as the
+  username). No JWT signing, no private key, no credential-store
+  reads, no production credential was created or modified in this
+  phase. Token secrecy: `ShortLivedCredential` now has a
+  hand-written `Debug` that redacts the token (the derived impl
+  printed it); `Token`, `StaticTokenSource`, `GitHubClient` and
+  `GitHubProvider` all redact in `Debug`; error messages never
+  contain a token (tested). **Dependencies added (all latest
+  stable, verified on crates.io):** `reqwest` 0.13.5 (already in
+  the lockfile via tauri), `wiremock` 0.6.5 (dev-only). **Bugs
+  found and fixed during Phase 4 (caught by the new tests):** (1)
+  the cursor prefix-match hole above; (2) a test filter that
+  matched `per_page` when looking for a `page` parameter
+  (`per_page` contains the substring `page=`). **Verification
+  (actual, 2026-11-18):** `cargo fmt --check` pass; clippy
+  (`--workspace --exclude reponyx-desktop --all-targets`) pass, 0
+  warnings; `cargo test --workspace --exclude reponyx-desktop`
+  **215 passed, 0 failed** (core 11, database 55 — installations
+  8 with the new upsert test — git-engine 87, github-provider 58
+  — lib 26, discovery 8, errors 8, installations 4, rate_limit 4,
+  redaction 6, sync 2 — logging 4, provider-abstractions 0);
+  `pnpm -r typecheck` pass (Node 26.13.1); `pnpm --filter
+  @reponyx/desktop build` pass (2305 modules, 1.56 s). Tauri
+  binary build still blocked on this VM by missing `gdk-3.0` /
+  WebViewGTK system libraries — not claimed passed. Deliberately
+  NOT done in Phase 4: GitHub App JWT signing / private-key
+  handling (Phase 5), PAT reads from the OS credential store
+  (Phase 5), `GET /app/installations` (App-JWT-only), any
+  desktop/UI changes, any TS changes (no new core domain types —
+  provider types stay in the provider crate until the UI consumes
+  them).
 - **Phase 3 — Git Engine (actual, 2026-11-18, on `main`):**
   repository lock manager (`crates/git-engine/src/locks.rs`):
   in-process async mutex per canonical path + cross-process
@@ -317,6 +402,19 @@ rename with the same results (desktop build 1.39 s on the re-run).
 | cargo check -p reponyx-desktop | **FAIL — blocked**: `gdk-sys v0.18.2` build script: `Package gdk-3.0 was not found in the pkg-config search path` |
 | cargo tauri build (Linux) | **not run to completion — blocked** by the same missing system libraries; see below |
 
+### Phase 4 — 2026-11-18 (GitHub integration, on `main`)
+
+All commands actually run. Node 26.13.1, pnpm 12.21.0, Rust 1.100.0.
+
+| Check | Result |
+| --- | --- |
+| cargo fmt --check | pass |
+| cargo clippy --workspace --exclude reponyx-desktop --all-targets | pass, 0 warnings |
+| cargo test --workspace --exclude reponyx-desktop | **215 passed, 0 failed** — core 11, database 55 (installations 8), git-engine 87, github-provider 58 (lib 26, discovery 8, errors 8, installations 4, rate_limit 4, redaction 6, sync 2), logging 4, provider-abstractions 0 |
+| pnpm -r typecheck | pass (shared, ui, api-client, desktop) |
+| pnpm --filter @reponyx/desktop build (vite) | pass (2305 modules, 1.56 s) |
+| cargo check -p reponyx-desktop | **FAIL — blocked**: same missing `gdk-3.0` / WebViewGTK system libraries as Phase 1 |
+
 ### Phase 3 — 2026-11-18 (Git engine, on `main`)
 
 All commands actually run. Node 26.13.1, pnpm 12.21.0, Rust 1.100.0,
@@ -414,7 +512,9 @@ Phase 1 handoff). Top level: `Cargo.toml`, `package.json`,
    2026-11-18** (see "Completed tasks" above).
 3. ~~Phase 3: Git engine (`ai/phase3/PLAN.md`) — awaiting the user's
    go-ahead.~~ **Done 2026-11-18** (see "Completed tasks" above).
-4. Phase 4: GitHub integration (`ai/phase4/PLAN.md`) — awaiting the
+4. ~~Phase 4: GitHub integration (`ai/phase4/PLAN.md`) — awaiting the
+   user's go-ahead.~~ **Done 2026-11-18** (see "Completed tasks" above).
+5. Phase 5: Authentication (`ai/phase5/PLAN.md`) — awaiting the
    user's go-ahead.
-5. On a machine with the WebViewGTK dev libraries (or Windows):
+6. On a machine with the WebViewGTK dev libraries (or Windows):
    re-run `cargo check -p reponyx-desktop` and `cargo tauri build`.

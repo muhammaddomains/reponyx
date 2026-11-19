@@ -103,6 +103,52 @@ pub async fn get_installation_by_account_and_id(
     }
 }
 
+/// Insert or update by `(account_id, installation_id)` in a single
+/// atomic statement. On conflict only `permissions_json` and
+/// `installation_status` are refreshed — the API is the source of
+/// truth for both, so this deliberately bypasses the
+/// `set_installation_status` transition table (a sync from GitHub
+/// reports the real state; it is not a user-driven transition).
+/// `installation_type` is fixed at creation and never changed.
+pub async fn upsert_installation(
+    pool: &SqlitePool,
+    input: NewInstallation,
+    status: InstallationStatus,
+) -> Result<Installation, RepoNyxError> {
+    require_non_empty("installation_id", &input.installation_id)?;
+    if serde_json::from_str::<serde_json::Value>(&input.permissions_json).is_err() {
+        return Err(invalid("permissions_json must be valid JSON"));
+    }
+    let id = Uuid::new_v4();
+    let now = now_iso();
+    sqlx::query(
+        r#"
+        INSERT INTO installations
+            (id, account_id, installation_id, installation_type,
+             installation_status, permissions_json, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT (account_id, installation_id) DO UPDATE SET
+            installation_status = excluded.installation_status,
+            permissions_json = excluded.permissions_json,
+            updated_at = excluded.updated_at
+        "#,
+    )
+    .bind(id.to_string())
+    .bind(input.account_id.to_string())
+    .bind(input.installation_id.trim())
+    .bind(input.installation_type.as_str())
+    .bind(status.as_str())
+    .bind(input.permissions_json)
+    .bind(&now)
+    .bind(&now)
+    .execute(pool)
+    .await
+    .map_err(map_error)?;
+    get_installation_by_account_and_id(pool, input.account_id, input.installation_id.trim())
+        .await?
+        .ok_or_else(|| invalid("installation just upserted but not found"))
+}
+
 pub async fn list_installations_for_account(
     pool: &SqlitePool,
     account_id: Uuid,

@@ -5,6 +5,83 @@ All notable changes to RepoNyx are documented here. Format follows
 
 ## [Unreleased]
 
+### Added — Phase 4 (GitHub Integration)
+
+- **New crate `crates/github-provider`** implementing the
+  `GitProvider` trait: `validate_auth` (`GET /user`), paginated
+  `discover_repositories` (`GET /user/repos`, `per_page=100`,
+  `sort=full_name`), `clone_url`, `acquire_credential`,
+  `capabilities()`, `provider()`. The provider talks to the GitHub
+  REST API only — it never runs Git, and the engine stays
+  provider-independent.
+- **API client (`client.rs`, reqwest 0.13.5):** 30 s request
+  timeout, `Authorization` per token kind (`Bearer` for
+  installation tokens, `token` for PATs), retries with exponential
+  backoff + jitter (max 3 attempts) for 5xx / network errors only.
+  Error mapping: 401 → `AuthenticationExpired`, 403 revoked /
+  suspended → `AuthenticationRevoked`, other 403 →
+  `InsufficientPermissions`, 404 → `RepositoryNotFound`, 5xx
+  exhausted → `InternalError`, transport failure →
+  `NetworkUnavailable`.
+- **Pagination + streaming discovery (`pagination.rs`,
+  `provider.rs`):** `Link: rel="next"` parsing; the cursor is the
+  next-page URL, validated to stay on the configured API base
+  (a prefix-match hole that let `api.github.com.evil…` through was
+  caught by a test and fixed). Missing/malformed `Link` header is
+  treated as the last page, never a crash. `discover_all_stream`
+  yields one message per API page over a channel, in order, so
+  thousands of repos never sit in memory at once.
+- **Rate-limit awareness (`rate_limit.rs`):**
+  `X-RateLimit-Limit/Remaining/Reset` and `Retry-After` parsed on
+  every response and exposed via `rate_limit()`; on 429 / 403-rate
+  -limit the client sleeps until reset (capped at 300 s per wait,
+  3 waits per request) and resumes from the same cursor; beyond
+  the cap it returns `RateLimitExceeded` with the reset time.
+- **Installation metadata + permission checks:** `GET
+  /user/installations` and `GET
+  /user/installations/{id}/repositories` (user-token endpoints
+  only — `GET /app/installations` needs an App JWT, Phase 5);
+  `check_repository_access` reports Admin/Write/Read/None plus
+  `can_read_contents`.
+- **Discovery writes to the database (`sync.rs`):** upserts via the
+  Phase 2 repositories preserve local state; local repos absent
+  from discovery are returned in `not_seen` and never deleted.
+  `sync_installations` persists installations via a new
+  `upsert_installation` in `reponyx-database`. Schema gap recorded
+  in the project status: the V1 `installations` table has no
+  columns for `app_id`, `app_slug`, `repository_selection`, or the
+  `suspended_at` timestamp.
+- **Credentials (`credentials.rs`):** pluggable `CredentialSource`
+  trait (GitHub-specific token kinds) with `StaticTokenSource` for
+  tests and `FailingTokenSource` for failure tests; Phase 5 must
+  supply a broker-backed installation-token source and a PAT
+  source. No JWT signing, no private key, no credential-store
+  reads, no production credential created or modified. Token
+  secrecy: `ShortLivedCredential` now has a hand-written `Debug`
+  that redacts the token (the derived impl printed it); `Token`,
+  `StaticTokenSource`, `GitHubClient` and `GitHubProvider` all
+  redact in `Debug`.
+- **Tests: 58 new github-provider tests + 1 new database test**
+  (lib 26, discovery 8, errors 8, installations 4, rate_limit 4,
+  redaction 6, sync 2; database installations 8 with the new
+  upsert test), all against a mocked GitHub API (wiremock 0.6.5,
+  dev-only) — multi-page discovery incl. an empty page,
+  rate-limit back-off and resume mid-pagination, error mapping,
+  pagination edge cases, installation metadata and permission
+  checks, discovery-to-DB with local-state preservation and
+  `not_seen` reporting, token redaction. wiremock-rs has no
+  scenarios, so stateful sequences use a `SequencedResponder`
+  that answers successive requests with queued responses.
+  Re-verified: `cargo test --workspace --exclude reponyx-desktop`
+  **215 passed, 0 failed** (core 11, database 55, git-engine 87,
+  github-provider 58, logging 4, provider-abstractions 0);
+  `cargo fmt --check` pass; clippy pass, 0 warnings; `pnpm -r
+  typecheck` pass; desktop build pass. Tauri binary build still
+  blocked on this VM by missing `gdk-3.0` / WebViewGTK system
+  libraries — not claimed passed.
+- **Dependencies added (all latest stable):** `reqwest` 0.13.5,
+  `wiremock` 0.6.5 (dev-only).
+
 ### Added — Phase 3 (Git Engine)
 
 - **Repository lock manager** (`crates/git-engine/src/locks.rs`):

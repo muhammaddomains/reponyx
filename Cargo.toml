@@ -6,6 +6,7 @@ members = [
     "crates/logging",
     "crates/git-engine",
     "crates/provider-abstractions",
+    "crates/github-provider",
     "crates/database",
 ]
 
@@ -18,10 +19,12 @@ license = "MIT"
 reponyx-core = { path = "crates/core" }
 reponyx-logging = { path = "crates/logging" }
 reponyx-git-engine = { path = "crates/git-engine" }
+reponyx-provider-abstractions = { path = "crates/provider-abstractions" }
 reponyx-database = { path = "crates/database" }
 
 async-trait = "0.1"
 chrono = { version = "0.4", default-features = false, features = ["clock", "serde"] }
+reqwest = { version = "0.13", features = ["json"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 sqlx = { version = "0.9", features = ["sqlite", "runtime-tokio", "migrate", "chrono"] }

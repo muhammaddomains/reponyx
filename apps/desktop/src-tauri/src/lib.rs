@@ -7,6 +7,7 @@
 //! Phase 5 auth commands live in `auth.rs`.
 
 mod auth;
+mod schedules;
 mod commands {
     use reponyx_core::{DashboardCounts, GitStatus};
     use reponyx_database::Database;
@@ -92,6 +93,13 @@ pub fn run() {
             auth::complete_pairing_command,
             auth::validate_github_app_account_command,
             auth::revoke_device_pairing_command,
+            schedules::list_schedules_command,
+            schedules::create_schedule_command,
+            schedules::update_schedule_command,
+            schedules::delete_schedule_command,
+            schedules::preview_next_runs_command,
+            schedules::materialize_due_command,
+            schedules::effective_schedule_command,
         ])
         .run(tauri::generate_context!())
         .expect("error while running RepoNyx");

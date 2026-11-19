@@ -63,16 +63,16 @@ impl From<RepoNyxError> for CommandError {
     }
 }
 
-type CommandResult<T> = Result<T, CommandError>;
+pub(crate) type CommandResult<T> = Result<T, CommandError>;
 
-fn invalid_input(message: impl Into<String>) -> CommandError {
+pub(crate) fn invalid_input(message: impl Into<String>) -> CommandError {
     CommandError {
         code: "InvalidInput".to_string(),
         message: message.into(),
     }
 }
 
-fn database_unavailable() -> CommandError {
+pub(crate) fn database_unavailable() -> CommandError {
     CommandError {
         code: "DatabaseError".to_string(),
         message: "database is unavailable".to_string(),
@@ -214,7 +214,7 @@ pub struct BrokerInstallationDto {
 
 // -- helpers ----------------------------------------------------------
 
-fn require_db<'a>(db: &'a State<'_, Option<Database>>) -> CommandResult<&'a Database> {
+pub(crate) fn require_db<'a>(db: &'a State<'_, Option<Database>>) -> CommandResult<&'a Database> {
     db.inner().as_ref().ok_or_else(database_unavailable)
 }
 

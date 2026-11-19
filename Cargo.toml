@@ -10,6 +10,7 @@ members = [
     "crates/provider-abstractions",
     "crates/github-provider",
     "crates/database",
+    "crates/scheduler",
 ]
 
 [workspace.package]
@@ -25,10 +26,12 @@ reponyx-git-engine = { path = "crates/git-engine" }
 reponyx-provider-abstractions = { path = "crates/provider-abstractions" }
 reponyx-github-provider = { path = "crates/github-provider" }
 reponyx-database = { path = "crates/database" }
+reponyx-scheduler = { path = "crates/scheduler" }
 
 async-trait = "0.1"
 axum = { version = "0.8", features = ["json", "query", "http1", "tokio"] }
 chrono = { version = "0.4", default-features = false, features = ["clock", "serde"] }
+chrono-tz = "0.10"
 jsonwebtoken = { version = "12", features = ["rust_crypto"] }
 keyring = "4"
 rand = "0.10"

@@ -84,3 +84,52 @@ export const brokerInstallationSchema = z.object({
   installedAt: z.string(),
   pairedDevice: z.string().nullable().optional(),
 });
+
+/** Phase 7 scheduler DTOs: camelCase, matching the Tauri
+ *  `schedules.rs` DTOs. */
+
+export const scheduleSchema = z.object({
+  id: z.string(),
+  scope: z.enum(["global", "account", "repository"]),
+  accountId: z.string().nullable().optional(),
+  repositoryId: z.string().nullable().optional(),
+  intervalType: z.enum(["interval_hours", "daily", "weekly", "custom"]),
+  intervalValue: z.string().nullable().optional(),
+  timezone: z.string(),
+  enabled: z.boolean(),
+  nextRunAt: z.string().nullable().optional(),
+  createdAt: z.string(),
+  updatedAt: z.string(),
+});
+
+export const scheduleWithNextRunSchema = scheduleSchema.extend({
+  computedNextRun: z.string().nullable().optional(),
+  nextRunError: z.string().nullable().optional(),
+});
+
+export const nextRunPreviewSchema = z.object({
+  utc: z.string(),
+  local: z.string(),
+  timezone: z.string(),
+});
+
+export const scheduleMaterializeErrorSchema = z.object({
+  scheduleId: z.string(),
+  message: z.string(),
+});
+
+export const materializeReportSchema = z.object({
+  checked: z.number().int().nonnegative(),
+  primed: z.number().int().nonnegative(),
+  createdJobIds: z.array(z.string()),
+  skippedDuplicate: z.number().int().nonnegative(),
+  skippedSyncDisabled: z.number().int().nonnegative(),
+  skippedMissingRepository: z.number().int().nonnegative(),
+  skippedOutOfWindow: z.number().int().nonnegative(),
+  errors: z.array(scheduleMaterializeErrorSchema),
+});
+
+export const effectiveScheduleSchema = z.object({
+  schedule: scheduleWithNextRunSchema,
+  nextRuns: z.array(z.string()),
+});

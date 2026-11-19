@@ -155,6 +155,56 @@ export interface SyncHistory {
   completedAt?: string | null;
 }
 
+/** Phase 7 (scheduler part) DTOs: camelCase, matching the Tauri
+ *  `schedules.rs` DTOs. */
+
+/** A schedule plus the next run computed just now; `nextRunError`
+ *  is set instead when the cadence/timezone no longer parses. */
+export interface ScheduleWithNextRun extends Schedule {
+  computedNextRun?: string | null;
+  nextRunError?: string | null;
+}
+
+export interface NextRunPreview {
+  /** UTC, RFC 3339. */
+  utc: string;
+  /** Same instant, formatted in `timezone`. */
+  local: string;
+  timezone: string;
+}
+
+export interface ScheduleMaterializeError {
+  scheduleId: string;
+  message: string;
+}
+
+export interface MaterializeReport {
+  checked: number;
+  primed: number;
+  createdJobIds: string[];
+  skippedDuplicate: number;
+  skippedSyncDisabled: number;
+  skippedMissingRepository: number;
+  skippedOutOfWindow: number;
+  errors: ScheduleMaterializeError[];
+}
+
+export interface EffectiveSchedule {
+  schedule: ScheduleWithNextRun;
+  /** Next runs, UTC RFC 3339. */
+  nextRuns: string[];
+}
+
+export interface NewScheduleInput {
+  scope: ScheduleScope;
+  accountId?: string | null;
+  repositoryId?: string | null;
+  intervalType: IntervalType;
+  intervalValue?: string | null;
+  timezone: string;
+  enabled: boolean;
+}
+
 /** `id` is a plain string: V1 seeds settings with stable ids such as `setting-storage-root`. */
 export interface Setting {
   id: string;

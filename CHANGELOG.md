@@ -5,6 +5,49 @@ All notable changes to RepoNyx are documented here. Format follows
 
 ## [Unreleased]
 
+### Added — Phase 7 (partial: scheduler crate only)
+
+- **Scheduler crate (`crates/scheduler`, `chrono-tz` 0.10.4):**
+  next-run calculation, due detection, and job creation for due
+  schedules, built on the Phase 2 schedules/jobs repository
+  functions. No schema change was needed (no V4 migration).
+  Dependencies are core + database only — proven by `cargo tree`,
+  no git-engine, no provider, no queue: the crate creates job rows
+  and never runs a sync.
+- **Cadence:** `interval_value` in plain or JSON form. Plain: `"6"`
+  (hours), `"02:30"` (daily), `"1,3,5 02:30"` (weekly, ISO weekday
+  numbers 1 = Monday .. 7 = Sunday), `"90"` (custom minutes). JSON:
+  `{"hours": 6}`, `{"time": "02:30"}`, `{"minutes": 90}`, plus
+  optional `"weekdays"` and `"window"` (`[start, end)` in local
+  time; `end <= start` crosses midnight). Unparsable values are
+  `InvalidInput`, never a fake time.
+- **DST-safe next runs:** a local time that does not exist
+  (spring-forward gap) fires at the first valid time after the gap;
+  a local time that occurs twice (fall back) fires once, at the
+  first occurrence. Tested for America/New_York and Europe/London
+  (2026 transitions) with America/Phoenix as the no-DST control.
+- **Precedence and materialize:** repository > account > global via
+  Phase 2's `effective_schedule_for`. `materialize_due` primes
+  schedules with no `next_run_at`, creates one job per governed
+  repository (skipping sync-disabled repos and repos with a
+  pending/running job), then advances each schedule's `next_run_at`
+  to its next run. Job type: `fetch` when the repo already has a
+  local path, else a clone job for its sync mode.
+- **Desktop (7 Tauri commands + typed api-client calls):** list
+  schedules (with computed next run), create, update, delete,
+  preview next runs (UTC + local display), materialize due now,
+  effective schedule for a repository. No scheduler UI page yet
+  (Phase 8). Desktop Rust verified by `cargo fmt` + review only
+  (Tauri binary build blocked on this VM).
+- **Verification (actual, 2026-11-19):** `cargo fmt --check` pass;
+  clippy pass, 0 warnings; `cargo test --workspace --exclude
+  reponyx-desktop` **302 passed, 0 failed** (scheduler 40 new);
+  `pnpm -r typecheck` pass; desktop build + eslint pass.
+- **Deliberately NOT done (blocked on Phase 6):** the sync queue,
+  background agent, IPC, Task Scheduler registration, tray,
+  auto-restart, agent health UI. The scheduler creates job rows
+  only; nothing runs them until Phase 6 lands.
+
 ### Added — Phase 5 (Authentication)
 
 - **Auth Broker (`apps/auth-broker`, axum 0.8.9):** a separate binary

@@ -1,6 +1,7 @@
 # RepoNyx — Project Status
 
-Last updated: 2026-11-18 (Phase 5: Authentication complete — see below)
+Last updated: 2026-11-19 (Phase 7 partial: scheduler crate only —
+see below; Phase 6 still blocked)
 
 ## Current phase
 
@@ -8,11 +9,116 @@ Last updated: 2026-11-18 (Phase 5: Authentication complete — see below)
 `9cc87b9`, PR #1). Phase 2 — Core Database and Domain — complete
 2026-11-18. Phase 3 — Git Engine — complete 2026-11-18. Phase 4 —
 GitHub Integration — complete 2026-11-18. Phase 5 — Authentication
-— complete 2026-11-18 (see below).** Work is on `main` going
-forward.
+— complete 2026-11-18. Phase 6 — Sync Queue — blocked (see below).
+Phase 7 — Scheduler and Background Agent — PARTIAL 2026-11-19
+(scheduler crate only; background agent, IPC, and Task Scheduler
+work blocked on Phase 6).** Work is on `main` going forward.
 
 ## Completed tasks
 
+- **Phase 7 — Scheduler crate only (PARTIAL, actual, 2026-11-19,
+  on `main`):** the scheduler part of Phase 7. The rest of the
+  phase (background agent, IPC, Task Scheduler/tray, agent health
+  UI) is blocked on Phase 6 and was deliberately NOT built.
+  - **Scheduler crate (`crates/scheduler`):** next-run calculation,
+    due detection, and job creation for due schedules, built on the
+    Phase 2 schedules/jobs repository functions (no duplicated
+    logic, no raw SQL in the crate, no schema change — no V4
+    migration was needed). Dependencies are `reponyx-core` +
+    `reponyx-database` only (proven by `cargo tree -p
+    reponyx-scheduler`: no git-engine, no provider, no queue) — the
+    crate creates job rows and never runs a sync.
+  - **Cadence (`cadence.rs`):** `interval_value` encoding, plain or
+    JSON. Plain: `"6"` (hours), `"02:30"` (daily `HH:MM`), `"1,3,5
+    02:30"` (weekly, ISO weekday numbers 1 = Monday .. 7 =
+    Sunday), `"90"` (custom minutes). JSON: `{"hours": 6}`,
+    `{"time": "02:30"}`, `{"minutes": 90}`, plus optional
+    `"weekdays": [1..7]` and `"window": {"start", "end"}`. A window
+    is `[start, end)` in local time; `end <= start` crosses
+    midnight; `start == end` is rejected. Bounds: hours 1..=168,
+    minutes 1..=10080. An unparsable cadence is `InvalidInput`,
+    never a panic or a silent default.
+  - **Next-run math (`next_run.rs`):** first run strictly after
+    "now", in UTC. Interval schedules are absolute-time cadences
+    anchored on the stored `next_run_at` (or `created_at`); daily /
+    weekly are wall-clock times in the schedule's IANA timezone.
+    DST rules: a local time that does not exist (spring-forward
+    gap) fires at the first valid time after the gap; a local time
+    that occurs twice (fall back) fires once, at the first
+    occurrence. A disabled schedule has no next run; a daily/weekly
+    time outside its own window never fires (strict semantics — the
+    preview shows no runs).
+  - **Timezone (`timezone.rs`):** IANA names via `chrono-tz`
+    0.10.4 (never hand-rolled DST tables); unknown names are
+    `InvalidInput`; display formatting is UTC storage + local
+    display.
+  - **Precedence:** repository > account > global, resolved by
+    Phase 2's `effective_schedule_for` — not reimplemented.
+  - **Due + materialize (`due.rs`):** due = enabled with stored
+    `next_run_at` passed (Phase 2 `due_schedules`). `materialize_due`
+    primes schedules whose `next_run_at` is `NULL` (computes an
+    initial value, no job), then per due schedule creates one job
+    per governed repository (global: all; account: its own;
+    repository: that one), skipping sync-disabled repositories and
+    repositories with a pending/running job (scheduling-time dedup
+    only), then advances the schedule by setting `next_run_at` to
+    the next computed run — that advance is the progress marker;
+    there is no `last_run_at` column and none was added. Job type:
+    `fetch` when the repo already has a local path, else a clone
+    job for its sync mode (`mirror`/`both` → mirror clone,
+    `working` → working clone), priority 0. A due run outside the
+    current window/weekdays creates no job and is advanced to the
+    next valid run. Per-schedule failures are recorded in the
+    report and never abort the run; a schedule whose cadence no
+    longer parses is left un-advanced so it stays visible.
+  - **Desktop (`apps/desktop/src-tauri/src/schedules.rs`, 7 Tauri
+    commands):** list schedules (with computed next run + parse
+    errors surfaced per schedule), create (validates cadence and
+    timezone before writing, computes the first run), update
+    (recomputes the next run when the cadence changes and the
+    schedule is enabled; the old `next_run_at` stays the interval
+    anchor; empty string clears `interval_value`), delete, preview
+    next N runs (count 1..=50, UTC + local display in the requested
+    timezone), materialize due now, effective schedule for a
+    repository (next 3 runs). Typed api-client wrappers + zod
+    schemas in `packages/shared` / `packages/api-client`. No
+    scheduler UI page — Phase 8. **Desktop Rust verified by `cargo
+    fmt` + review only (gdk blocker), not by a build — stated
+    honestly.**
+  - **Dependencies added (latest stable, verified on crates.io
+    2026-11-19):** `chrono-tz` 0.10.4 (resolved from `"0.10"`).
+    Note: the RustSec advisory DB carries an informational
+    "unmaintained" notice for `chrono` / `chrono-tz` (no
+    vulnerability, no patch exists); `chrono` 0.4.45 is already a
+    workspace dependency used by every phase, so this changes
+    nothing.
+  - **Test bug found and fixed during this work (test only):** the
+    new `materialize_after_job_completes` test called
+    `complete_job` on a `pending` job, which the Phase 2 transition
+    table correctly rejects (`pending` → `running` → `completed`);
+    the test now claims the job first. No production code was
+    wrong.
+  - **Deliberately NOT done (blocked on Phase 6):** the sync queue
+    / worker pool / job execution / retries / crash recovery, the
+    background-agent binary, the IPC crate, Windows Task Scheduler
+    registration, tray, auto-restart, agent health UI. The
+    scheduler creates job rows only; nothing runs them until
+    Phase 6 lands.
+  - **Verification (actual, 2026-11-19):** `cargo fmt --check`
+    pass; clippy (`--workspace --exclude reponyx-desktop
+    --all-targets`) pass, 0 warnings (1 collapsible-`if` warning
+    and 1 unused-workspace-dependency warning found and fixed
+    during the run); `cargo test --workspace --exclude
+    reponyx-desktop` **302 passed, 0 failed** (baseline 262; new:
+    scheduler 40 — lib 8, dst 5, materialize 10, next_run 14,
+    precedence 3; all other crates unchanged); `cargo tree -p
+    reponyx-scheduler` confirms no execution dependencies (chrono,
+    chrono-tz, core, database, serde, serde_json, sqlx, uuid only);
+    `pnpm -r typecheck` pass (Node 26.13.1); `pnpm --filter
+    @reponyx/desktop build` pass; desktop eslint pass. No flakes
+    observed in the full-suite runs. Tauri binary build still
+    blocked on this VM by missing `gdk-3.0` / WebViewGTK system
+    libraries — not claimed passed.
 - **Phase 5 — Authentication (actual, 2026-11-18, on `main`):**
   - **Auth Broker (`apps/auth-broker`, axum 0.8.9):** a separate
     binary crate — NOT a dependency of the desktop crate
@@ -618,6 +724,23 @@ test `healthy_mirror_and_working_clone` failed once under full
 parallel load and passed 3/3 in isolation and on the full-suite
 re-run (262 passed, 0 failed) — recorded as a flake, not fixed here.
 
+### Phase 7 partial — 2026-11-19 (scheduler crate only, on `main`)
+
+All commands actually run. Node 26.13.1, pnpm 12.21.0, Rust 1.100.0.
+
+| Check | Result |
+| --- | --- |
+| cargo fmt --check | pass |
+| cargo clippy --workspace --exclude reponyx-desktop --all-targets | pass, 0 warnings (1 collapsible-`if` + 1 unused-workspace-dependency warning found and fixed during the run) |
+| cargo test --workspace --exclude reponyx-desktop | **302 passed, 0 failed** — scheduler 40 new (lib 8, dst 5, materialize 10, next_run 14, precedence 3); auth-broker 22, core 11, credential-store 20, database 55, git-engine 87, github-provider 63, logging 4, provider-abstractions 0 |
+| cargo tree -p reponyx-scheduler | core + database only (chrono, chrono-tz, serde, serde_json, sqlx, uuid) — no git-engine, no provider, no queue |
+| pnpm -r typecheck | pass (shared, ui, api-client, desktop) |
+| pnpm --filter @reponyx/desktop build (vite) | pass |
+| pnpm --filter @reponyx/desktop lint (eslint) | pass |
+| cargo check -p reponyx-desktop | **FAIL — blocked**: same missing `gdk-3.0` / WebViewGTK system libraries as Phase 1 (desktop schedule commands verified by `cargo fmt` + review only) |
+
+No flakes observed in the full-suite runs during this work.
+
 ### Phase 4 — 2026-11-18 (GitHub integration, on `main`)
 
 All commands actually run. Node 26.13.1, pnpm 12.21.0, Rust 1.100.0.
@@ -732,7 +855,13 @@ Phase 1 handoff). Top level: `Cargo.toml`, `package.json`,
    user's go-ahead.~~ **Done 2026-11-18** (see "Completed tasks" above).
 5. ~~Phase 5: Authentication (`ai/phase5/PLAN.md`) — awaiting the
    user's go-ahead.~~ **Done 2026-11-18** (see "Completed tasks" above).
-6. Phase 6: Sync Queue (`ai/phase6/PLAN.md`) — awaiting the user's
-   go-ahead.
-7. On a machine with the WebViewGTK dev libraries (or Windows):
+6. Phase 6: Sync Queue (`ai/phase6/PLAN.md`) — **blocked**: a build
+   attempt's result was removed by an automated safety check before
+   it could be reviewed, and the phase must not be retried by
+   delegation. Nothing from that attempt was committed; local `main`
+   is unchanged.
+7. Phase 7: Scheduler and Background Agent — **partial** (scheduler
+   crate only, done 2026-11-19). Background agent, IPC, Task
+   Scheduler/tray, and agent health UI wait on Phase 6.
+8. On a machine with the WebViewGTK dev libraries (or Windows):
    re-run `cargo check -p reponyx-desktop` and `cargo tauri build`.

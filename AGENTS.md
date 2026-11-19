@@ -10,7 +10,9 @@ merged to `main` 2026-11-18); Phase 2 — Core Database and Domain
 (complete 2026-11-18); Phase 3 — Git Engine (complete
 2026-11-18); Phase 4 — GitHub Integration (complete
 2026-11-18); Phase 5 — Authentication (complete
-2026-11-18)**. See `ai/memory/PROJECT_STATUS.md` for the
+2026-11-18); Phase 7 — Scheduler and Background Agent (partial:
+scheduler crate only, 2026-11-19 — background agent, IPC, and Task
+Scheduler work blocked on Phase 6)**. See `ai/memory/PROJECT_STATUS.md` for the
 honest current state.
 
 ## Branch & safety
@@ -40,14 +42,14 @@ cargo tauri build                          # apps/desktop; needs WebViewGTK dev 
 ## Layout
 
 - `apps/desktop` — React frontend + Tauri backend (`src-tauri`)
-- `crates/{core,logging,git-engine,provider-abstractions,github-provider,database,credential-store}` — Rust libs
+- `crates/{core,logging,git-engine,provider-abstractions,github-provider,database,credential-store,scheduler}` — Rust libs
 - `apps/auth-broker` — Auth Broker (holds the GitHub App private key; never a desktop dependency)
 - `packages/{shared,ui,api-client,config}` — shared TS
 - `docs/architecture`, `docs/decisions` (ADRs 001–010), `docs/security`
 - `ai/phaseN/PLAN.md`, `ai/memory/PROJECT_STATUS.md`
 
 Planned, not yet created: `apps/background-agent`,
-`crates/{scheduler,sync-queue,ipc,testing}`.
+`crates/{sync-queue,ipc,testing}`.
 
 ## Hard rules
 

@@ -9,10 +9,14 @@ import {
   brokerInstallationSchema,
   brokerStatusSchema,
   dashboardCountsSchema,
+  effectiveScheduleSchema,
   gitStatusSchema,
+  materializeReportSchema,
+  nextRunPreviewSchema,
   pairingInfoSchema,
   patExpirySchema,
   providerAccountInfoSchema,
+  scheduleWithNextRunSchema,
 } from "@reponyx/shared";
 import type {
   Account,
@@ -20,10 +24,15 @@ import type {
   BrokerInstallation,
   BrokerStatus,
   DashboardCounts,
+  EffectiveSchedule,
   GitStatus,
+  MaterializeReport,
+  NewScheduleInput,
+  NextRunPreview,
   PairingInfo,
   PatExpiry,
   ProviderAccountInfo,
+  ScheduleWithNextRun,
 } from "@reponyx/shared";
 
 export async function getAppInfo(): Promise<AppInfo> {
@@ -142,4 +151,83 @@ export async function revokeDevicePairing(
         device_identifier: deviceIdentifier,
       }),
     );
+}
+
+/** Phase 7 scheduler commands (Tauri `schedules.rs`). Invoke
+ *  argument names are snake_case, matching the Rust parameter names.
+ *  No scheduler UI exists yet (Phase 8); these are the typed calls
+ *  it will use. */
+
+export async function listSchedules(): Promise<ScheduleWithNextRun[]> {
+  return z
+    .array(scheduleWithNextRunSchema)
+    .parse(await invoke("list_schedules_command"));
+}
+
+export async function createSchedule(
+  input: NewScheduleInput,
+): Promise<ScheduleWithNextRun> {
+  return scheduleWithNextRunSchema.parse(
+    await invoke("create_schedule_command", {
+      scope: input.scope,
+      account_id: input.accountId ?? null,
+      repository_id: input.repositoryId ?? null,
+      interval_type: input.intervalType,
+      interval_value: input.intervalValue ?? null,
+      timezone: input.timezone,
+      enabled: input.enabled,
+    }),
+  );
+}
+
+export async function updateSchedule(input: {
+  id: string;
+  interval_type?: string | null;
+  interval_value?: string | null;
+  timezone?: string | null;
+  enabled?: boolean | null;
+}): Promise<ScheduleWithNextRun> {
+  return scheduleWithNextRunSchema.parse(
+    await invoke("update_schedule_command", {
+      id: input.id,
+      interval_type: input.interval_type ?? null,
+      interval_value: input.interval_value ?? null,
+      timezone: input.timezone ?? null,
+      enabled: input.enabled ?? null,
+    }),
+  );
+}
+
+export async function deleteSchedule(id: string): Promise<boolean> {
+  return z.boolean().parse(await invoke("delete_schedule_command", { id }));
+}
+
+export async function previewNextRuns(input: {
+  schedule_id: string;
+  count: number;
+  display_timezone?: string | null;
+}): Promise<NextRunPreview[]> {
+  return z.array(nextRunPreviewSchema).parse(
+    await invoke("preview_next_runs_command", {
+      schedule_id: input.schedule_id,
+      count: input.count,
+      display_timezone: input.display_timezone ?? null,
+    }),
+  );
+}
+
+export async function materializeDue(): Promise<MaterializeReport> {
+  return materializeReportSchema.parse(
+    await invoke("materialize_due_command"),
+  );
+}
+
+export async function effectiveSchedule(
+  repositoryId: string,
+): Promise<EffectiveSchedule | null> {
+  return effectiveScheduleSchema.nullable().parse(
+    await invoke("effective_schedule_command", {
+      repository_id: repositoryId,
+    }),
+  );
 }

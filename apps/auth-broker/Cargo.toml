@@ -1,0 +1,33 @@
+[package]
+name = "reponyx-auth-broker"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Auth Broker: sole holder of the GitHub App private key; mints installation tokens, pairs devices, audits auth events"
+
+[[bin]]
+name = "reponyx-auth-broker"
+path = "src/main.rs"
+
+[dependencies]
+axum.workspace = true
+chrono.workspace = true
+jsonwebtoken.workspace = true
+rand.workspace = true
+reponyx-core.workspace = true
+reponyx-logging.workspace = true
+reqwest.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+uuid.workspace = true
+
+[dev-dependencies]
+pkcs8 = { version = "0.11", features = ["pem"] }
+reponyx-github-provider.workspace = true
+rsa = "0.10"
+tracing-subscriber = "0.3"
+wiremock = "0.6"

@@ -1,19 +1,12 @@
 //! Token sources for the GitHub provider.
 //!
-//! Phase 5 (Authentication) owns real credentials. Phase 4 only defines
-//! the seam Phase 5 must fill: [`CredentialSource`]. A source hands out
-//! a [`Token`] on demand; it never persists anything itself, and the
-//! provider never logs a token value.
-//!
-//! What Phase 5 must supply:
-//! - A broker-backed installation-token source: call the Auth Broker for
-//!   a fresh installation token (expires in ~3600 s), cache it until
-//!   shortly before expiry, refresh on 401. Its [`TokenKind`] is
-//!   [`CredentialKind::InstallationToken`].
-//! - A PAT source: read the fine-grained PAT from the OS credential
-//!   store (never from disk, never from the database) and hand it out
-//!   with [`CredentialKind::Pat`]. The source must supply the GitHub
-//!   login as the token's `username` (used for Git HTTP auth).
+//! Phase 5 (Authentication) fills this seam with real sources
+//! (see [`broker::BrokerTokenSource`], and `PatTokenSource` in the
+//! `reponyx-credential-store` crate): a broker-backed
+//! installation-token source and a PAT source that reads from the OS
+//! credential store. A source hands out a [`Token`] on demand; it
+//! never persists anything itself, and the provider never logs a
+//! token value.
 //!
 //! Tests use [`StaticTokenSource`] with obviously fake tokens only.
 
@@ -114,6 +107,12 @@ pub trait CredentialSource: Send + Sync {
     /// must reconnect) — never a generic error, and never an error
     /// whose message contains the token.
     async fn token(&self) -> Result<Token, RepoNyxError>;
+
+    /// Drop any cached token, so the next `token()` call fetches a
+    /// fresh one. The client calls this once after a 401 and retries
+    /// the request a single time. Default: no-op (stateless sources
+    /// have nothing to drop).
+    async fn invalidate(&self) {}
 }
 
 /// A token source that always returns the same token. For tests and

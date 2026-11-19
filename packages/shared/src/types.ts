@@ -52,9 +52,47 @@ export interface Account {
   accountType: AccountType;
   authenticationMethod: AuthenticationMethod;
   status: AccountStatus;
+  /** User-supplied fine-grained PAT expiry (PAT accounts only). */
+  patExpiresAt?: string | null;
+  /** Computed from `patExpiresAt`: unknown when no expiry is known. */
+  patExpiryStatus: "unknown" | "valid" | "expiring_soon" | "expired";
+  patExpiryDaysLeft?: number | null;
   lastValidatedAt?: string | null;
   createdAt: string;
   updatedAt: string;
+}
+
+export interface ProviderAccountInfo {
+  providerAccountId: string;
+  username: string;
+  displayName?: string | null;
+  avatarUrl?: string | null;
+}
+
+export interface PatExpiry {
+  status: "unknown" | "valid" | "expiring_soon" | "expired";
+  daysLeft?: number | null;
+}
+
+export interface PairingInfo {
+  pairingCode: string;
+  expiresAt: string;
+  installationId: string;
+  deviceIdentifier: string;
+}
+
+export interface BrokerStatus {
+  configured: boolean;
+  reachable: boolean;
+  baseUrl: string;
+}
+
+export interface BrokerInstallation {
+  installationId: string;
+  setupAction: string;
+  accountLogin?: string | null;
+  installedAt: string;
+  pairedDevice?: string | null;
 }
 
 export interface Repository {

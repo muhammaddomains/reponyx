@@ -12,9 +12,12 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 
 [dependencies]
 reponyx-core.workspace = true
+reponyx-credential-store.workspace = true
 reponyx-database.workspace = true
 reponyx-git-engine.workspace = true
+reponyx-github-provider.workspace = true
 reponyx-logging.workspace = true
+reponyx-provider-abstractions.workspace = true
 serde.workspace = true
 tauri.workspace = true
 tauri-plugin-updater.workspace = true

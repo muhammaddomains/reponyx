@@ -5,6 +5,112 @@ All notable changes to RepoNyx are documented here. Format follows
 
 ## [Unreleased]
 
+### Added — Phase 5 (Authentication)
+
+- **Auth Broker (`apps/auth-broker`, axum 0.8.9):** a separate binary
+  crate that holds the GitHub App private key exclusively — it is not
+  a dependency of the desktop crate. The key loads at startup from
+  `REPONYX_BROKER_PRIVATE_KEY` (PEM text) or
+  `REPONYX_BROKER_PRIVATE_KEY_PATH`; the broker refuses to start
+  without the App id, the key, and a setup token of ≥ 16 characters
+  (`REPONYX_BROKER_SETUP_TOKEN`), and binds loopback
+  (`127.0.0.1:8765`) by default. Endpoints: `GET /health`; `POST
+  /setup/state` (one-time CSRF `state` + install URL); `GET
+  /github/callback` (validates `state` — single-use, 10-minute TTL —
+  records the installation); `POST /pairing/request`, `POST
+  /pairing/confirm`, `GET /pairing/status`, `POST /pairing/revoke`;
+  `POST /installations/{id}/token` (mint); `GET /installations`;
+  `GET /audit`. Token minting signs an App JWT (RS256,
+  `jsonwebtoken` 12.0.0, `exp` = now + 9 min) and calls `POST
+  /app/installations/{id}/access_tokens`; minted tokens are cached
+  per installation until 5 minutes before expiry, with
+  `force_refresh` after a 401. Rate limiting is hand-rolled
+  per-key token buckets (minting 30/min per device, pairing
+  requests 10/min per IP, pairing confirms 20/min per IP; 429 with
+  `Retry-After`). The audit log is append-only and in-memory; events
+  never contain a secret (tested for tokens, codes, and key
+  material in both audit output and broker logs).
+- **Pairing design:** the pairing request is authenticated by the
+  broker setup token (operator-supplied at startup, stored in the
+  desktop's OS credential store, `X-RepoNyx-Setup-Token`, compared
+  by SHA-256 hash). The code is 9 characters from an unambiguous
+  alphabet (`XXX-XXX-XXX`, ~45 bits), single-use, 10-minute TTL,
+  max 5 wrong-device attempts then invalidated, revocable, audited,
+  device-bound. On confirm the broker issues a random 32-byte
+  device token, stored server-side only as a SHA-256 hash. Broker
+  state is in-memory in Phase 5 — a restart forgets installations,
+  codes, and device tokens (durable broker storage is a
+  deployment-phase hardening item).
+- **Credential-store crate (`crates/credential-store`, `keyring`
+  4.2.0):** `CredentialStore` trait (store/get/delete/exists; OS
+  backends report listing as unsupported rather than pretending the
+  store is empty), OS backend via `keyring`, in-memory backend for
+  tests/CI, `SecretString` (zeroed on drop, redacted in `Debug`).
+  PAT flow: format validation before any network call, add
+  (validate → store → create account), replace (same GitHub
+  identity required), remove (store entry deleted + account
+  revoked, row kept), reconnect (the only path back to
+  `connected`), validate (refreshes `last_validated_at`), expiry
+  detection with a 7-day warning threshold. A test proves the PAT
+  appears in no column of the accounts table. `PatTokenSource`
+  implements the Phase 4 `CredentialSource`.
+- **Migration V3 (`0003_pat_expiry.sql`):** nullable
+  `pat_expires_at` on `accounts` (metadata, not a secret).
+- **Phase 4 `CredentialSource` implementations
+  (`crates/github-provider/src/broker.rs`):** `BrokerClient`
+  (pairing + minting; secret-free, tokens passed per call) and
+  `BrokerTokenSource` (mints via the broker, caches until 5 min
+  before expiry, drops the cache on `invalidate()`). The trait
+  gained a default no-op `invalidate()`; `GitHubClient` now
+  refreshes once after a 401 and retries a single time, then fails
+  fast. Mixed auth is proven by tests: PAT + broker providers both
+  validate against the same mocked GitHub API through the
+  `GitProvider` trait, and an end-to-end test runs a real broker
+  (throwaway key) + `BrokerTokenSource` + `GitHubProvider` and
+  verifies the presented JWT.
+- **Desktop flows (`apps/desktop/src-tauri/src/auth.rs`, 17 Tauri
+  commands):** PAT add/replace/remove/reconnect/validate, PAT
+  expiry status, broker setup-token save, broker status,
+  installations, pairing start/complete (creates/reconnects the
+  account row, mirrors the installation locally), GitHub App
+  validate, device revocation. Errors are `{ code, message }` with
+  redacted messages. The Accounts page (`routes/Accounts.tsx`) is
+  now real: account list with status badges and PAT expiry
+  warnings, add-PAT form, validate/reconnect/replace/remove,
+  broker setup-token form, installations + pairing flow.
+  The desktop crate cannot be compiled on this VM (gdk blocker),
+  so these commands are verified by `cargo fmt` + review, not by a
+  build.
+- **Private-key scan (`scripts/check-no-private-key.sh`):** checks
+  desktop sources for key markers and broker-key references,
+  verifies the desktop crate does not depend on the broker
+  (Cargo.toml + `cargo tree`), checks for committed key files, and
+  scans a built desktop binary when one exists. **Result: PASSED
+  on sources + dependency tree; binary part SKIPPED** — no desktop
+  binary can be built on this VM.
+- **Tests: 47 new tests** (auth-broker 22: lib 7, broker integration
+  15; credential-store 20: lib 6, mixed_auth 1, pat_flow 10, store
+  3; github-provider broker_source 5) plus 1 updated Phase 4 test
+  contract (401 refresh). Re-verified: `cargo test --workspace
+  --exclude reponyx-desktop` **262 passed, 0 failed** (Phase 4
+  baseline 215); `cargo fmt --check` pass; clippy pass, 0 warnings;
+  `pnpm -r typecheck` pass; desktop build pass (2306 modules).
+  Tauri binary build still blocked on this VM by missing `gdk-3.0`
+  / WebViewGTK system libraries — not claimed passed. One transient
+  failure during verification (an untouched Phase 3 git-engine
+  health test, once under parallel load; passes in isolation and on
+  re-run) is recorded as a flake in `ai/phase5/PLAN.md`.
+- **Dependencies added (all latest stable):** `axum` 0.8.9,
+  `jsonwebtoken` 12.0.0 (feature `rust_crypto`), `keyring` 4.2.0,
+  `rand` 0.10.4, `sha2` 0.11.1, `zeroize` 1.9.2 (feature `derive`),
+  `rsa` 0.10.0 (dev-only), `pkcs8` 0.11.0 (dev-only); `reqwest`
+  0.13.5 gained the `query` feature; `tempfile` 3.27.0 moved to
+  workspace dependencies.
+- **Deliberately NOT done (approval gates):** no GitHub App
+  published or created; no production credential created or
+  modified; the Auth Broker was not deployed anywhere; no real
+  PAT/token/private key was used.
+
 ### Added — Phase 4 (GitHub Integration)
 
 - **New crate `crates/github-provider`** implementing the

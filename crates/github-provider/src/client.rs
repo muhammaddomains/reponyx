@@ -141,6 +141,10 @@ impl GitHubClient {
         let url = self.resolve_url(url);
         let mut attempts = 0usize;
         let mut rate_limit_waits = 0usize;
+        // Whether the credential was already refreshed once for this
+        // request (after a 401). Exactly one refresh-and-retry per
+        // request — permanent auth failures fail fast after that.
+        let mut refreshed = false;
         loop {
             let token = self.source.token().await?;
             let result = self
@@ -231,6 +235,15 @@ impl GitHubClient {
                             "GitHub server error, retrying"
                         );
                         tokio::time::sleep(backoff_delay(attempts)).await;
+                        continue;
+                    }
+                    // A 401 means the cached token is stale: drop it
+                    // and retry exactly once with a fresh token.
+                    // Anything else (or a second 401) fails fast.
+                    if status.as_u16() == 401 && !refreshed {
+                        refreshed = true;
+                        self.source.invalidate().await;
+                        tracing::debug!("GitHub credential rejected; refreshed and retrying once");
                         continue;
                     }
                     return Err(map_status_error(status, &message));

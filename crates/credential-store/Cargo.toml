@@ -1,0 +1,26 @@
+[package]
+name = "reponyx-credential-store"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "OS credential store access (Windows Credential Manager, macOS Keychain, Linux Secret Service) and PAT account flows"
+
+[dependencies]
+async-trait.workspace = true
+chrono.workspace = true
+keyring.workspace = true
+reponyx-core.workspace = true
+reponyx-database.workspace = true
+reponyx-github-provider.workspace = true
+reponyx-provider-abstractions.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sqlx.workspace = true
+tokio.workspace = true
+uuid.workspace = true
+zeroize.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+wiremock = "0.6"

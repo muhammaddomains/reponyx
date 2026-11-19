@@ -84,6 +84,11 @@ pub struct Account {
     pub authentication_method: AuthenticationMethod,
     pub status: AccountStatus,
     pub last_validated_at: Option<DateTime<Utc>>,
+    /// Optional user-supplied expiry of a fine-grained PAT (V3).
+    /// `None` means the token has no known expiry (GitHub App
+    /// accounts always use `None` — installation tokens are
+    /// short-lived and minted on demand, never stored).
+    pub pat_expires_at: Option<DateTime<Utc>>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }

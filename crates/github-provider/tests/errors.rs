@@ -20,14 +20,18 @@ fn error_response(status: u16, message: &str) -> ResponseTemplate {
     ResponseTemplate::new(status).set_body_json(json!({"message": message}))
 }
 
+/// A 401 refreshes the credential once and retries a single time;
+/// when the refreshed credential is still rejected, the provider
+/// fails fast with `AuthenticationExpired` (never an infinite
+/// retry loop).
 #[tokio::test]
-async fn unauthorized_is_authentication_expired_and_not_retried() {
+async fn unauthorized_refreshes_once_then_fails_as_authentication_expired() {
     let server = MockServer::start().await;
     let provider = provider_for(&server);
     Mock::given(method("GET"))
         .and(path("/user/repos"))
         .respond_with(error_response(401, "Bad credentials"))
-        .expect(1)
+        .expect(2)
         .mount(&server)
         .await;
 

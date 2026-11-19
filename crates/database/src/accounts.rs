@@ -59,6 +59,7 @@ fn row_to_account(row: &SqliteRow) -> Result<Account, sqlx::Error> {
         status: AccountStatus::from_str(&col::<String>(row, "connection_status")?)
             .map_err(|e| sqlx::Error::Decode(Box::new(e)))?,
         last_validated_at: opt_col(row, "last_validated_at")?,
+        pat_expires_at: opt_col(row, "pat_expires_at")?,
         created_at: col(row, "created_at")?,
         updated_at: col(row, "updated_at")?,
     })
@@ -228,6 +229,45 @@ pub async fn reconnect_account(pool: &SqlitePool, id: Uuid) -> Result<Account, R
     .execute(pool)
     .await
     .map_err(map_error)?;
+    get_account(pool, id)
+        .await?
+        .ok_or_else(|| invalid(format!("account {id} not found")))
+}
+
+/// Record the user-supplied expiry of a fine-grained PAT (V3
+/// `pat_expires_at`). `None` clears it. Not a secret — expiry
+/// metadata only; the PAT itself lives in the OS credential store.
+pub async fn set_pat_expiry(
+    pool: &SqlitePool,
+    id: Uuid,
+    expires_at: Option<chrono::DateTime<chrono::Utc>>,
+) -> Result<Account, RepoNyxError> {
+    let now = now_iso();
+    let value = expires_at.map(|dt| dt.to_rfc3339());
+    sqlx::query("UPDATE accounts SET pat_expires_at = ?, updated_at = ? WHERE id = ?")
+        .bind(value)
+        .bind(now)
+        .bind(id.to_string())
+        .execute(pool)
+        .await
+        .map_err(map_error)?;
+    get_account(pool, id)
+        .await?
+        .ok_or_else(|| invalid(format!("account {id} not found")))
+}
+
+/// Record a successful validation: refresh `last_validated_at`
+/// without changing the status. Used after a re-validation that
+/// confirms the stored credential still works.
+pub async fn mark_validated(pool: &SqlitePool, id: Uuid) -> Result<Account, RepoNyxError> {
+    let now = now_iso();
+    sqlx::query("UPDATE accounts SET last_validated_at = ?, updated_at = ? WHERE id = ?")
+        .bind(&now)
+        .bind(&now)
+        .bind(id.to_string())
+        .execute(pool)
+        .await
+        .map_err(map_error)?;
     get_account(pool, id)
         .await?
         .ok_or_else(|| invalid(format!("account {id} not found")))

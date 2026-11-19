@@ -59,3 +59,36 @@ A separate service that:
 Installation tokens expire after ~1 hour; the broker mints fresh ones
 on demand. PAT lifetimes vary per token and are tracked per account.
 Permanent auth/permission failures are never retried indefinitely.
+
+## As implemented (Phase 5, 2026-11-18)
+
+- **Broker** (`apps/auth-broker`, axum): separate binary, not a
+  dependency of the desktop crate. Key from
+  `REPONYX_BROKER_PRIVATE_KEY` or `REPONYX_BROKER_PRIVATE_KEY_PATH`;
+  setup token from `REPONYX_BROKER_SETUP_TOKEN`; binds
+  `127.0.0.1:8765` by default. JWT: RS256, `iss` = App id,
+  `iat` = now − 60 s, `exp` = now + 9 min. Minted tokens cached per
+  installation until 5 minutes before expiry; `force_refresh`
+  bypasses the cache.
+- **Pairing request authentication:** the broker setup token
+  (operator-supplied at startup, stored in the desktop's OS
+  credential store, `X-RepoNyx-Setup-Token`, compared by SHA-256
+  hash). Code: 9 chars, unambiguous alphabet, `XXX-XXX-XXX`,
+  single-use, 10-minute TTL, 5 wrong-device attempts then
+  invalidated. Device token: random 32 bytes, stored server-side
+  only as a SHA-256 hash.
+- **Rate limits:** minting 30/min per device, pairing requests
+  10/min per IP, pairing confirms 20/min per IP (hand-rolled token
+  buckets); 429 with `Retry-After`.
+- **401 handling:** the provider client invalidates the cached
+  token and retries exactly once, then fails fast with
+  `AuthenticationExpired`.
+- **Broker state is in-memory** (installations, codes, device
+  tokens, cache, audit). A restart forgets everything; devices
+  must re-pair. Durable broker storage is a deployment-phase
+  hardening item.
+- **PAT expiry:** `pat_expires_at` on `accounts` (V3 migration);
+  warning threshold 7 days; `days_left` rounds up.
+- **Private-key scan:** `scripts/check-no-private-key.sh` — sources
+  + dependency tree pass; the binary part needs a machine where the
+  Tauri build works.

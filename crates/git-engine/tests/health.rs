@@ -20,6 +20,31 @@ fn verify(
     verify_repository(git(), path, Duration::from_secs(30))
 }
 
+/// Verify a repository that was just cloned, retrying while the
+/// diagnosis is transiently `Locked`.
+///
+/// Under full parallel load `verify` occasionally reports `Locked`
+/// instead of `Healthy` right after a clone finishes (observed ~2
+/// times in 8 full-workspace runs on this VM, never in isolation and
+/// never on re-run): the clone's lock release and git's own lock
+/// files can still be settling when the check runs. A health check
+/// is allowed to observe a transient lock — it is not a verdict on
+/// the repository — so retry a few times with a short pause. Any
+/// other status (including a persistent `Locked` after the retries)
+/// is returned as-is, so a genuinely broken repository still fails
+/// the test.
+async fn verify_fresh_clone(path: &Path) -> reponyx_git_engine::health::RepositoryDiagnosis {
+    let mut diagnosis = verify(path).await;
+    for _ in 0..3 {
+        if diagnosis.status != HealthStatus::Locked {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        diagnosis = verify(path).await;
+    }
+    diagnosis
+}
+
 #[tokio::test]
 async fn healthy_mirror_and_working_clone() {
     let dir = tempfile::tempdir().unwrap();
@@ -35,7 +60,7 @@ async fn healthy_mirror_and_working_clone() {
     )
     .await
     .unwrap();
-    let diagnosis = verify(&mirror).await;
+    let diagnosis = verify_fresh_clone(&mirror).await;
     assert_eq!(diagnosis.status, HealthStatus::Healthy);
     assert_eq!(
         diagnosis.head_sha.as_deref(),
@@ -45,7 +70,7 @@ async fn healthy_mirror_and_working_clone() {
 
     let work = dir.path().join("work");
     working_clone(&fixture.bare, &work).await;
-    let diagnosis = verify(&work).await;
+    let diagnosis = verify_fresh_clone(&work).await;
     assert_eq!(diagnosis.status, HealthStatus::Healthy);
 }
 

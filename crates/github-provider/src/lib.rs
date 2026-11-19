@@ -18,6 +18,7 @@
 //!   repositories, preserving local state, and never deletes a local
 //!   repository that discovery did not return.
 
+pub mod broker;
 pub mod client;
 pub mod credentials;
 pub mod model;
@@ -26,6 +27,9 @@ pub mod provider;
 pub mod rate_limit;
 pub mod sync;
 
+pub use broker::{
+    BrokerClient, BrokerInstallation, BrokerTokenSource, DEFAULT_BROKER_BASE_URL, PairingStatus,
+};
 pub use client::{ApiResponse, GitHubClient};
 pub use credentials::{
     CredentialKind, CredentialSource, FailingTokenSource, StaticTokenSource, Token,

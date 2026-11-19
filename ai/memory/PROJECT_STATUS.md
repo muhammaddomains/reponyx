@@ -1,17 +1,213 @@
 # RepoNyx — Project Status
 
-Last updated: 2026-11-18 (Phase 3: Git engine complete — see below)
+Last updated: 2026-11-18 (Phase 5: Authentication complete — see below)
 
 ## Current phase
 
 **Phase 1 — Foundation (complete, merged to `main` 2026-11-18 as
 `9cc87b9`, PR #1). Phase 2 — Core Database and Domain — complete
 2026-11-18. Phase 3 — Git Engine — complete 2026-11-18. Phase 4 —
-GitHub Integration — complete 2026-11-18 (see below).** Work is on
-`main` going forward.
+GitHub Integration — complete 2026-11-18. Phase 5 — Authentication
+— complete 2026-11-18 (see below).** Work is on `main` going
+forward.
 
 ## Completed tasks
 
+- **Phase 5 — Authentication (actual, 2026-11-18, on `main`):**
+  - **Auth Broker (`apps/auth-broker`, axum 0.8.9):** a separate
+    binary crate — NOT a dependency of the desktop crate
+    (enforced by `scripts/check-no-private-key.sh`). Holds the
+    GitHub App private key exclusively: loaded at startup from
+    `REPONYX_BROKER_PRIVATE_KEY` (PEM text) or
+    `REPONYX_BROKER_PRIVATE_KEY_PATH` (file, read once); no
+    default key, no committed key file; refuses to start without
+    the App id, the key, and a setup token of ≥ 16 chars
+    (`REPONYX_BROKER_SETUP_TOKEN`). Binds loopback
+    (`127.0.0.1:8765`) by default. Endpoints: `GET /health`;
+    `POST /setup/state` (one-time CSRF `state` + install URL);
+    `GET /github/callback` (validates `state` — single-use,
+    10-minute TTL — records the installation); `POST
+    /pairing/request`, `POST /pairing/confirm`, `GET
+    /pairing/status`, `POST /pairing/revoke`; `POST
+    /installations/{id}/token` (mint); `GET /installations`;
+    `GET /audit`. Errors are `{ error: { code, message } }` with
+    `RepoNyxError` codes; rate limits return 429 with
+    `Retry-After`.
+  - **Pairing design (the choice the plan left open):** the
+    pairing request is authenticated by the broker setup token
+    (operator-supplied at broker startup, stored in the desktop's
+    OS credential store, presented as `X-RepoNyx-Setup-Token` and
+    compared by SHA-256 hash). The pairing code is 9 characters
+    from an unambiguous alphabet (no 0/O/1/I), shown as
+    `XXX-XXX-XXX` (~45 bits), single-use, 10-minute TTL, max 5
+    wrong-device attempts then invalidated, revocable, audited,
+    bound to the requesting device identifier. On confirm the
+    broker issues a random 32-byte device token, stored server-side
+    only as a SHA-256 hash; the desktop stores the raw token in
+    the OS credential store and presents it as `Authorization:
+    Bearer <device_token>` when minting. Broker state is in-memory
+    (installations, codes, `state` values, device tokens, token
+    cache, audit log); a restart forgets everything and devices
+    must re-pair — durable broker storage is a deployment-phase
+    hardening item.
+  - **Token minting (`tokens.rs`):** App JWT, RS256 (`jsonwebtoken`
+    12.0.0 with the `rust_crypto` feature), `iss` = App id, `iat`
+    = now − 60 s, `exp` = now + 9 min; `POST
+    /app/installations/{id}/access_tokens`; minted tokens cached
+    per installation until 5 minutes before expiry;
+    `force_refresh` bypasses the cache (used after a 401).
+  - **Rate limiting:** hand-rolled per-key token buckets (no extra
+    dependency): minting 30/min per device, pairing requests
+    10/min per IP, pairing confirms 20/min per IP; pairing codes
+    have their own 5-attempt lockout on top.
+  - **Audit:** append-only, in-memory: pairing
+    requested/confirmed/revoked/failed, token minted/failed,
+    callback received/failed, auth failures. Events carry
+    timestamp, actor (device id, `setup`, or client IP), action,
+    outcome, detail — never a secret. Tests prove a minted token,
+    device token, and pairing code appear in neither the audit
+    output nor the broker logs (logs carry method/path/status and
+    ids only).
+  - **Credential-store crate (`crates/credential-store`):**
+    `CredentialStore` trait (store/get/delete/exists; listing is
+    explicitly unsupported for OS backends — it fails loudly
+    rather than pretending the store is empty). OS backend via
+    `keyring` 4.2.0 (Windows Credential Manager / macOS Keychain /
+    Linux Secret Service); in-memory backend for tests/CI.
+    `SecretString` zeroes on drop and redacts in `Debug`.
+    Services: `reponyx:pat` (account = account UUID),
+    `reponyx:broker` (`setup-token`, `device-token:<id>`).
+    PAT flow (`pat.rs`): format validation (`github_pat_` /
+    `ghp_`, before any network call), `add_pat_account`
+    (validate via Phase 4 `validate_auth` → store → create
+    account with `authentication_method = fine_grained_pat`;
+    duplicate identity rejected; the PAT is provably absent from
+    the database — a test scans every column of the accounts row),
+    `replace_pat` (re-validate, same GitHub identity required),
+    `remove_pat` (delete from store + mark account revoked; the
+    row stays — local data is never deleted), `reconnect_pat_account`
+    (only the explicit reconnect path returns an account to
+    `connected`), `validate_pat_account` (refreshes
+    `last_validated_at`), `pat_expiry_status` (7-day warning
+    threshold; `days_left` rounds up — see bugs). `PatTokenSource`
+    implements the Phase 4 `CredentialSource` (username = GitHub
+    login, `expires_in_secs` from the stored expiry when known).
+    File-backed encrypted storage is out of scope, stated in the
+    crate docs.
+  - **V3 migration (`migrations/sqlite/0003_pat_expiry.sql`):**
+    nullable `pat_expires_at TEXT` on `accounts` (metadata, not a
+    secret); `Account.pat_expires_at` in `crates/core`;
+    `set_pat_expiry` / `mark_validated` in `crates/database`.
+    V1/V2 untouched.
+  - **Phase 4 `CredentialSource` implementations
+    (`crates/github-provider/src/broker.rs`):** `BrokerClient`
+    (pairing + minting over HTTP; secret-free — setup/device tokens
+    are passed per call) and `BrokerTokenSource` (mints via the
+    broker, caches until 5 min before expiry, drops the cache on
+    `invalidate()`). The trait gained a default no-op
+    `invalidate()` method; `GitHubClient.get_json` now refreshes
+    once after a 401 and retries a single time, then fails fast
+    (this changed two Phase 4 test contracts — see bugs). Mixed
+    auth proven by a test: a PAT provider and a broker provider
+    both validate against the same mocked GitHub API through the
+    `GitProvider` trait; an end-to-end test runs a real broker
+    (throwaway key) + `BrokerTokenSource` + `GitHubProvider`
+    against the mocked API and verifies the presented JWT (RS256
+    signature, `iss`, 9-minute lifetime).
+  - **Desktop (`apps/desktop/src-tauri/src/auth.rs`, 17 Tauri
+    commands + `AuthState`):** PAT add/replace/remove/reconnect/
+    validate, PAT expiry status, broker setup-token save, broker
+    status (configured/reachable), broker installations, pairing
+    start/complete (creates/reconnects the account row and mirrors
+    the installation locally), GitHub App validate, device
+    revocation. Commands return `{ code, message }` with the
+    message passed through `redact_secrets`. The device identifier
+    is a UUID stored once in the settings table. DTOs are camelCase
+    to match the TS types; core structs stay snake_case. **The
+    desktop crate cannot be compiled on this VM (gdk blocker), so
+    these commands are verified by `cargo fmt` + review here, not
+    by a build — stated honestly.** Frontend
+    (`apps/desktop/src/routes/Accounts.tsx`, wired into `App.tsx`
+    in place of the Phase 5 placeholder): account list with status
+    badges and PAT expiry warnings, add-PAT form, validate /
+    reconnect / replace / remove actions, broker setup-token form,
+    installations + pairing flow with the code shown for
+    confirmation. New zod schemas + typed api-client wrappers in
+    `packages/shared` / `packages/api-client` (`zod` added as a
+    direct dependency of api-client).
+  - **Private-key scan (`scripts/check-no-private-key.sh`):**
+    greps desktop sources for key markers and broker-key
+    references, verifies the desktop crate does not depend on the
+    broker (Cargo.toml + `cargo tree`), checks for committed key
+    files, and scans a built desktop binary when one exists.
+    **Result: PASSED on sources + dependency tree; binary part
+    SKIPPED with an explicit note** — no desktop binary can be
+    built on this VM (WebViewGTK blocker). Full binary scan needs a
+    machine where `cargo tauri build` works (Phase 10).
+  - **Dependencies added (all latest stable, verified on
+    crates.io 2026-11-19):** `axum` 0.8.9, `jsonwebtoken` 12.0.0
+    (feature `rust_crypto`), `keyring` 4.2.0, `rand` 0.10.4,
+    `sha2` 0.11.1, `zeroize` 1.9.2 (feature `derive`),
+    `rsa` 0.10.0 (dev-only, throwaway test keys),
+    `pkcs8` 0.11.0 (dev-only, PEM encoding); `reqwest` 0.13.5
+    gained the `query` feature; `tempfile` 3.27.0 moved to
+    workspace dependencies.
+  - **Bugs found and fixed during Phase 5 (caught by the new
+    tests):** (1) `pat_expiry_status` used `num_days()` (truncates)
+    so a token stored 3 days out reported 2 days left — now rounds
+    up; (2) `jsonwebtoken` 12 panics without a crypto provider —
+    the `rust_crypto` feature must be enabled explicitly; (3)
+    `zeroize` derive macros need the `derive` feature (was only
+    enabled accidentally via feature unification before);
+    (4) `rsa` 0.10 has no `pem` feature — PEM encoding comes from
+    the `pkcs8` crate; (5) rand 0.10 moved `random_range`/`fill`
+    to the `RngExt` trait; (6) `keyring` 4 has no
+    `update_password` — `set_password` upserts; (7) sha2 0.11's
+    `finalize()` no longer implements `LowerHex` — hex is formatted
+    manually; (8) `ErrorCode::NotImplemented` does not exist in
+    core — the broker's status mapping drops that arm;
+    (9) `chrono::Duration::from_secs` does not exist — `Duration::seconds`;
+    (10) `i64::div_ceil` is still unstable — manual ceiling;
+    (11) test PATs used the `test-pat-…` prefix, which the
+    format validator (correctly) rejects — tests now use
+    realistic-format obviously-fake PATs (`ghp_0000…0001` etc.).
+  - **Behaviour change from Phase 4 (deliberate):** the client
+    refreshes once after a 401 and retries a single time. The
+    Phase 4 test `unauthorized_is_authentication_expired_and_not_retried`
+    now expects 2 requests (renamed to
+    `unauthorized_refreshes_once_then_fails_as_authentication_expired`),
+    and the PAT 401 test expects 2 attempts. Both assert the
+    failure is terminal — no infinite retry.
+  - **Deliberately NOT done in Phase 5 (approval gates):** no
+    GitHub App published or created; no production credential
+    created or modified; the Auth Broker was not deployed anywhere
+    (binds loopback); no real PAT/token/private key was used —
+    every test credential is obviously fake or a throwaway key
+    generated in-memory.
+  - **Verification (actual, 2026-11-18):** `cargo fmt --check`
+    pass; clippy (`--workspace --exclude reponyx-desktop
+    --all-targets`) pass, 0 warnings (4 collapsible-`if`
+    warnings found and fixed during the run); `cargo test
+    --workspace --exclude reponyx-desktop` **262 passed, 0
+    failed** (auth-broker 22 — lib 7, broker integration 15;
+    core 11; credential-store 20 — lib 6, mixed_auth 1, pat_flow
+    10, store 3; database 55; git-engine 87; github-provider 63
+    — lib 26, broker_source 5, discovery 8, errors 8,
+    installations 4, rate_limit 4, redaction 6, sync 2;
+    logging 4; provider-abstractions 0); private-key scan pass
+    (binary part skipped, see above); `pnpm -r typecheck` pass
+    (Node 26.13.1); `pnpm --filter @reponyx/desktop build` pass
+    (2306 modules, 1.95 s); desktop eslint pass. One transient
+    failure during verification: the untouched Phase 3 test
+    `healthy_mirror_and_working_clone` failed under full parallel
+    load (`Locked` instead of `Healthy`) — once during the build,
+    twice more during independent verification (2 failures in ~8
+    full-workspace runs; never in isolation, never on re-run). Fixed
+    in a follow-up commit (test only): the test retries `verify` up
+    to 3 times while transiently `Locked`; no production code
+    changed. Tauri binary
+    build still blocked on this VM by missing `gdk-3.0` /
+    WebViewGTK system libraries — not claimed passed.
 - **Phase 4 — GitHub Integration (actual, 2026-11-18, on `main`):**
   new crate `crates/github-provider` implementing the `GitProvider`
   trait: `validate_auth`, paginated `discover_repositories`,
@@ -402,6 +598,26 @@ rename with the same results (desktop build 1.39 s on the re-run).
 | cargo check -p reponyx-desktop | **FAIL — blocked**: `gdk-sys v0.18.2` build script: `Package gdk-3.0 was not found in the pkg-config search path` |
 | cargo tauri build (Linux) | **not run to completion — blocked** by the same missing system libraries; see below |
 
+### Phase 5 — 2026-11-18 (Authentication, on `main`)
+
+All commands actually run. Node 26.13.1, pnpm 12.21.0, Rust 1.100.0.
+
+| Check | Result |
+| --- | --- |
+| cargo fmt --check | pass |
+| cargo clippy --workspace --exclude reponyx-desktop --all-targets | pass, 0 warnings (4 collapsible-`if` warnings found and fixed during the run) |
+| cargo test --workspace --exclude reponyx-desktop | **262 passed, 0 failed** — auth-broker 22 (lib 7, broker integration 15), core 11, credential-store 20 (lib 6, mixed_auth 1, pat_flow 10, store 3), database 55, git-engine 87, github-provider 63 (lib 26, broker_source 5, discovery 8, errors 8, installations 4, rate_limit 4, redaction 6, sync 2), logging 4, provider-abstractions 0 |
+| scripts/check-no-private-key.sh | **pass** on desktop sources + dependency tree; **binary part SKIPPED** — no desktop binary can be built on this VM (WebViewGTK blocker) |
+| pnpm -r typecheck | pass (shared, ui, api-client, desktop) |
+| pnpm --filter @reponyx/desktop build (vite) | pass (2306 modules, 1.95 s) |
+| pnpm --filter @reponyx/desktop lint (eslint) | pass |
+| cargo check -p reponyx-desktop | **FAIL — blocked**: same missing `gdk-3.0` / WebViewGTK system libraries as Phase 1 (desktop auth commands verified by `cargo fmt` + review only) |
+
+One transient failure during verification: the untouched Phase 3
+test `healthy_mirror_and_working_clone` failed once under full
+parallel load and passed 3/3 in isolation and on the full-suite
+re-run (262 passed, 0 failed) — recorded as a flake, not fixed here.
+
 ### Phase 4 — 2026-11-18 (GitHub integration, on `main`)
 
 All commands actually run. Node 26.13.1, pnpm 12.21.0, Rust 1.100.0.
@@ -514,7 +730,9 @@ Phase 1 handoff). Top level: `Cargo.toml`, `package.json`,
    go-ahead.~~ **Done 2026-11-18** (see "Completed tasks" above).
 4. ~~Phase 4: GitHub integration (`ai/phase4/PLAN.md`) — awaiting the
    user's go-ahead.~~ **Done 2026-11-18** (see "Completed tasks" above).
-5. Phase 5: Authentication (`ai/phase5/PLAN.md`) — awaiting the
-   user's go-ahead.
-6. On a machine with the WebViewGTK dev libraries (or Windows):
+5. ~~Phase 5: Authentication (`ai/phase5/PLAN.md`) — awaiting the
+   user's go-ahead.~~ **Done 2026-11-18** (see "Completed tasks" above).
+6. Phase 6: Sync Queue (`ai/phase6/PLAN.md`) — awaiting the user's
+   go-ahead.
+7. On a machine with the WebViewGTK dev libraries (or Windows):
    re-run `cargo check -p reponyx-desktop` and `cargo tauri build`.

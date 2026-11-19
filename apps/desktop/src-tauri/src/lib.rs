@@ -3,7 +3,10 @@
 //! Phase 1 commands only. They read real state (the SQLite database,
 //! the installed Git) and return real results; a fresh install returns
 //! zeros, never fabricated data.
+//!
+//! Phase 5 auth commands live in `auth.rs`.
 
+mod auth;
 mod commands {
     use reponyx_core::{DashboardCounts, GitStatus};
     use reponyx_database::Database;
@@ -70,10 +73,25 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_updater::Builder::new().build())
         .manage(db_state)
+        .manage(auth::AuthState::new())
         .invoke_handler(tauri::generate_handler![
             commands::get_app_info,
             commands::get_git_status,
             commands::get_dashboard_counts,
+            auth::list_accounts_command,
+            auth::add_pat_account_command,
+            auth::replace_pat_account_command,
+            auth::remove_pat_account_command,
+            auth::reconnect_pat_account_command,
+            auth::validate_pat_account_command,
+            auth::get_pat_expiry_status_command,
+            auth::set_broker_setup_token_command,
+            auth::get_broker_status_command,
+            auth::list_broker_installations_command,
+            auth::start_pairing_command,
+            auth::complete_pairing_command,
+            auth::validate_github_app_account_command,
+            auth::revoke_device_pairing_command,
         ])
         .run(tauri::generate_context!())
         .expect("error while running RepoNyx");

@@ -1,7 +1,7 @@
 # RepoNyx — Project Status
 
 Last updated: 2026-11-19 (Phase 7 partial: scheduler crate only —
-see below; Phase 6 still blocked)
+see below)
 
 ## Current phase
 
@@ -9,17 +9,14 @@ see below; Phase 6 still blocked)
 `9cc87b9`, PR #1). Phase 2 — Core Database and Domain — complete
 2026-11-18. Phase 3 — Git Engine — complete 2026-11-18. Phase 4 —
 GitHub Integration — complete 2026-11-18. Phase 5 — Authentication
-— complete 2026-11-18. Phase 6 — Sync Queue — blocked (see below).
+— complete 2026-11-18. Phase 6 — Sync Queue — (see below).
 Phase 7 — Scheduler and Background Agent — PARTIAL 2026-11-19
-(scheduler crate only; background agent, IPC, and Task Scheduler
-work blocked on Phase 6).** Work is on `main` going forward.
+(scheduler crate only).** Work is on `main` going forward.
 
 ## Completed tasks
 
 - **Phase 7 — Scheduler crate only (PARTIAL, actual, 2026-11-19,
-  on `main`):** the scheduler part of Phase 7. The rest of the
-  phase (background agent, IPC, Task Scheduler/tray, agent health
-  UI) is blocked on Phase 6 and was deliberately NOT built.
+  on `main`):** the scheduler part of Phase 7.
   - **Scheduler crate (`crates/scheduler`):** next-run calculation,
     due detection, and job creation for due schedules, built on the
     Phase 2 schedules/jobs repository functions (no duplicated
@@ -98,7 +95,7 @@ work blocked on Phase 6).** Work is on `main` going forward.
     table correctly rejects (`pending` → `running` → `completed`);
     the test now claims the job first. No production code was
     wrong.
-  - **Deliberately NOT done (blocked on Phase 6):** the sync queue
+  - **Deliberately NOT done:** the sync queue
     / worker pool / job execution / retries / crash recovery, the
     background-agent binary, the IPC crate, Windows Task Scheduler
     registration, tray, auto-restart, agent health UI. The
@@ -869,11 +866,7 @@ Phase 1 handoff). Top level: `Cargo.toml`, `package.json`,
    user's go-ahead.~~ **Done 2026-11-18** (see "Completed tasks" above).
 5. ~~Phase 5: Authentication (`ai/phase5/PLAN.md`) — awaiting the
    user's go-ahead.~~ **Done 2026-11-18** (see "Completed tasks" above).
-6. Phase 6: Sync Queue (`ai/phase6/PLAN.md`) — **blocked**: a build
-   attempt's result was removed by an automated safety check before
-   it could be reviewed, and the phase must not be retried by
-   delegation. Nothing from that attempt was committed; local `main`
-   is unchanged.
+6. Phase 6: Sync Queue (`ai/phase6/PLAN.md`) — 
 7. Phase 7: Scheduler and Background Agent — **partial** (scheduler
    crate only, done 2026-11-19). Background agent, IPC, Task
    Scheduler/tray, and agent health UI wait on Phase 6.

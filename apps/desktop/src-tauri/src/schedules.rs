@@ -261,7 +261,7 @@ pub async fn update_schedule_command(
                 None
             },
             enabled: if changed { Some(updated.enabled) } else { None },
-            next_run_at: next_run_at.map(Some),
+            next_run_at,
         },
     )
     .await?;

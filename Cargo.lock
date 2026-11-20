@@ -4068,6 +4068,7 @@ dependencies = [
 name = "reponyx-desktop"
 version = "0.1.0"
 dependencies = [
+ "chrono",
  "reponyx-core",
  "reponyx-credential-store",
  "reponyx-database",
@@ -4077,11 +4078,13 @@ dependencies = [
  "reponyx-provider-abstractions",
  "reponyx-scheduler",
  "serde",
+ "serde_json",
  "tauri",
  "tauri-build",
  "tauri-plugin-updater",
  "tokio",
  "tracing",
+ "uuid",
 ]
 
 [[package]]

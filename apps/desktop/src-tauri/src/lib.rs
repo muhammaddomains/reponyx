@@ -9,6 +9,7 @@
 mod auth;
 mod schedules;
 mod commands {
+    use crate::auth::CommandResult;
     use reponyx_core::{DashboardCounts, GitStatus};
     use reponyx_database::Database;
     use serde::Serialize;
@@ -36,13 +37,15 @@ mod commands {
     }
 
     #[tauri::command]
-    pub async fn get_dashboard_counts(db: State<'_, Option<Database>>) -> DashboardCounts {
-        match db.inner() {
+    pub async fn get_dashboard_counts(
+        db: State<'_, Option<Database>>,
+    ) -> CommandResult<DashboardCounts> {
+        Ok(match db.inner() {
             Some(database) => reponyx_database::dashboard_counts(&database.pool)
                 .await
                 .unwrap_or_default(),
             None => DashboardCounts::default(),
-        }
+        })
     }
 }
 

@@ -1,0 +1,27 @@
+[package]
+name = "reponyx-sync-queue"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "RepoNyx sync queue: worker pool, retries with backoff, crash recovery, progress events, git job runner"
+
+[dependencies]
+reponyx-core.workspace = true
+reponyx-database.workspace = true
+reponyx-git-engine.workspace = true
+reponyx-credential-store.workspace = true
+reponyx-github-provider.workspace = true
+async-trait.workspace = true
+chrono.workspace = true
+rand.workspace = true
+serde.workspace = true
+sqlx.workspace = true
+tokio.workspace = true
+tokio-util = { version = "0.7", features = ["sync"] }
+tracing.workspace = true
+uuid.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+tokio = { version = "1", features = ["full", "test-util"] }

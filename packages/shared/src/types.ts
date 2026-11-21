@@ -135,6 +135,11 @@ export interface SyncJob {
   dedupeKey?: string | null;
 }
 
+export interface JobStatusCount {
+  status: JobStatus;
+  count: number;
+}
+
 export interface AgentStatus {
   generation: number;
   startedAt: string;

@@ -5,6 +5,18 @@ All notable changes to RepoNyx are documented here. Format follows
 
 ## [Unreleased]
 
+### Added — Phase 8 Synchronization page (2026-11-21, verified)
+
+- **Synchronization page**
+  (`apps/desktop/src/routes/Synchronization.tsx`, wired to
+  `/synchronization`): live queue with agent health + pause/resume,
+  per-status counts, job list (Active filter, per-status filters),
+  cancel (immediate for pending, requested for running), retry now
+  via re-enqueue, 5-second auto-refresh. New Tauri commands in
+  `apps/desktop/src-tauri/src/synchronization.rs`. No live progress
+  bars yet — IPC does not forward the queue's progress events to the
+  desktop.
+
 ### Added — Phase 8 Repositories page (2026-11-21, verified)
 
 - **Repositories page** (`apps/desktop/src/routes/Repositories.tsx`,

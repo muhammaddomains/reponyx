@@ -20,6 +20,7 @@ import {
   discoveryOutcomeSchema,
   effectiveScheduleSchema,
   gitStatusSchema,
+  jobStatusCountSchema,
   materializeReportSchema,
   nextRunPreviewSchema,
   pairingInfoSchema,
@@ -27,6 +28,7 @@ import {
   providerAccountInfoSchema,
   repositorySchema,
   scheduleWithNextRunSchema,
+  syncJobSchema,
 } from "@reponyx/shared";
 import type {
   Account,
@@ -38,6 +40,8 @@ import type {
   DiscoveryOutcome,
   EffectiveSchedule,
   GitStatus,
+  JobStatus,
+  JobStatusCount,
   MaterializeReport,
   NewScheduleInput,
   NextRunPreview,
@@ -46,6 +50,7 @@ import type {
   ProviderAccountInfo,
   Repository,
   ScheduleWithNextRun,
+  SyncJob,
 } from "@reponyx/shared";
 
 export async function getAppInfo(): Promise<AppInfo> {
@@ -329,6 +334,36 @@ export async function openRepositoryLocation(id: string): Promise<void> {
 
 export async function openRepositoryInBrowser(id: string): Promise<void> {
   await invokeCommand("open_repository_in_browser_command", { id });
+}
+
+/** Phase 8 synchronization commands (Tauri `synchronization.rs`).
+ *  Job rows are read straight from SQLite, so this page works
+ *  whether or not the background agent is running. */
+
+export async function listSyncJobs(input?: {
+  status?: string | null;
+  repository_id?: string | null;
+}): Promise<SyncJob[]> {
+  return z
+    .array(syncJobSchema)
+    .parse(
+      await invokeCommand("list_sync_jobs_command", {
+        status: input?.status ?? null,
+        repository_id: input?.repository_id ?? null,
+      }),
+    );
+}
+
+export async function countSyncJobs(): Promise<JobStatusCount[]> {
+  return z
+    .array(jobStatusCountSchema)
+    .parse(await invokeCommand("count_sync_jobs_command"));
+}
+
+export async function cancelSyncJob(id: string): Promise<SyncJob> {
+  return syncJobSchema.parse(
+    await invokeCommand("cancel_sync_job_command", { id }),
+  );
 }
 
 /** Phase 7 background-agent commands (Tauri `agent.rs`). The agent

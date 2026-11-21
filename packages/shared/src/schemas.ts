@@ -171,6 +171,40 @@ export const discoveryOutcomeSchema = z.object({
   notSeen: z.array(z.string()),
 });
 
+/** Phase 8 synchronization DTOs: camelCase, matching the Tauri
+ *  `synchronization.rs` DTOs. */
+
+export const syncJobSchema = z.object({
+  id: z.string(),
+  repositoryId: z.string(),
+  jobType: z.enum([
+    "mirror_clone",
+    "working_clone",
+    "fetch",
+    "lfs_fetch",
+    "submodule_sync",
+  ]),
+  status: z.enum(["pending", "running", "completed", "failed", "cancelled"]),
+  priority: z.number().int(),
+  attemptCount: z.number().int().nonnegative(),
+  startedAt: z.string().nullable().optional(),
+  completedAt: z.string().nullable().optional(),
+  errorCode: z.string().nullable().optional(),
+  errorMessage: z.string().nullable().optional(),
+  createdAt: z.string(),
+  availableAt: z.string().nullable().optional(),
+  workerId: z.string().nullable().optional(),
+  leaseExpiresAt: z.string().nullable().optional(),
+  heartbeatAt: z.string().nullable().optional(),
+  cancelRequestedAt: z.string().nullable().optional(),
+  dedupeKey: z.string().nullable().optional(),
+});
+
+export const jobStatusCountSchema = z.object({
+  status: z.enum(["pending", "running", "completed", "failed", "cancelled"]),
+  count: z.number().int().nonnegative(),
+});
+
 /** Phase 7 background-agent DTOs: camelCase, matching the Tauri
  *  `agent.rs` DTOs. */
 

@@ -1,6 +1,6 @@
 # Phase 8 — Desktop Interface
 
-- Status: Started 2026-11-21 — Schedules + Repositories pages done; the rest not started
+- Status: Started 2026-11-21 — Schedules + Repositories + Synchronization pages done; the rest not started
 - Depends on: Phases 2–7 (features land as their backends do)
 
 ## Objectives
@@ -33,11 +33,20 @@ Activity, Storage, Settings (+ notifications, system tray).
       `repositories.rs`; discovery reuses the agent's credential
       resolver. Verified: fmt + clippy 0 warnings + 331 tests pass +
       typecheck + desktop build + eslint pass.
+- [x] Synchronization page (2026-11-21): live queue (agent health +
+      pause/resume, per-status counts, job list with Active filter),
+      cancel, retry now, 5-second auto-refresh. New Tauri commands
+      in `synchronization.rs` (list/count/cancel). No live progress
+      bars yet — IPC progress forwarding is still unwired. Verified:
+      fmt + clippy 0 warnings + 331 tests pass + typecheck + desktop
+      build + eslint pass.
 - [ ] Wire each remaining section to real Tauri commands
 - [ ] Repository list virtualization + bulk selection (bulk
       selection done 2026-11-21; true virtualization deferred — the
       list pages 100 rows at a time with "Show more")
-- [ ] Sync progress UI + cancellation
+- [ ] Sync progress UI + cancellation (cancel done 2026-11-21 on
+      the Synchronization page; live progress bars still need IPC
+      progress forwarding)
 - [ ] Settings sections (General, Auth, Repos, Sync, Storage, Background, Advanced)
 - [ ] Notifications + tray menu
 
@@ -68,7 +77,7 @@ All prior phases.
 
 ## Completion status
 
-Started 2026-11-21. Schedules page and Repositories page done and
-verified (fmt + clippy 0 warnings + 331 tests pass + typecheck +
-desktop build + eslint pass). Synchronization, Activity, Storage,
+Started 2026-11-21. Schedules, Repositories, and Synchronization
+pages done and verified (fmt + clippy 0 warnings + 331 tests pass +
+typecheck + desktop build + eslint pass). Activity, Storage,
 Settings still placeholders.

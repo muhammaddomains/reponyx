@@ -10,6 +10,7 @@ mod agent;
 mod auth;
 mod repositories;
 mod schedules;
+mod synchronization;
 mod tray;
 mod commands {
     use crate::auth::CommandResult;
@@ -127,6 +128,9 @@ pub fn run() {
             repositories::delete_repository_command,
             repositories::open_repository_location_command,
             repositories::open_repository_in_browser_command,
+            synchronization::list_sync_jobs_command,
+            synchronization::count_sync_jobs_command,
+            synchronization::cancel_sync_job_command,
         ])
         .run(tauri::generate_context!())
         .expect("error while running RepoNyx");

@@ -6,6 +6,7 @@ import Overview from "./routes/Overview";
 import Placeholder from "./routes/Placeholder";
 import Repositories from "./routes/Repositories";
 import Schedules from "./routes/Schedules";
+import Synchronization from "./routes/Synchronization";
 
 export default function App() {
   return (
@@ -16,10 +17,7 @@ export default function App() {
           <Route path="accounts" element={<Accounts />} />
           <Route path="agent" element={<Agent />} />
           <Route path="repositories" element={<Repositories />} />
-          <Route
-            path="synchronization"
-            element={<Placeholder title="Synchronization" phase={6} />}
-          />
+          <Route path="synchronization" element={<Synchronization />} />
           <Route path="schedules" element={<Schedules />} />
           <Route
             path="activity"

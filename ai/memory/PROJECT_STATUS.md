@@ -1,10 +1,10 @@
 # RepoNyx — Project Status
 
-Last updated: 2026-11-21 (Phase 8 Repositories page built — see
-"Phase 8 — Repositories page" below; Schedules page done the same
-day; Phase 6 / Phase 7 fixes verified + live end-to-end run on this
-VM — see "Phase 6 / Phase 7 fixes + re-verification" and "Live
-end-to-end run" below)
+Last updated: 2026-11-21 (Phase 8 Synchronization page built — see
+"Phase 8 — Synchronization page" below; Schedules + Repositories
+pages done the same day; Phase 6 / Phase 7 fixes verified + live
+end-to-end run on this VM — see "Phase 6 / Phase 7 fixes +
+re-verification" and "Live end-to-end run" below)
 
 ## Current phase
 
@@ -19,10 +19,10 @@ writing — see "Phase 6 / Phase 7 fixes + re-verification" below).
 Phase 7 — Scheduler and Background Agent — scheduler crate verified
 2026-11-19; agent, IPC, tray, and Agent page code landed 2026-11-21
 and were fixed and verified the same day (same section).**
-**Phase 8 — Desktop UI — started 2026-11-21: the Schedules page is
-built (see "Phase 8 — Schedules page" below), and the Repositories
-page is built the same day (see "Phase 8 — Repositories page"
-below); the other pages (Synchronization, Activity, Storage,
+**Phase 8 — Desktop UI — started 2026-11-21: the Schedules,
+Repositories, and Synchronization pages are built (see "Phase 8 —
+Schedules page", "Phase 8 — Repositories page", and "Phase 8 —
+Synchronization page" below); the other pages (Activity, Storage,
 Settings) are still placeholders.** The
 desktop Rust wiring is verified by `cargo fmt` + review only (the
 gdk blocker); the real desktop compile check is the user's Windows
@@ -30,6 +30,40 @@ build. Remaining honest gaps are listed in the fixes section.
 Work is on `main` going forward.
 
 ## Completed tasks
+
+- **Phase 8 — Synchronization page (actual, 2026-11-21, assistant,
+  uncommitted at the time of writing):** the third Phase 8 page.
+  New Tauri commands in
+  `apps/desktop/src-tauri/src/synchronization.rs` (wired in
+  `lib.rs`): list jobs (by status / repository), counts by status,
+  cancel via `request_cancel_job`. No new Rust dependencies.
+  - **What it does:** agent health line (reachable, paused,
+    pending/running/workers) with pause/resume queue buttons;
+    per-status counts; job list with an Active (pending + running)
+    filter plus All and per-status filters; repository names resolved
+    from the repository rows; job type, priority, attempt count,
+    worker, created/started/finished times; "next attempt at …" for
+    pending jobs waiting on retry backoff or rate-limit defer;
+    error code + message on failed jobs; **Cancel** (pending jobs
+    cancel at once, running jobs get a cancel request the worker
+    honors on its next heartbeat); **Retry now** on failed/cancelled
+    jobs (ensures the agent is running, then re-enqueues the
+    repository — the same path as "Sync now"); auto-refresh every 5
+    seconds.
+  - **Honest limits:** no live progress bars — the queue emits
+    `JobProgress` events but IPC does not forward them to the
+    desktop, so the page polls job rows instead (and says so on the
+    page); the new Rust commands are verified by `cargo fmt` +
+    review only (gdk blocker) — the Windows build is their first
+    real compile; the job list has no server-side limit (the page
+    renders the first 100 rows); no frontend tests yet.
+  - **Verification (actual, 2026-11-21):** `cargo fmt --check`
+    pass; `cargo clippy --workspace --exclude reponyx-desktop
+    --all-targets` pass, **0 warnings**; `cargo test --workspace
+    --exclude reponyx-desktop` **331 passed, 0 failed**; `pnpm -r
+    typecheck` pass; `pnpm --filter @reponyx/desktop build` pass;
+    desktop eslint pass on the touched files (exit 0, after removing
+    one unused constant the linter flagged).
 
 - **Phase 8 — Repositories page (actual, 2026-11-21, assistant,
   uncommitted at the time of writing):** the second Phase 8 page.

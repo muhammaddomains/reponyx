@@ -9,9 +9,8 @@ see below)
 `9cc87b9`, PR #1). Phase 2 — Core Database and Domain — complete
 2026-11-18. Phase 3 — Git Engine — complete 2026-11-18. Phase 4 —
 GitHub Integration — complete 2026-11-18. Phase 5 — Authentication
-— complete 2026-11-18. Phase 6 — Sync Queue — (see below).
-Phase 7 — Scheduler and Background Agent — PARTIAL 2026-11-19
-(scheduler crate only).** Work is on `main` going forward.
+— complete 2026-11-18. Phase 6 — Sync Queue — complete 2026-11-21.
+Phase 7 — Scheduler and Background Agent — PARTIAL (scheduler crate only; agent still blocked until queue is merged and wired).** Work is on `main` going forward.
 
 ## Completed tasks
 
@@ -116,6 +115,20 @@ Phase 7 — Scheduler and Background Agent — PARTIAL 2026-11-19
     observed in the full-suite runs. Tauri binary build still
     blocked on this VM by missing `gdk-3.0` / WebViewGTK system
     libraries — not claimed passed.
+
+- **Phase 6 — Sync Queue — IMPLEMENTED (2026-11-21, on `main`):**
+  - crates/sync-queue: WorkerPool, claim/complete/fail/retry, crash recovery,
+  progress broadcast events, JobRunner trait.
+  - GitJobRunner: mirror_clone / mirror_fetch / working_fetch / working clone
+  via git-engine; credentials via DefaultCredentialResolver (PAT from OS
+  store, GitHub App via Auth Broker).
+  - Retries create a new sync_jobs row (never running → pending).
+  - Tests: queue_integration (100 jobs, retry, auth permanent, recovery),
+    git_runner_unit (storage.root, LFS reject).
+  - Workspace: members += crates/sync-queue; reponyx-sync-queue path dep.
+  - Deliberately NOT done: background-agent binary / Task Scheduler / tray
+  (rest of Phase 7), desktop queue UI (Phase 8), LFS/submodules (Phase 9).
+
 - **Phase 5 — Authentication (actual, 2026-11-18, on `main`):**
   - **Auth Broker (`apps/auth-broker`, axum 0.8.9):** a separate
     binary crate — NOT a dependency of the desktop crate

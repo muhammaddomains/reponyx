@@ -21,6 +21,7 @@ reponyx-ipc.workspace = true
 reponyx-logging.workspace = true
 reponyx-provider-abstractions.workspace = true
 reponyx-scheduler.workspace = true
+reponyx-sync-queue.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 tauri.workspace = true

@@ -4102,6 +4102,7 @@ dependencies = [
  "reponyx-logging",
  "reponyx-provider-abstractions",
  "reponyx-scheduler",
+ "reponyx-sync-queue",
  "serde",
  "serde_json",
  "tauri",

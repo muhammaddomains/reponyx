@@ -1,9 +1,10 @@
 # RepoNyx — Project Status
 
-Last updated: 2026-11-21 (Phase 8 Schedules page built — see
-"Phase 8 — Schedules page" below; Phase 6 / Phase 7 fixes verified
-+ live end-to-end run on this VM — see "Phase 6 / Phase 7 fixes +
-re-verification" and "Live end-to-end run" below)
+Last updated: 2026-11-21 (Phase 8 Repositories page built — see
+"Phase 8 — Repositories page" below; Schedules page done the same
+day; Phase 6 / Phase 7 fixes verified + live end-to-end run on this
+VM — see "Phase 6 / Phase 7 fixes + re-verification" and "Live
+end-to-end run" below)
 
 ## Current phase
 
@@ -19,15 +20,54 @@ Phase 7 — Scheduler and Background Agent — scheduler crate verified
 2026-11-19; agent, IPC, tray, and Agent page code landed 2026-11-21
 and were fixed and verified the same day (same section).**
 **Phase 8 — Desktop UI — started 2026-11-21: the Schedules page is
-built (see "Phase 8 — Schedules page" below); the other pages
-(Repositories, Synchronization, Activity, Storage, Settings) are
-still placeholders.** The
+built (see "Phase 8 — Schedules page" below), and the Repositories
+page is built the same day (see "Phase 8 — Repositories page"
+below); the other pages (Synchronization, Activity, Storage,
+Settings) are still placeholders.** The
 desktop Rust wiring is verified by `cargo fmt` + review only (the
 gdk blocker); the real desktop compile check is the user's Windows
 build. Remaining honest gaps are listed in the fixes section.
 Work is on `main` going forward.
 
 ## Completed tasks
+
+- **Phase 8 — Repositories page (actual, 2026-11-21, assistant,
+  uncommitted at the time of writing):** the second Phase 8 page.
+  Unlike Schedules, this one needed a backend: new Tauri commands
+  in `apps/desktop/src-tauri/src/repositories.rs` (wired in
+  `lib.rs`), plus `reponyx-sync-queue` added as a desktop
+  dependency so discovery reuses the agent's credential resolver
+  (PAT from the OS store, GitHub App via the broker — no duplicated
+  resolver logic).
+  - **What it does:** lists repositories with account/status/sync
+    filters and debounced name search; **discover** from GitHub per
+    account (pages through `GET /user/repos`, upserts into the DB —
+    new rows start sync-enabled in mirror mode, existing rows keep
+    their settings, unseen local rows are reported and never
+    deleted); **sync now** per repo (ensures the agent is running,
+    then enqueues via IPC); pause/resume; sync-mode change
+    (mirror/working/both); bulk select with sync-now / pause /
+    resume; open local folder (only when a local copy exists) and
+    open on GitHub (owner/name validated to safe path characters,
+    opened as a single argument — never through a shell); **remove**
+    with a confirm dialog — deletes the row only, local files are
+    kept.
+  - **Honest limits:** the new Rust commands are verified by
+    `cargo fmt` + review only (gdk blocker) — the Windows build is
+    their first real compile; the list shows 100 rows at a time
+    with a "Show more" button instead of true virtualization (the
+    plan asks for virtualization; deferred, noted in the plan);
+    discovery is a full paged scan with no progress indicator yet;
+    no frontend tests yet.
+  - **Verification (actual, 2026-11-21):** `cargo fmt --check`
+    pass; `cargo clippy --workspace --exclude reponyx-desktop
+    --all-targets` pass, **0 warnings**; `cargo test --workspace
+    --exclude reponyx-desktop` **331 passed, 0 failed**; `pnpm -r
+    typecheck` pass; `pnpm --filter @reponyx/desktop build` pass
+    (1.77 s); desktop eslint pass on the touched files (exit 0).
+    `cargo tree -p reponyx-desktop` confirms the new
+    `reponyx-sync-queue` dependency resolves; `Cargo.lock`
+    regenerated.
 
 - **Phase 8 — Schedules page (actual, 2026-11-21, assistant,
   uncommitted at the time of writing):** the first Phase 8 page,

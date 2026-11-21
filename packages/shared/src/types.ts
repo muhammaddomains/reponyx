@@ -229,6 +229,15 @@ export interface NewScheduleInput {
   enabled: boolean;
 }
 
+/** Outcome of one discovery run for one account: rows created or
+ *  refreshed, and local rows discovery did not return (never
+ *  deleted, only reported). */
+export interface DiscoveryOutcome {
+  created: number;
+  updated: number;
+  notSeen: string[];
+}
+
 /** `id` is a plain string: V1 seeds settings with stable ids such as `setting-storage-root`. */
 export interface Setting {
   id: string;

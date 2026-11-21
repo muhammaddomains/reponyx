@@ -17,6 +17,7 @@ import {
   brokerInstallationSchema,
   brokerStatusSchema,
   dashboardCountsSchema,
+  discoveryOutcomeSchema,
   effectiveScheduleSchema,
   gitStatusSchema,
   materializeReportSchema,
@@ -24,6 +25,7 @@ import {
   pairingInfoSchema,
   patExpirySchema,
   providerAccountInfoSchema,
+  repositorySchema,
   scheduleWithNextRunSchema,
 } from "@reponyx/shared";
 import type {
@@ -33,6 +35,7 @@ import type {
   BrokerInstallation,
   BrokerStatus,
   DashboardCounts,
+  DiscoveryOutcome,
   EffectiveSchedule,
   GitStatus,
   MaterializeReport,
@@ -41,6 +44,7 @@ import type {
   PairingInfo,
   PatExpiry,
   ProviderAccountInfo,
+  Repository,
   ScheduleWithNextRun,
 } from "@reponyx/shared";
 
@@ -264,6 +268,67 @@ export async function effectiveSchedule(
       repository_id: repositoryId,
     }),
   );
+}
+
+/** Phase 8 repository commands (Tauri `repositories.rs`). Invoke
+ *  argument names are snake_case, matching the Rust parameter names.
+ *  The Repositories page (`apps/desktop/src/routes/Repositories.tsx`)
+ *  is the typed UI for these calls. */
+
+export async function listRepositories(input?: {
+  account_id?: string | null;
+  archive_status?: string | null;
+  sync_enabled?: boolean | null;
+  search?: string | null;
+}): Promise<Repository[]> {
+  return z
+    .array(repositorySchema)
+    .parse(
+      await invokeCommand("list_repositories_command", {
+        account_id: input?.account_id ?? null,
+        archive_status: input?.archive_status ?? null,
+        sync_enabled: input?.sync_enabled ?? null,
+        search: input?.search ?? null,
+      }),
+    );
+}
+
+export async function discoverRepositories(
+  accountId: string,
+): Promise<DiscoveryOutcome> {
+  return discoveryOutcomeSchema.parse(
+    await invokeCommand("discover_repositories_command", {
+      account_id: accountId,
+    }),
+  );
+}
+
+export async function updateRepository(input: {
+  id: string;
+  sync_enabled?: boolean | null;
+  sync_mode?: string | null;
+}): Promise<Repository> {
+  return repositorySchema.parse(
+    await invokeCommand("update_repository_command", {
+      id: input.id,
+      sync_enabled: input.sync_enabled ?? null,
+      sync_mode: input.sync_mode ?? null,
+    }),
+  );
+}
+
+export async function deleteRepository(id: string): Promise<boolean> {
+  return z
+    .boolean()
+    .parse(await invokeCommand("delete_repository_command", { id }));
+}
+
+export async function openRepositoryLocation(id: string): Promise<void> {
+  await invokeCommand("open_repository_location_command", { id });
+}
+
+export async function openRepositoryInBrowser(id: string): Promise<void> {
+  await invokeCommand("open_repository_in_browser_command", { id });
 }
 
 /** Phase 7 background-agent commands (Tauri `agent.rs`). The agent

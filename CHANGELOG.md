@@ -5,6 +5,19 @@ All notable changes to RepoNyx are documented here. Format follows
 
 ## [Unreleased]
 
+### Added — Phase 8 Repositories page (2026-11-21, verified)
+
+- **Repositories page** (`apps/desktop/src/routes/Repositories.tsx`,
+  wired to `/repositories`): list with account/status/sync filters
+  and debounced search; discover from GitHub per account (upsert,
+  unseen rows reported, never deleted); sync now via the agent;
+  pause/resume; sync-mode change; bulk select + bulk actions; open
+  folder / open on GitHub; remove (row only, local files kept).
+  New Tauri commands in `apps/desktop/src-tauri/src/repositories.rs`
+  (+ `reponyx-sync-queue` as a desktop dependency, reusing the
+  agent's credential resolver). List shows 100 rows at a time with
+  "Show more" instead of true virtualization (deferred).
+
 ### Added — Phase 8 Schedules page (2026-11-21, verified)
 
 - **Schedules page** (`apps/desktop/src/routes/Schedules.tsx`,

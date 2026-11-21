@@ -8,6 +8,7 @@
 
 mod agent;
 mod auth;
+mod repositories;
 mod schedules;
 mod tray;
 mod commands {
@@ -120,6 +121,12 @@ pub fn run() {
             schedules::preview_next_runs_command,
             schedules::materialize_due_command,
             schedules::effective_schedule_command,
+            repositories::list_repositories_command,
+            repositories::discover_repositories_command,
+            repositories::update_repository_command,
+            repositories::delete_repository_command,
+            repositories::open_repository_location_command,
+            repositories::open_repository_in_browser_command,
         ])
         .run(tauri::generate_context!())
         .expect("error while running RepoNyx");

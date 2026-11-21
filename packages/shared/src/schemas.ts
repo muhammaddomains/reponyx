@@ -134,6 +134,43 @@ export const effectiveScheduleSchema = z.object({
   nextRuns: z.array(z.string()),
 });
 
+/** Phase 8 repository DTOs: camelCase, matching the Tauri
+ *  `repositories.rs` DTOs. */
+
+export const repositorySchema = z.object({
+  id: z.string(),
+  accountId: z.string(),
+  providerRepositoryId: z.string(),
+  owner: z.string(),
+  name: z.string(),
+  fullName: z.string(),
+  visibility: z.enum(["public", "private", "internal"]),
+  defaultBranch: z.string().nullable().optional(),
+  cloneUrl: z.string(),
+  archiveStatus: z.enum([
+    "synced",
+    "pending",
+    "syncing",
+    "failed",
+    "paused",
+    "disconnected",
+    "remote_deleted",
+  ]),
+  syncEnabled: z.boolean(),
+  syncMode: z.enum(["mirror", "working", "both"]),
+  localPath: z.string().nullable().optional(),
+  remoteUpdatedAt: z.string().nullable().optional(),
+  lastSyncedAt: z.string().nullable().optional(),
+  createdAt: z.string(),
+  updatedAt: z.string(),
+});
+
+export const discoveryOutcomeSchema = z.object({
+  created: z.number().int().nonnegative(),
+  updated: z.number().int().nonnegative(),
+  notSeen: z.array(z.string()),
+});
+
 /** Phase 7 background-agent DTOs: camelCase, matching the Tauri
  *  `agent.rs` DTOs. */
 

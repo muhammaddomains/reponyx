@@ -1,6 +1,6 @@
 # Phase 8 — Desktop Interface
 
-- Status: Started 2026-11-21 — Schedules page done; the rest not started
+- Status: Started 2026-11-21 — Schedules + Repositories pages done; the rest not started
 - Depends on: Phases 2–7 (features land as their backends do)
 
 ## Objectives
@@ -26,8 +26,17 @@ Activity, Storage, Settings (+ notifications, system tray).
       preview, materialize-now with report, effective-schedule
       lookup — wired to the Phase 7 scheduler backend, no backend
       changes. Verified: typecheck + desktop build + eslint pass.
+- [x] Repositories page (2026-11-21): list with filters + search,
+      discover from GitHub (upsert, never deletes), sync now via the
+      agent, pause/resume, mode change, bulk actions, open folder /
+      GitHub, remove (row only). New Tauri commands in
+      `repositories.rs`; discovery reuses the agent's credential
+      resolver. Verified: fmt + clippy 0 warnings + 331 tests pass +
+      typecheck + desktop build + eslint pass.
 - [ ] Wire each remaining section to real Tauri commands
-- [ ] Repository list virtualization + bulk selection
+- [ ] Repository list virtualization + bulk selection (bulk
+      selection done 2026-11-21; true virtualization deferred — the
+      list pages 100 rows at a time with "Show more")
 - [ ] Sync progress UI + cancellation
 - [ ] Settings sections (General, Auth, Repos, Sync, Storage, Background, Advanced)
 - [ ] Notifications + tray menu
@@ -48,13 +57,18 @@ All prior phases.
 
 ## Known issues
 
-- Repository scope on the Schedules page needs a typed UUID — no
-  Repositories page or repository list command exists yet.
+- Repository scope on the Schedules page needs a typed UUID — the
+  Repositories page now lists repository ids, so copy one from
+  there (a picker is still missing).
+- The Repositories list pages 100 rows at a time instead of true
+  virtualization.
+- Discovery has no progress indicator yet (full paged scan).
 - No frontend tests yet (the plan asks for them); pages are verified
   by typecheck + build + eslint only.
 
 ## Completion status
 
-Started 2026-11-21. Schedules page done and verified (typecheck +
-desktop build + eslint pass). Repositories, Synchronization,
-Activity, Storage, Settings still placeholders.
+Started 2026-11-21. Schedules page and Repositories page done and
+verified (fmt + clippy 0 warnings + 331 tests pass + typecheck +
+desktop build + eslint pass). Synchronization, Activity, Storage,
+Settings still placeholders.

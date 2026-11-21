@@ -1,6 +1,6 @@
 ---
 name: Bug report
-about: Report a problem with the app
+about: Report a problem with RepoNyx
 title: "[Bug] "
 labels: bug
 assignees: ''
@@ -23,14 +23,19 @@ A clear and concise description of what you expected to happen.
 If applicable, add screenshots to help explain your problem.
 
 ## Environment
-- App version: <!-- e.g. v1.1.11, from Settings or the version badge -->
+- App version: <!-- e.g. 0.1.0, from Help / About or package.json -->
 - Windows version: <!-- e.g. Windows 11 24H2 -->
-- Install type: <!-- Installer (.exe) / Portable ZIP / Dev build (`pnpm dev`) -->
+- Install type: <!-- Installer (.exe) / Portable ZIP / Dev build (`pnpm tauri:dev`) -->
+- Account type: <!-- GitHub App / fine-grained PAT -->
+- Sync mode: <!-- mirror / working clone / both -->
 
 ## Logs
-If the session window is blank or login fails, paste the recent lines from the session log:
+Paste the recent lines from the app log. On Windows the log is at:
 
-`%LOCALAPPDATA%\com.reponyx.app\session_recovery.log`
+`%APPDATA%\RepoNyx\logs\reponyx.log.<date>`
+
+If the background agent is involved, note whether the Agent page
+shows it as reachable, and paste the agent lines too.
 
 <!-- Remove any personal information (tokens, URLs with secrets) before pasting. -->
 

@@ -5,8 +5,10 @@
 # (https://github.com/actions/labeler).
 #
 # NOTE: every label named in labeler.yml must already exist in the repo
-# (Settings -> Labels), otherwise this workflow fails. `documentation`
-# already exists; create `frontend`, `backend`, `workflows` and `tests`.
+# (Settings -> Labels), otherwise this workflow fails. The defaults
+# `bug` and `enhancement` already exist (used by the issue templates);
+# create `frontend`, `backend`, `agent`, `broker`, `workflows`,
+# `documentation` and `tests` first.
 
 name: Labeler
 on: [pull_request_target]
@@ -22,3 +24,5 @@ jobs:
       - uses: actions/labeler@v7
         with:
           repo-token: ${{ secrets.GITHUB_TOKEN }}
+          # Remove a label when the PR no longer touches its paths.
+          sync-labels: true

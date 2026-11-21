@@ -28,6 +28,7 @@ import {
   providerAccountInfoSchema,
   repositorySchema,
   scheduleWithNextRunSchema,
+  syncHistorySchema,
   syncJobSchema,
 } from "@reponyx/shared";
 import type {
@@ -50,6 +51,7 @@ import type {
   ProviderAccountInfo,
   Repository,
   ScheduleWithNextRun,
+  SyncHistory,
   SyncJob,
 } from "@reponyx/shared";
 
@@ -364,6 +366,32 @@ export async function cancelSyncJob(id: string): Promise<SyncJob> {
   return syncJobSchema.parse(
     await invokeCommand("cancel_sync_job_command", { id }),
   );
+}
+
+export async function listRecentHistory(
+  limit?: number | null,
+): Promise<SyncHistory[]> {
+  return z
+    .array(syncHistorySchema)
+    .parse(
+      await invokeCommand("list_recent_history_command", {
+        limit: limit ?? null,
+      }),
+    );
+}
+
+export async function listHistoryForRepository(
+  repositoryId: string,
+  limit?: number | null,
+): Promise<SyncHistory[]> {
+  return z
+    .array(syncHistorySchema)
+    .parse(
+      await invokeCommand("list_history_for_repository_command", {
+        repository_id: repositoryId,
+        limit: limit ?? null,
+      }),
+    );
 }
 
 /** Phase 7 background-agent commands (Tauri `agent.rs`). The agent

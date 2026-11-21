@@ -23,8 +23,9 @@
 //! build works.
 
 use crate::auth::{CommandResult, invalid_input, require_db};
-use reponyx_core::{JobStatus, SyncJob};
+use reponyx_core::{JobStatus, SyncHistory, SyncJob};
 use reponyx_database::Database;
+use reponyx_database::history::{list_history_for_repository, list_recent_history};
 use reponyx_database::jobs::{JobFilter, count_jobs_by_status, list_jobs, request_cancel_job};
 use serde::Serialize;
 use std::str::FromStr;
@@ -87,6 +88,36 @@ pub struct JobStatusCountDto {
     pub count: i64,
 }
 
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SyncHistoryDto {
+    pub id: String,
+    pub repository_id: String,
+    pub job_id: Option<String>,
+    pub operation: String,
+    pub result: String,
+    pub duration_ms: Option<i64>,
+    pub bytes_received: Option<i64>,
+    pub started_at: String,
+    pub completed_at: Option<String>,
+}
+
+impl SyncHistoryDto {
+    fn from_history(entry: &SyncHistory) -> Self {
+        Self {
+            id: entry.id.to_string(),
+            repository_id: entry.repository_id.to_string(),
+            job_id: entry.job_id.map(|id| id.to_string()),
+            operation: entry.operation.clone(),
+            result: entry.result.as_str().to_string(),
+            duration_ms: entry.duration_ms,
+            bytes_received: entry.bytes_received,
+            started_at: entry.started_at.to_rfc3339(),
+            completed_at: entry.completed_at.map(|at| at.to_rfc3339()),
+        }
+    }
+}
+
 // -- Commands ---------------------------------------------------------
 
 #[tauri::command]
@@ -145,4 +176,30 @@ pub async fn cancel_sync_job_command(
     let id = Uuid::parse_str(&id).map_err(|_| invalid_input(format!("invalid job id: {id}")))?;
     let job = request_cancel_job(&database.pool, id).await?;
     Ok(SyncJobDto::from_job(&job))
+}
+
+/// Most recent sync-history entries across all repositories, newest
+/// first. `limit` defaults to 100 and is clamped to 1..=500 by the
+/// database layer.
+#[tauri::command]
+pub async fn list_recent_history_command(
+    db: State<'_, Option<Database>>,
+    limit: Option<i64>,
+) -> CommandResult<Vec<SyncHistoryDto>> {
+    let database = require_db(&db)?;
+    let entries = list_recent_history(&database.pool, limit.unwrap_or(100)).await?;
+    Ok(entries.iter().map(SyncHistoryDto::from_history).collect())
+}
+
+#[tauri::command]
+pub async fn list_history_for_repository_command(
+    db: State<'_, Option<Database>>,
+    repository_id: String,
+    limit: Option<i64>,
+) -> CommandResult<Vec<SyncHistoryDto>> {
+    let database = require_db(&db)?;
+    let id = Uuid::parse_str(&repository_id)
+        .map_err(|_| invalid_input(format!("invalid repository id: {repository_id}")))?;
+    let entries = list_history_for_repository(&database.pool, id, limit.unwrap_or(100)).await?;
+    Ok(entries.iter().map(SyncHistoryDto::from_history).collect())
 }

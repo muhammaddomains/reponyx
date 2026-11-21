@@ -205,6 +205,18 @@ export const jobStatusCountSchema = z.object({
   count: z.number().int().nonnegative(),
 });
 
+export const syncHistorySchema = z.object({
+  id: z.string(),
+  repositoryId: z.string(),
+  jobId: z.string().nullable().optional(),
+  operation: z.string(),
+  result: z.enum(["success", "failed", "cancelled"]),
+  durationMs: z.number().int().nullable().optional(),
+  bytesReceived: z.number().int().nullable().optional(),
+  startedAt: z.string(),
+  completedAt: z.string().nullable().optional(),
+});
+
 /** Phase 7 background-agent DTOs: camelCase, matching the Tauri
  *  `agent.rs` DTOs. */
 

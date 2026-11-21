@@ -1,6 +1,6 @@
 # Phase 8 — Desktop Interface
 
-- Status: Started 2026-11-21 — Schedules + Repositories + Synchronization pages done; the rest not started
+- Status: Started 2026-11-21 — Schedules + Repositories + Synchronization + Activity pages done; Storage + Settings remain
 - Depends on: Phases 2–7 (features land as their backends do)
 
 ## Objectives
@@ -40,6 +40,14 @@ Activity, Storage, Settings (+ notifications, system tray).
       bars yet — IPC progress forwarding is still unwired. Verified:
       fmt + clippy 0 warnings + 331 tests pass + typecheck + desktop
       build + eslint pass.
+- [x] Activity page (2026-11-21): sync-history record, newest
+      first, repository + result filters, operation/result/duration/
+      bytes, 10-second auto-refresh. New `list_recent_history`
+      database query (limit clamped 1..=500) with an integration
+      test, and two history Tauri commands in
+      `synchronization.rs`. History is append-only; the page never
+      edits it. Verified: fmt + clippy 0 warnings + 332 tests pass
+      + typecheck + desktop build + eslint pass.
 - [ ] Wire each remaining section to real Tauri commands
 - [ ] Repository list virtualization + bulk selection (bulk
       selection done 2026-11-21; true virtualization deferred — the
@@ -77,7 +85,7 @@ All prior phases.
 
 ## Completion status
 
-Started 2026-11-21. Schedules, Repositories, and Synchronization
-pages done and verified (fmt + clippy 0 warnings + 331 tests pass +
-typecheck + desktop build + eslint pass). Activity, Storage,
+Started 2026-11-21. Schedules, Repositories, Synchronization, and
+Activity pages done and verified (fmt + clippy 0 warnings + 332
+tests pass + typecheck + desktop build + eslint pass). Storage,
 Settings still placeholders.

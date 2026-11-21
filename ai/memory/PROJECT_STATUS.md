@@ -1,10 +1,10 @@
 # RepoNyx — Project Status
 
-Last updated: 2026-11-21 (Phase 8 Synchronization page built — see
-"Phase 8 — Synchronization page" below; Schedules + Repositories
-pages done the same day; Phase 6 / Phase 7 fixes verified + live
-end-to-end run on this VM — see "Phase 6 / Phase 7 fixes +
-re-verification" and "Live end-to-end run" below)
+Last updated: 2026-11-21 (Phase 8 Activity page built — see
+"Phase 8 — Activity page" below; Schedules + Repositories +
+Synchronization pages done the same day; Phase 6 / Phase 7 fixes
+verified + live end-to-end run on this VM — see "Phase 6 / Phase 7
+fixes + re-verification" and "Live end-to-end run" below)
 
 ## Current phase
 
@@ -20,16 +20,52 @@ Phase 7 — Scheduler and Background Agent — scheduler crate verified
 2026-11-19; agent, IPC, tray, and Agent page code landed 2026-11-21
 and were fixed and verified the same day (same section).**
 **Phase 8 — Desktop UI — started 2026-11-21: the Schedules,
-Repositories, and Synchronization pages are built (see "Phase 8 —
-Schedules page", "Phase 8 — Repositories page", and "Phase 8 —
-Synchronization page" below); the other pages (Activity, Storage,
-Settings) are still placeholders.** The
+Repositories, Synchronization, and Activity pages are built (see
+"Phase 8 — Schedules page", "Phase 8 — Repositories page", "Phase 8
+— Synchronization page", and "Phase 8 — Activity page" below); the
+other pages (Storage, Settings) are still placeholders.** The
 desktop Rust wiring is verified by `cargo fmt` + review only (the
 gdk blocker); the real desktop compile check is the user's Windows
 build. Remaining honest gaps are listed in the fixes section.
 Work is on `main` going forward.
 
 ## Completed tasks
+
+- **Phase 8 — Activity page (actual, 2026-11-21, assistant,
+  uncommitted at the time of writing):** the fourth Phase 8 page.
+  It needed one new database query — `list_recent_history` in
+  `crates/database/src/history.rs` (newest first, limit clamped to
+  1..=500; a global recent-history query did not exist, only
+  per-repository and per-job lists) — plus a new integration test
+  file `crates/database/tests/history.rs`. New Tauri commands in
+  `apps/desktop/src-tauri/src/synchronization.rs` (history reads
+  belong with the sync module): `list_recent_history_command`
+  (default limit 100) and
+  `list_history_for_repository_command`. No migration, no new Rust
+  dependencies.
+  - **What it does:** the sync-history record — what ran, when,
+    how long it took, whether it worked. Repository filter
+    (dropdown) and result filter (success/failed/cancelled);
+    per-entry repository name (from one repository list load),
+    operation label, result badge, started/finished times,
+    duration, bytes received; 10-second auto-refresh plus a manual
+    Refresh button. History is append-only; the page never edits
+    it.
+  - **Honest limits:** the new Rust commands are verified by
+    `cargo fmt` + review only (gdk blocker) — the Windows build is
+    their first real compile; the page shows the latest 100
+    entries, no paging past them; no frontend tests yet.
+  - **Verification (actual, 2026-11-21):** `cargo fmt --check`
+    pass; `cargo clippy --workspace --exclude reponyx-desktop
+    --all-targets` pass, **0 warnings**; `cargo test --workspace
+    --exclude reponyx-desktop` **332 passed, 0 failed** (was 331 —
+    the +1 is the new `recent_history_is_newest_first_and_limited`
+    test, run on its own too); `pnpm -r typecheck` pass; `pnpm
+    --filter @reponyx/desktop build` pass (1.61 s); desktop eslint
+    pass on the touched files (exit 0). One typo fixed during
+    verification (`.map_error` → `.map_err` in `history.rs`) — the
+    first full run caught it as a compile error; the suite was
+    re-run clean after the fix.
 
 - **Phase 8 — Synchronization page (actual, 2026-11-21, assistant,
   uncommitted at the time of writing):** the third Phase 8 page.

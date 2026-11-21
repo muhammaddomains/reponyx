@@ -157,3 +157,27 @@ pub async fn count_history_for_repository(
         .map_err(map_error)?;
     Ok(row.get("n"))
 }
+
+/// Most recent history entries across all repositories, newest
+/// first. `limit` is clamped to 1..=500 — the Activity page shows
+/// the recent past, not the whole archive.
+pub async fn list_recent_history(
+    pool: &SqlitePool,
+    limit: i64,
+) -> Result<Vec<SyncHistory>, RepoNyxError> {
+    let rows = sqlx::query(
+        r#"
+        SELECT * FROM sync_history
+        ORDER BY started_at DESC
+        LIMIT ?
+        "#,
+    )
+    .bind(limit.clamp(1, 500))
+    .fetch_all(pool)
+    .await
+    .map_err(map_error)?;
+    rows.iter()
+        .map(row_to_history)
+        .collect::<Result<_, _>>()
+        .map_err(map_error)
+}

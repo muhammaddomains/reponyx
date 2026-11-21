@@ -131,6 +131,8 @@ pub fn run() {
             synchronization::list_sync_jobs_command,
             synchronization::count_sync_jobs_command,
             synchronization::cancel_sync_job_command,
+            synchronization::list_recent_history_command,
+            synchronization::list_history_for_repository_command,
         ])
         .run(tauri::generate_context!())
         .expect("error while running RepoNyx");

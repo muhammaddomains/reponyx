@@ -5,6 +5,18 @@ All notable changes to RepoNyx are documented here. Format follows
 
 ## [Unreleased]
 
+### Added — Phase 8 Activity page (2026-11-21, verified)
+
+- **Activity page** (`apps/desktop/src/routes/Activity.tsx`,
+  wired to `/activity`): the sync-history record — newest first,
+  repository + result filters, operation label, result badge,
+  started/finished times, duration, bytes received, 10-second
+  auto-refresh. New `list_recent_history` database query (limit
+  clamped 1..=500) with an integration test, and two new Tauri
+  commands (`list_recent_history_command`,
+  `list_history_for_repository_command`). History is append-only;
+  the page never edits it. Latest 100 entries shown.
+
 ### Added — Phase 8 Synchronization page (2026-11-21, verified)
 
 - **Synchronization page**

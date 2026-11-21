@@ -1,1 +1,8 @@
 blank_issues_enabled: false
+contact_links:
+  - name: RepoNyx documentation
+    url: https://github.com/muhammaddomains/reponyx#readme
+    about: Start with the README — setup, first sync, and the project status.
+  - name: Project status
+    url: https://github.com/muhammaddomains/reponyx/blob/main/ai/memory/PROJECT_STATUS.md
+    about: What is done, what is in progress, and the known gaps.

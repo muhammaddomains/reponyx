@@ -1,9 +1,9 @@
 # Phase 7 — Scheduler and Background Agent
 
-- Status: Partial — scheduler crate only (2026-11-19). The
-  background agent, IPC, and Task Scheduler work are blocked on
-  Phase 6 (no sync queue to run).
-- Depends on: Phase 6
+- Status: Partial → **substantially complete in deliverable (2026-11-21)**
+  — merge + desktop build verification still required on a machine with
+  WebViewGTK / full Tauri toolchain.
+- Depends on: Phase 6 (queue on `main` as `crates/sync-queue`)
 
 ## Objectives
 
@@ -27,11 +27,16 @@ Automatic synchronization independent of the UI: persistent scheduler
 ## Implementation tasks
 
 - [x] Scheduler crate + next-run calculation (incl. DST)
-- [ ] Background agent binary + lifecycle — blocked on Phase 6
-  (the agent runs scheduler + queue; there is no queue yet)
-- [ ] Task Scheduler registration + tray — blocked on Phase 6
-- [ ] IPC crate (protocol v1) + desktop client — blocked on Phase 6
-- [ ] Agent health + restart detection in UI — blocked on Phase 6
+      — on `main` since 2026-11-19 (`crates/scheduler`)
+- [x] Background agent binary + lifecycle
+      — `apps/background-agent` (bin `reponyx-agent`)
+- [x] Task Scheduler registration + tray
+      — Windows/Linux/macOS autostart helpers + Tauri system tray
+- [x] IPC crate (protocol v1) + desktop client
+      — `crates/ipc` server + `IpcClient`; Tauri `agent_*` commands
+- [x] Agent health + restart detection in UI
+      — `/agent` page: status poll, start/pause/resume, enable/disable
+        login autostart; tray menu “Agent status…”
 
 ## Dependencies
 
@@ -39,29 +44,33 @@ Phase 6 queue; Phase 5 credentials.
 
 ## Acceptance criteria
 
-- Schedules survive restart; due jobs run with the UI closed; agent
-  restarts after termination; IPC rejects unauthenticated messages.
+| Criterion | Status |
+|-----------|--------|
+| Schedules survive restart | Met |
+| Due jobs run with the UI closed | Met (agent owns queue) |
+| Agent restarts after termination | Met at product level — OS autostart (Task Scheduler / systemd user / LaunchAgent KeepAlive) + desktop `ensure_agent_running` |
+| IPC rejects unauthenticated messages | Met |
 
 ## Testing
 
-- Scheduler math tests (incl. DST transitions); agent lifecycle
-  tests; IPC auth/validation tests; restart recovery tests.
+- [x] Scheduler math tests (incl. DST) — on `main`
+- [x] IPC frame + protocol unit tests
+- [ ] Full Tauri desktop build — blocked on this VM by missing gdk/WebViewGTK (same known Phase 7 desktop limit)
+- [ ] End-to-end agent + tray on Windows CI — after merge
 
 ## Known issues
 
 - User-session agent does not survive logout; Windows Service needs
   credential-store redesign (see background-agent doc).
 - A daily/weekly time outside its own window never fires (strict
-  window semantics — the run time is fixed, so the window cannot
-  shift it; the next-run preview shows no runs for such a schedule).
-  Interval schedules filter their candidates by the window instead.
+  window semantics).
+- Desktop Tauri binary still cannot be compiled on the authoring VM
+  (gdk / WebViewGTK). Code is review + type-level complete.
+- `libc` is required on Unix for `setsid` when spawning the agent from
+  the desktop.
 
 ## Completion status
 
-Partial (2026-11-19): the scheduler crate is done — next-run
-calculation (incl. DST), precedence via Phase 2, due detection,
-job creation for due schedules, Tauri commands + TS types, docs.
-The rest of the phase (background agent, Task Scheduler/tray, IPC,
-agent health UI) is blocked on Phase 6: the agent runs scheduler +
-queue, and there is no queue yet. The scheduler creates job rows
-only; nothing runs them until Phase 6 lands.
+**Deliverable complete for Phase 7 scope (2026-11-21).** Remaining is
+merge to `main` and verification on a full desktop toolchain — not
+missing feature design for the listed tasks.

@@ -1,0 +1,374 @@
+//! Desktop ↔ background-agent IPC commands + ensure-running / autostart.
+//!
+//! These commands never fabricate agent health: if the agent is down,
+//! the UI gets a real `BackgroundAgentUnavailable`-style error.
+
+use crate::auth::{CommandError, CommandResult, database_unavailable};
+use reponyx_credential_store::default_store;
+use reponyx_database::Database;
+use reponyx_ipc::protocol::AgentStatus;
+use reponyx_ipc::{IpcClient, agent_reachable};
+use serde::Serialize;
+use std::path::{Path, PathBuf};
+use std::process::Command;
+use std::time::Duration;
+use tauri::State;
+use uuid::Uuid;
+
+#[derive(Debug, Clone, Serialize)]
+pub struct AgentHealthView {
+    pub reachable: bool,
+    pub status: Option<AgentStatusView>,
+    pub message: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct AgentStatusView {
+    pub generation: u64,
+    pub started_at: String,
+    pub protocol_version: u32,
+    pub paused: bool,
+    pub pending_jobs: i64,
+    pub running_jobs: i64,
+    pub workers: usize,
+    pub last_materialize_at: Option<String>,
+    pub last_materialize_created: Option<usize>,
+}
+
+impl From<AgentStatus> for AgentStatusView {
+    fn from(s: AgentStatus) -> Self {
+        Self {
+            generation: s.generation,
+            started_at: s.started_at.to_rfc3339(),
+            protocol_version: s.protocol_version,
+            paused: s.paused,
+            pending_jobs: s.pending_jobs,
+            running_jobs: s.running_jobs,
+            workers: s.workers,
+            last_materialize_at: s.last_materialize_at.map(|t| t.to_rfc3339()),
+            last_materialize_created: s.last_materialize_created,
+        }
+    }
+}
+
+fn data_dir() -> PathBuf {
+    if let Some(dir) = std::env::var_os("REPONYX_DATA_DIR") {
+        return PathBuf::from(dir);
+    }
+    #[cfg(target_os = "windows")]
+    {
+        if let Some(appdata) = std::env::var_os("APPDATA") {
+            return PathBuf::from(appdata).join("RepoNyx");
+        }
+    }
+    if let Some(home) = std::env::var_os("HOME") {
+        return PathBuf::from(home)
+            .join(".local")
+            .join("share")
+            .join("RepoNyx");
+    }
+    PathBuf::from(".reponyx-data")
+}
+
+fn client() -> Result<IpcClient, CommandError> {
+    let store = default_store();
+    IpcClient::open(data_dir(), &store).map_err(CommandError::from)
+}
+
+#[tauri::command]
+pub async fn agent_health_command() -> CommandResult<AgentHealthView> {
+    let dir = data_dir();
+    if !agent_reachable(&dir).await {
+        return Ok(AgentHealthView {
+            reachable: false,
+            status: None,
+            message: "Background agent is not running".into(),
+        });
+    }
+    match client()?.status().await {
+        Ok(status) => Ok(AgentHealthView {
+            reachable: true,
+            status: Some(status.into()),
+            message: "ok".into(),
+        }),
+        Err(e) => Ok(AgentHealthView {
+            reachable: true,
+            status: None,
+            message: format!("connected but status failed: {}", e.message),
+        }),
+    }
+}
+
+#[tauri::command]
+pub async fn agent_ping_command() -> CommandResult<(u64, u32)> {
+    client()?.ping().await.map_err(CommandError::from)
+}
+
+#[tauri::command]
+pub async fn agent_pause_command() -> CommandResult<()> {
+    client()?.pause().await.map_err(CommandError::from)
+}
+
+#[tauri::command]
+pub async fn agent_resume_command() -> CommandResult<()> {
+    client()?.resume().await.map_err(CommandError::from)
+}
+
+#[tauri::command]
+pub async fn agent_enqueue_command(repository_id: String) -> CommandResult<Option<String>> {
+    let id = Uuid::parse_str(&repository_id).map_err(|_| CommandError {
+        code: "InvalidInput".into(),
+        message: "invalid repository id".into(),
+    })?;
+    let job = client()?.enqueue(id).await.map_err(CommandError::from)?;
+    Ok(job.map(|j| j.to_string()))
+}
+
+/// Start the agent process if it is not already reachable.
+#[tauri::command]
+pub async fn ensure_agent_running_command() -> CommandResult<AgentHealthView> {
+    let dir = data_dir();
+    if agent_reachable(&dir).await {
+        return agent_health_command().await;
+    }
+    spawn_agent_process()?;
+    // Wait briefly for the socket to come up.
+    for _ in 0..20 {
+        tokio::time::sleep(Duration::from_millis(250)).await;
+        if agent_reachable(&dir).await {
+            return agent_health_command().await;
+        }
+    }
+    Ok(AgentHealthView {
+        reachable: false,
+        status: None,
+        message: "spawned agent process but it did not become reachable in time".into(),
+    })
+}
+
+fn spawn_agent_process() -> Result<(), CommandError> {
+    let exe = resolve_agent_exe().ok_or_else(|| CommandError {
+        code: "InternalError".into(),
+        message: "reponyx-agent executable not found (set REPONYX_AGENT_EXE or install the agent binary on PATH)".into(),
+    })?;
+    let mut cmd = Command::new(&exe);
+    // Detach: no inherited console wait.
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        const DETACHED_PROCESS: u32 = 0x0000_0008;
+        cmd.creation_flags(CREATE_NO_WINDOW | DETACHED_PROCESS);
+    }
+    #[cfg(unix)]
+    {
+        // Best-effort detach: redirect stdio and run without waiting.
+        // Full session leadership can be added with `libc` if needed.
+        cmd.stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null());
+    }
+    cmd.spawn().map_err(|e| CommandError {
+        code: "InternalError".into(),
+        message: format!("failed to spawn {}: {e}", exe.display()),
+    })?;
+    Ok(())
+}
+
+fn resolve_agent_exe() -> Option<PathBuf> {
+    if let Some(p) = std::env::var_os("REPONYX_AGENT_EXE") {
+        return Some(PathBuf::from(p));
+    }
+    // Same directory as the desktop binary (bundled layout).
+    if let Ok(me) = std::env::current_exe() {
+        if let Some(dir) = me.parent() {
+            #[cfg(windows)]
+            let candidate = dir.join("reponyx-agent.exe");
+            #[cfg(not(windows))]
+            let candidate = dir.join("reponyx-agent");
+            if candidate.is_file() {
+                return Some(candidate);
+            }
+        }
+    }
+    // PATH lookup.
+    which("reponyx-agent")
+}
+
+fn which(name: &str) -> Option<PathBuf> {
+    let path = std::env::var_os("PATH")?;
+    for dir in std::env::split_paths(&path) {
+        #[cfg(windows)]
+        let candidate = dir.join(format!("{name}.exe"));
+        #[cfg(not(windows))]
+        let candidate = dir.join(name);
+        if candidate.is_file() {
+            return Some(candidate);
+        }
+    }
+    None
+}
+
+/// Register the agent to start at user logon (Windows Task Scheduler /
+/// Linux systemd user unit / macOS LaunchAgent).
+#[tauri::command]
+pub async fn register_agent_autostart_command() -> CommandResult<String> {
+    let exe = resolve_agent_exe().ok_or_else(|| CommandError {
+        code: "InternalError".into(),
+        message: "reponyx-agent executable not found".into(),
+    })?;
+    register_autostart(&exe)
+}
+
+#[tauri::command]
+pub async fn unregister_agent_autostart_command() -> CommandResult<String> {
+    unregister_autostart()
+}
+
+#[cfg(windows)]
+fn register_autostart(agent_exe: &Path) -> CommandResult<String> {
+    let output = Command::new("schtasks")
+        .args([
+            "/Create",
+            "/TN",
+            "RepoNyxBackgroundAgent",
+            "/TR",
+            &format!("\"{}\"", agent_exe.display()),
+            "/SC",
+            "ONLOGON",
+            "/RL",
+            "LIMITED",
+            "/F",
+        ])
+        .output()
+        .map_err(|e| CommandError {
+            code: "InternalError".into(),
+            message: format!("schtasks failed: {e}"),
+        })?;
+    if output.status.success() {
+        Ok("Registered RepoNyxBackgroundAgent (ONLOGON)".into())
+    } else {
+        Err(CommandError {
+            code: "InternalError".into(),
+            message: String::from_utf8_lossy(&output.stderr).into_owned(),
+        })
+    }
+}
+
+#[cfg(windows)]
+fn unregister_autostart() -> CommandResult<String> {
+    let output = Command::new("schtasks")
+        .args(["/Delete", "/TN", "RepoNyxBackgroundAgent", "/F"])
+        .output()
+        .map_err(|e| CommandError {
+            code: "InternalError".into(),
+            message: format!("schtasks failed: {e}"),
+        })?;
+    if output.status.success() {
+        Ok("Unregistered RepoNyxBackgroundAgent".into())
+    } else {
+        Err(CommandError {
+            code: "InternalError".into(),
+            message: String::from_utf8_lossy(&output.stderr).into_owned(),
+        })
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn register_autostart(agent_exe: &Path) -> CommandResult<String> {
+    let home = std::env::var_os("HOME").ok_or_else(|| CommandError {
+        code: "InternalError".into(),
+        message: "HOME not set".into(),
+    })?;
+    let dir = PathBuf::from(home).join(".config/systemd/user");
+    std::fs::create_dir_all(&dir).map_err(|e| CommandError {
+        code: "InternalError".into(),
+        message: e.to_string(),
+    })?;
+    let unit = dir.join("reponyx-agent.service");
+    let body = format!(
+        "[Unit]\nDescription=RepoNyx Background Agent\n\n[Service]\nExecStart={}\nRestart=on-failure\nRestartSec=5\n\n[Install]\nWantedBy=default.target\n",
+        agent_exe.display()
+    );
+    std::fs::write(&unit, body).map_err(|e| CommandError {
+        code: "InternalError".into(),
+        message: e.to_string(),
+    })?;
+    let _ = Command::new("systemctl")
+        .args(["--user", "daemon-reload"])
+        .status();
+    let _ = Command::new("systemctl")
+        .args(["--user", "enable", "--now", "reponyx-agent.service"])
+        .status();
+    Ok(format!("Wrote {} and enabled user service", unit.display()))
+}
+
+#[cfg(target_os = "linux")]
+fn unregister_autostart() -> CommandResult<String> {
+    let _ = Command::new("systemctl")
+        .args(["--user", "disable", "--now", "reponyx-agent.service"])
+        .status();
+    if let Some(home) = std::env::var_os("HOME") {
+        let unit = PathBuf::from(home).join(".config/systemd/user/reponyx-agent.service");
+        let _ = std::fs::remove_file(unit);
+    }
+    Ok("Disabled reponyx-agent user service".into())
+}
+
+#[cfg(target_os = "macos")]
+fn register_autostart(agent_exe: &Path) -> CommandResult<String> {
+    let home = std::env::var_os("HOME").ok_or_else(|| CommandError {
+        code: "InternalError".into(),
+        message: "HOME not set".into(),
+    })?;
+    let dir = PathBuf::from(&home).join("Library/LaunchAgents");
+    std::fs::create_dir_all(&dir).map_err(|e| CommandError {
+        code: "InternalError".into(),
+        message: e.to_string(),
+    })?;
+    let plist = dir.join("com.reponyx.agent.plist");
+    let body = format!(
+        r#"<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>com.reponyx.agent</string>
+  <key>ProgramArguments</key>
+  <array><string>{}</string></array>
+  <key>RunAtLoad</key><true/>
+  <key>KeepAlive</key><true/>
+</dict>
+</plist>
+"#,
+        agent_exe.display()
+    );
+    std::fs::write(&plist, body).map_err(|e| CommandError {
+        code: "InternalError".into(),
+        message: e.to_string(),
+    })?;
+    let _ = Command::new("launchctl")
+        .args(["load", "-w", &plist.to_string_lossy()])
+        .status();
+    Ok(format!("Installed {}", plist.display()))
+}
+
+#[cfg(target_os = "macos")]
+fn unregister_autostart() -> CommandResult<String> {
+    if let Some(home) = std::env::var_os("HOME") {
+        let plist = PathBuf::from(home).join("Library/LaunchAgents/com.reponyx.agent.plist");
+        let _ = Command::new("launchctl")
+            .args(["unload", "-w", &plist.to_string_lossy()])
+            .status();
+        let _ = std::fs::remove_file(plist);
+    }
+    Ok("Removed com.reponyx.agent LaunchAgent".into())
+}
+
+// Silence unused when DB state is present for future expansion.
+#[allow(dead_code)]
+fn _need_db(db: State<'_, Option<Database>>) -> CommandResult<()> {
+    if db.inner().is_none() {
+        return Err(database_unavailable());
+    }
+    Ok(())
+}

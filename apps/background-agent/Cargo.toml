@@ -1,0 +1,33 @@
+[package]
+name = "reponyx-background-agent"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "RepoNyx background agent: scheduler + sync queue + local IPC (Phase 7)"
+
+[[bin]]
+name = "reponyx-agent"
+path = "src/main.rs"
+
+[dependencies]
+reponyx-core.workspace = true
+reponyx-database.workspace = true
+reponyx-logging.workspace = true
+reponyx-credential-store.workspace = true
+reponyx-github-provider.workspace = true
+reponyx-scheduler.workspace = true
+reponyx-sync-queue.workspace = true
+reponyx-ipc.workspace = true
+chrono.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sqlx.workspace = true
+tokio.workspace = true
+tokio-util = { version = "0.7", features = ["sync"] }
+tracing.workspace = true
+uuid.workspace = true
+async-trait.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true

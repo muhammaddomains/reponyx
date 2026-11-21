@@ -1,0 +1,189 @@
+import { useCallback, useEffect, useState } from "react";
+import { Badge, Button, Card } from "@reponyx/ui";
+import {
+  agentHealth,
+  ensureAgentRunning,
+  agentPause,
+  agentResume,
+  registerAgentAutostart,
+  unregisterAgentAutostart,
+  isTauriAvailable,
+} from "@reponyx/api-client";
+import type { AgentHealth } from "@reponyx/shared";
+
+export default function Agent() {
+  const [health, setHealth] = useState<AgentHealth | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const tauri = isTauriAvailable();
+
+  const refresh = useCallback(async () => {
+    setError(null);
+    try {
+      const h = await agentHealth();
+      setHealth(h);
+    } catch (e) {
+      setHealth(null);
+      setError(e instanceof Error ? e.message : String(e));
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!tauri) return;
+    void refresh();
+    const id = window.setInterval(() => void refresh(), 5000);
+    return () => window.clearInterval(id);
+  }, [tauri, refresh]);
+
+  async function run(action: () => Promise<unknown>) {
+    setBusy(true);
+    setError(null);
+    try {
+      await action();
+      await refresh();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  if (!tauri) {
+    return (
+      <div className="space-y-6 p-6">
+        <header>
+          <h1 className="text-2xl font-semibold">Background agent</h1>
+          <p className="text-sm text-zinc-500">
+            Agent health is only available inside the RepoNyx desktop app.
+          </p>
+        </header>
+      </div>
+    );
+  }
+
+  const reachable = health?.reachable === true;
+  const status = health?.status;
+
+  return (
+    <div className="space-y-6 p-6">
+      <header className="flex flex-wrap items-center justify-between gap-3">
+        <div>
+          <h1 className="text-2xl font-semibold">Background agent</h1>
+          <p className="text-sm text-zinc-500">
+            Scheduled sync runs in a separate process so it continues when
+            this window is closed.
+          </p>
+        </div>
+        <Badge variant={reachable ? "success" : "danger"}>
+          {reachable ? "Running" : "Not running"}
+        </Badge>
+      </header>
+
+      {error ? (
+        <Card className="border-red-300 p-4 text-sm text-red-700 dark:border-red-900 dark:text-red-300">
+          {error}
+        </Card>
+      ) : null}
+
+      <Card className="space-y-3 p-4">
+        <h2 className="text-sm font-medium text-zinc-500">Status</h2>
+        {status ? (
+          <dl className="grid grid-cols-2 gap-x-6 gap-y-2 text-sm sm:grid-cols-3">
+            <div>
+              <dt className="text-zinc-500">Generation</dt>
+              <dd className="font-mono">{status.generation}</dd>
+            </div>
+            <div>
+              <dt className="text-zinc-500">Started</dt>
+              <dd className="font-mono text-xs">{status.startedAt}</dd>
+            </div>
+            <div>
+              <dt className="text-zinc-500">Paused</dt>
+              <dd>{status.paused ? "yes" : "no"}</dd>
+            </div>
+            <div>
+              <dt className="text-zinc-500">Pending jobs</dt>
+              <dd>{status.pendingJobs}</dd>
+            </div>
+            <div>
+              <dt className="text-zinc-500">Running jobs</dt>
+              <dd>{status.runningJobs}</dd>
+            </div>
+            <div>
+              <dt className="text-zinc-500">Workers</dt>
+              <dd>{status.workers}</dd>
+            </div>
+            <div>
+              <dt className="text-zinc-500">Last schedule tick</dt>
+              <dd className="font-mono text-xs">
+                {status.lastMaterializeAt ?? "—"}
+              </dd>
+            </div>
+            <div>
+              <dt className="text-zinc-500">Jobs created last tick</dt>
+              <dd>{status.lastMaterializeCreated ?? "—"}</dd>
+            </div>
+            <div>
+              <dt className="text-zinc-500">Protocol</dt>
+              <dd>v{status.protocolVersion}</dd>
+            </div>
+          </dl>
+        ) : (
+          <p className="text-sm text-zinc-600 dark:text-zinc-400">
+            {health?.message ?? "No status yet."}
+          </p>
+        )}
+      </Card>
+
+      <Card className="flex flex-wrap gap-2 p-4">
+        <Button disabled={busy} onClick={() => run(refresh)}>
+          Refresh
+        </Button>
+        <Button
+          disabled={busy}
+          variant="secondary"
+          onClick={() => run(ensureAgentRunning)}
+        >
+          Start agent
+        </Button>
+        <Button
+          disabled={busy || !reachable}
+          variant="secondary"
+          onClick={() => run(agentPause)}
+        >
+          Pause
+        </Button>
+        <Button
+          disabled={busy || !reachable}
+          variant="secondary"
+          onClick={() => run(agentResume)}
+        >
+          Resume
+        </Button>
+        <Button
+          disabled={busy}
+          variant="secondary"
+          onClick={() => run(registerAgentAutostart)}
+        >
+          Enable start at login
+        </Button>
+        <Button
+          disabled={busy}
+          variant="ghost"
+          onClick={() => run(unregisterAgentAutostart)}
+        >
+          Disable start at login
+        </Button>
+      </Card>
+
+      <Card className="p-4 text-sm text-zinc-600 dark:text-zinc-400">
+        <p>
+          Autostart uses Windows Task Scheduler (ONLOGON), a systemd user
+          unit on Linux, or a LaunchAgent on macOS. The agent is a
+          user-session process and does not continue after logout (see
+          ADR-006).
+        </p>
+      </Card>
+    </div>
+  );
+}

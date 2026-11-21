@@ -1,8 +1,36 @@
-# Dependabot configuration for DesktopDashboards.
-# Keeps npm/pnpm dependencies, Cargo dependencies and GitHub Actions
-# up to date with weekly PRs.
-# Major version bumps are NOT grouped: they arrive as their own PRs
-# so breaking changes can be reviewed separately.
+# Dependabot configuration for RepoNyx.
+# Keeps pnpm dependencies, Cargo dependencies and GitHub Actions up to
+# date with weekly PRs (Mondays). Major version bumps are NOT grouped:
+# they arrive as their own PRs so breaking changes can be reviewed
+# separately.
 #
-# NOTE: the `dependencies` and `workflows` labels must exist in the repo
-# (Settings -> Labels); Dependabot skips labels that do not exist.
+# RepoNyx rule: latest STABLE versions only — never merge a beta /
+# alpha / release-candidate bump. Dependabot opens the PR; a human
+# still reviews it before merging.
+version: 2
+updates:
+  # pnpm workspace: root package.json + packages/* + apps/desktop.
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 5
+    # pnpm, not npm: the repo is a pnpm workspace (pnpm-lock.yaml).
+    versioning-strategy: increase
+
+  # Rust workspace: root Cargo.toml + crates/* + apps/*.
+  - package-ecosystem: cargo
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 5
+
+  # GitHub Actions used by .github/workflows/*.yml.
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 5

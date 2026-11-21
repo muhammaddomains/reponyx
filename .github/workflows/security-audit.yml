@@ -1,0 +1,76 @@
+name: Security audit
+
+# RepoNyx security gates: the private-key scan
+# (scripts/check-no-private-key.sh — the GitHub App private key must
+# never appear in the desktop app) plus Semgrep SAST over the Rust
+# crates and the TypeScript frontend. Runs on every push/PR and
+# weekly, so newly disclosed issues surface even without code
+# changes. CodeQL runs in its own workflow (codeql.yml); dependency
+# audits run weekly in scheduled-maintenance.yml; GitHub secret
+# scanning and Dependabot alerts are repo settings, not workflow
+# steps.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  schedule:
+    # Weekly, Monday 06:00 UTC
+    - cron: "0 6 * * 1"
+
+# Least privilege: these jobs only read the repository and run local
+# checks. No secrets are used anywhere in this workflow, so
+# pull_request runs from forks are safe.
+permissions:
+  contents: read
+
+# One run per ref at a time: a new push to a PR cancels the stale run,
+# but runs on main are never cancelled (the weekly schedule also runs
+# on main, so it is never cancelled either).
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+jobs:
+  security-audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      # The private-key script calls `cargo tree`, so Rust is needed
+      # even though this job compiles nothing.
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Run private-key scan
+        run: bash scripts/check-no-private-key.sh
+
+  semgrep:
+    # SAST over the real RepoNyx code: p/rust over the crates and the
+    # Rust binaries, p/typescript over the desktop frontend and the
+    # shared TypeScript packages. Semgrep is installed unpinned from
+    # PyPI; the rulesets resolve from the Semgrep Registry at
+    # runtime. A failed run means findings to triage, not a broken
+    # workflow — read the output before re-running.
+    name: Semgrep (SAST)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Install Semgrep
+        run: python3 -m pip install semgrep
+
+      - name: Run Semgrep
+        run: >-
+          semgrep --config p/rust --config p/typescript --error
+          crates
+          apps/desktop/src-tauri
+          apps/background-agent
+          apps/auth-broker
+          apps/desktop/src
+          packages

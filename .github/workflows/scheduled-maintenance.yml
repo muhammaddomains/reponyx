@@ -1,0 +1,80 @@
+name: Scheduled maintenance
+
+# Weekly maintenance jobs: dependency audits for the Rust workspace
+# (cargo audit against the RustSec advisory DB) and the pnpm
+# workspace (pnpm audit). Each job is independent so one failure does
+# not hide the other. Both are also runnable on demand via
+# workflow_dispatch.
+#
+# What is intentionally NOT here: the upstream template's
+# stale-skill and upstream-monitoring jobs have no RepoNyx
+# equivalent — there is no skills registry and no upstream imports
+# to monitor — so they were dropped rather than ported as dead steps.
+
+on:
+  schedule:
+    # Weekly, Monday 07:00 UTC — after the 06:00 security audit.
+    - cron: "0 7 * * 1"
+  workflow_dispatch:
+
+# Least privilege: these jobs only read the repository. No secrets
+# are used anywhere in this workflow.
+permissions:
+  contents: read
+
+# Serialize maintenance runs (never cancel): two overlapping audit
+# runs would double the install work for no benefit. A manual
+# dispatch while a run is in flight queues behind it instead of
+# killing it.
+concurrency:
+  group: scheduled-maintenance
+  cancel-in-progress: false
+
+jobs:
+  rust-audit:
+    # RustSec advisory audit of Cargo.lock. Fails the run when a
+    # known-vulnerable or yanked dependency is present.
+    name: Audit Rust dependencies
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install cargo-audit
+        run: cargo install cargo-audit --locked
+
+      - name: Audit Cargo dependencies
+        run: cargo audit
+
+  node-audit:
+    # pnpm audit of pnpm-lock.yaml. Fails the run when a
+    # known-vulnerable dependency is present.
+    name: Audit Node dependencies
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      # No `version:` input: package.json pins pnpm via
+      # `packageManager` (pnpm@12.21.0) and pnpm/action-setup reads it.
+      - name: Install pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          run_install: false
+
+      - name: Install Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 26
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Audit Node dependencies
+        run: pnpm audit

@@ -5,6 +5,39 @@ All notable changes to RepoNyx are documented here. Format follows
 
 ## [Unreleased]
 
+### Fixed — GitHub workflows and templates tailored to RepoNyx (2026-11-21)
+
+- **`.github` was copy-pasted from another project** (DesktopDashboards):
+  `dependabot.yml` and `labeler.yml` were comments only (no config at
+  all), `ci.yml` and `codeql.yml` had no jobs at all, `release.yml`
+  named the wrong app/binary, and the PR template listed test scripts
+  that do not exist. All 12 files are now written for RepoNyx:
+  - `ci.yml` — real CI: Rust job (fmt, clippy 0 warnings, tests
+    excl. desktop), frontend job (Node 26, pnpm 12.21.0, typecheck,
+    desktop build, lint), and a Windows job that compiles the
+    desktop crate (`cargo check -p reponyx-desktop`) — the first
+    real compile check for the desktop wiring.
+  - `codeql.yml` — real CodeQL scan (JavaScript/TypeScript only;
+    Rust is covered by clippy + tests).
+  - `release.yml` — tag-triggered draft releases for RepoNyx
+    (Node 26, `projectPath: apps/desktop`, correct
+    `reponyx-desktop.exe`, portable ZIP). Needs
+    `TAURI_SIGNING_PRIVATE_KEY` (+ password) set in repo secrets
+    before the first release, for the updater's signed artifacts.
+  - `dependabot.yml` — real weekly config (npm/pnpm, cargo,
+    github-actions). `labeler.yml` — real path-based labels
+    (frontend/backend/agent/broker/workflows/documentation/tests).
+  - Issue templates fixed (correct log path
+    `%APPDATA%\RepoNyx\logs\reponyx.log.<date>`, account type,
+    sync mode) and the PR template rewritten with the real
+    verification commands and the RepoNyx security checklist.
+  - `rust.yml` deleted — its checks now live in `ci.yml`; two
+    workflows running the same checks was duplication.
+  - All YAML validated by parsing; action pins use known-valid
+    versions (`checkout@v4`, `setup-node@v4`,
+    `pnpm/action-setup@v4`, `labeler@v7` — verified to exist —
+    `tauri-action@v0`, `codeql-action@v3`).
+
 ### Added — Phase 8 Activity page (2026-11-21, verified)
 
 - **Activity page** (`apps/desktop/src/routes/Activity.tsx`,

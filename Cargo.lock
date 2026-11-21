@@ -4213,6 +4213,7 @@ dependencies = [
  "reponyx-database",
  "reponyx-git-engine",
  "reponyx-github-provider",
+ "reponyx-scheduler",
  "serde",
  "sqlx",
  "tempfile",

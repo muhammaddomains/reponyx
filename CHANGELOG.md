@@ -5,6 +5,31 @@ All notable changes to RepoNyx are documented here. Format follows
 
 ## [Unreleased]
 
+### Added — Live end-to-end run (2026-11-21, on this VM)
+
+- **New E2E test** `crates/sync-queue/tests/e2e_live_chain.rs`:
+  a due schedule creates a `MirrorClone` job, the worker pool runs
+  it with the real `GitJobRunner`, and a real mirror clone lands on
+  disk with the remote's HEAD and refs, with `local_path` set and a
+  history row recorded. No network, no real credentials (local bare
+  repo as the remote, static fake PAT).
+- **Real agent + broker binaries run live:** the agent completed a
+  real `mirror_clone` (~50 ms) from a due schedule against a local
+  bare repo, with IPC listening and graceful shutdown; the broker
+  served `/health` and correctly refused pairing for an unrecorded
+  installation (401 on a wrong setup token).
+
+### Fixed — Live end-to-end run (2026-11-21, verified)
+
+- **`storage.root` default doubled `repositories/`:** the agent
+  seeded `storage.root` to `<data_dir>/repositories` while the
+  repository layout appends `repositories/github/...` under the
+  product root, so mirrors landed at
+  `<data>/repositories/repositories/github/...`. The default is now
+  `<data_dir>` itself; re-verified live with a fresh data dir
+  (mirror at `<data>/repositories/github/...`, HEAD identical to
+  the remote).
+
 ### Fixed — Phase 6 + Phase 7 integration (2026-11-21, verified)
 
 - **Workspace membership:** `crates/sync-queue`, `crates/ipc`, and

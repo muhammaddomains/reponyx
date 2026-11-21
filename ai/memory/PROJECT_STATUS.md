@@ -1,7 +1,8 @@
 # RepoNyx — Project Status
 
-Last updated: 2026-11-21 (Phase 6 / Phase 7 fixes verified — see
-"Phase 6 / Phase 7 fixes + re-verification" below)
+Last updated: 2026-11-21 (Phase 6 / Phase 7 fixes verified + live
+end-to-end run on this VM — see "Phase 6 / Phase 7 fixes +
+re-verification" and "Live end-to-end run" below)
 
 ## Current phase
 
@@ -296,8 +297,11 @@ Work is on `main` going forward.
     App via the broker when a device is paired) instead of
     `pat_only`; paused accounts are refused at resolve time with a
     permanent error; `ensure_storage_root` seeds `storage.root` to
-    `<data_dir>/repositories` on agent start so real syncs no longer
-    fail before touching git; agent `generation` is unix millis.
+    `<data_dir>` on agent start (corrected 2026-11-21 — see the live
+    run below; the first version seeded `<data_dir>/repositories`,
+    which doubled the `repositories/` segment) so real syncs no
+    longer fail before touching git; agent `generation` is unix
+    millis.
   - **Desktop wiring (Fix 3/4):** desktop `Cargo.toml` depends on
     `reponyx-ipc`; `lib.rs` declares `mod agent; mod tray;`, sets up
     the tray (warns and continues without it on failure), and
@@ -352,7 +356,61 @@ Work is on `main` going forward.
     `apps/desktop/src-tauri/gen/schemas/*.json` files remain
     committed. The Phase 6 spec's 12 acceptance tests are only
     partially covered by automated tests (no real-GitHub or Windows
-    runs on this VM).
+    runs on this VM — but see the live run below: the full chain has
+    now run for real on this VM against a local bare repo).
+
+- **Live end-to-end run (actual, 2026-11-21, assistant, on this
+  VM — NOT a unit test):** at the user's request ("sb ko apna system
+  pe chla k dekho 1 dafa"), the real binaries were run for real:
+  - **New E2E test** `crates/sync-queue/tests/e2e_live_chain.rs`
+    (`scheduler_to_queue_to_real_mirror_clone`): seeds a local bare
+    git repo (2 commits) as the remote, a PAT account, a repo row
+    with a `file://` clone URL, and a due global schedule; asserts
+    `materialize_due` creates one `MirrorClone` job, the worker pool
+    runs it with the real `GitJobRunner`, and the mirror on disk
+    carries the remote's HEAD and `refs/heads/main`, with the repo
+    row's `local_path` set and a history row recorded. Passes in
+    ~0.2 s. No network, no real GitHub credentials (static fake PAT
+    source; `file://` needs no auth).
+  - **Real agent binary** (`reponyx-agent`, debug build): run for
+    45 s against a seeded data dir (account + repo + due schedule
+    inserted by SQL; PAT stored in a throwaway gnome-keyring
+    Secret Service session — the VM had no OS credential store
+    until `gnome-keyring` was installed for this run). The agent
+    started, migrated the DB, provisioned `storage.root`, ran crash
+    recovery, started 5 workers, bound IPC
+    (`ipc/agent.sock`), materialized 1 job from the due schedule,
+    and completed a real `mirror_clone` in ~50 ms; history row
+    `mirror_clone / success`; schedule `next_run_at` advanced;
+    graceful shutdown on SIGTERM. **One real bug found by this run:**
+    the mirror landed at
+    `<data>/repositories/repositories/github/...` — `ensure_storage_root`
+    defaulted `storage.root` to `<data_dir>/repositories` while
+    `RepositoryLayout` appends `repositories/github/...` under the
+    product root (spec: `D:\RepoNyx\repositories\github\...`). Fixed
+    the same day (`lifecycle.rs`: default is now `<data_dir>` itself)
+    and re-verified with a fresh data dir: mirror at
+    `<data>/repositories/github/octocat/octocat/hello.git`, HEAD
+    identical to the remote, no doubled segment.
+  - **Real broker binary** (`reponyx-auth-broker`, debug build):
+    run with a throwaway RSA key + App id + setup token (all in
+    `/tmp`, never committed). `/health` returned
+    `{"status":"ok","version":"0.1.0"}`; a pairing request with the
+    correct setup token passed auth and was correctly refused with
+    "installation not recorded; install the GitHub App first" (no
+    real App exists); a wrong token got 401 "invalid or missing
+    setup token".
+  - **What this run did NOT prove:** no real GitHub account, App,
+    or PAT was ever involved (the remote was a local bare repo, the
+    PAT was fake); the desktop UI + Tauri backend never ran (the
+    Tauri binary build is still blocked on this VM by the missing
+    WebViewGTK libs); IPC progress push to the UI is still unwired.
+    The remaining real proof is the user's Windows build + a first
+    sync against a real GitHub account.
+  - **Verification after the fix:** `cargo fmt --check` pass;
+    clippy 0 warnings; `cargo test --workspace --exclude
+    reponyx-desktop` **330 passed, 0 failed**; `pnpm -r typecheck`
+    pass; desktop vite build pass; desktop eslint pass.
 
 - **Phase 5 — Authentication (actual, 2026-11-18, on `main`):**
   - **Auth Broker (`apps/auth-broker`, axum 0.8.9):** a separate

@@ -23,5 +23,6 @@ tracing.workspace = true
 uuid.workspace = true
 
 [dev-dependencies]
+reponyx-scheduler = { path = "../scheduler" }
 tempfile.workspace = true
 tokio = { version = "1", features = ["full", "test-util"] }

@@ -131,11 +131,16 @@ async fn ensure_storage_root(
     {
         return Ok(std::path::PathBuf::from(setting.value));
     }
-    let root = data_dir.join("repositories");
+    // `storage.root` is the product root (e.g. `D:\RepoNyx`): the
+    // repository layout appends `repositories/github/...` under it.
+    // Defaulting to `<data_dir>/repositories` would double the
+    // segment (`.../repositories/repositories/github/...`) — found by
+    // the first live agent run on 2026-11-21.
+    let root = data_dir.to_path_buf();
     set_setting(pool, "storage.root", root.to_string_lossy().as_ref()).await?;
     warn!(
         root = %root.display(),
-        "storage.root was not configured; defaulting to <data_dir>/repositories"
+        "storage.root was not configured; defaulting to <data_dir>"
     );
     Ok(root)
 }

@@ -1,9 +1,48 @@
-# CodeQL code scanning for DesktopDashboards.
-# Analyzes the JavaScript frontend (src/index.html, inline script), the Rust backend
-# (src-tauri/) and the workflow files themselves (actions).
-# All three languages use build-mode "none": CodeQL builds the
-# database directly from the source, so no cargo build (and no
-# Tauri system dependencies) is needed on the runner. Rust analysis
-# needs rustup + cargo, which are preinstalled on ubuntu-latest.
-# Runs on pushes and pull requests to main, plus a weekly run.
-name: "CodeQL Advanced"
+name: CodeQL
+
+# CodeQL code scanning for RepoNyx.
+# Analyzes the TypeScript / JavaScript frontend and desktop code
+# (apps/desktop/src, packages/*). Rust is NOT scanned by CodeQL —
+# the Rust analysis is covered by `cargo clippy` (0 warnings) and
+# `cargo test` in the CI workflow. Runs on pushes and pull requests
+# to main, plus a weekly run.
+
+on:
+  push:
+    branches: ["main"]
+  pull_request:
+    branches: ["main"]
+  schedule:
+    - cron: "0 6 * * 1"
+
+permissions:
+  actions: read
+  contents: read
+  security-events: write
+
+jobs:
+  analyze:
+    name: Analyze
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    strategy:
+      fail-fast: false
+      matrix:
+        language: ["javascript-typescript"]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@v3
+        with:
+          languages: ${{ matrix.language }}
+          # No build step: the JavaScript database is built directly
+          # from source, so no cargo build (and no Tauri system
+          # dependencies) is needed on the runner.
+          build-mode: none
+
+      - name: Perform CodeQL Analysis
+        uses: github/codeql-action/analyze@v3
+        with:
+          category: "/language:${{ matrix.language }}"

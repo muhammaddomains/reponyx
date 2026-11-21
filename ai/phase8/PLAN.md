@@ -1,6 +1,6 @@
 # Phase 8 — Desktop Interface
 
-- Status: Not started
+- Status: Started 2026-11-21 — Schedules page done; the rest not started
 - Depends on: Phases 2–7 (features land as their backends do)
 
 ## Objectives
@@ -21,7 +21,12 @@ Activity, Storage, Settings (+ notifications, system tray).
 
 ## Implementation tasks
 
-- [ ] Wire each section to real Tauri commands
+- [x] Schedules page (2026-11-21): list, create (global/account/
+      repository), enable/disable, inline edit, delete, next-5-runs
+      preview, materialize-now with report, effective-schedule
+      lookup — wired to the Phase 7 scheduler backend, no backend
+      changes. Verified: typecheck + desktop build + eslint pass.
+- [ ] Wire each remaining section to real Tauri commands
 - [ ] Repository list virtualization + bulk selection
 - [ ] Sync progress UI + cancellation
 - [ ] Settings sections (General, Auth, Repos, Sync, Storage, Background, Advanced)
@@ -43,8 +48,13 @@ All prior phases.
 
 ## Known issues
 
-None yet.
+- Repository scope on the Schedules page needs a typed UUID — no
+  Repositories page or repository list command exists yet.
+- No frontend tests yet (the plan asks for them); pages are verified
+  by typecheck + build + eslint only.
 
 ## Completion status
 
-Not started.
+Started 2026-11-21. Schedules page done and verified (typecheck +
+desktop build + eslint pass). Repositories, Synchronization,
+Activity, Storage, Settings still placeholders.

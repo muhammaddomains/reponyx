@@ -189,8 +189,8 @@ export async function revokeDevicePairing(
 
 /** Phase 7 scheduler commands (Tauri `schedules.rs`). Invoke
  *  argument names are snake_case, matching the Rust parameter names.
- *  No scheduler UI exists yet (Phase 8); these are the typed calls
- *  it will use. */
+ *  The Schedules page (`apps/desktop/src/routes/Schedules.tsx`,
+ *  Phase 8) is the typed UI for these calls. */
 
 export async function listSchedules(): Promise<ScheduleWithNextRun[]> {
   return z

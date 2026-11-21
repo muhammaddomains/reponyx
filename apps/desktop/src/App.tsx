@@ -4,6 +4,7 @@ import Accounts from "./routes/Accounts";
 import Agent from "./routes/Agent";
 import Overview from "./routes/Overview";
 import Placeholder from "./routes/Placeholder";
+import Schedules from "./routes/Schedules";
 
 export default function App() {
   return (
@@ -21,10 +22,7 @@ export default function App() {
             path="synchronization"
             element={<Placeholder title="Synchronization" phase={6} />}
           />
-          <Route
-            path="schedules"
-            element={<Placeholder title="Schedules" phase={7} />}
-          />
+          <Route path="schedules" element={<Schedules />} />
           <Route
             path="activity"
             element={<Placeholder title="Activity" phase={8} />}

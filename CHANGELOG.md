@@ -5,6 +5,18 @@ All notable changes to RepoNyx are documented here. Format follows
 
 ## [Unreleased]
 
+### Added — Phase 8 Schedules page (2026-11-21, verified)
+
+- **Schedules page** (`apps/desktop/src/routes/Schedules.tsx`,
+  wired to `/schedules`): lists schedules with cadence, timezone,
+  next run and enabled state; create (global / account / repository
+  scope), enable/disable, inline edit, delete with confirm,
+  per-schedule next-5-runs preview, "Run due schedules now" with the
+  materialize report, and an effective-schedule lookup by repository
+  id. Built on the Phase 7 scheduler backend with no backend
+  changes. Repository scope needs a typed repository id until the
+  Repositories page exists.
+
 ### Added — Live end-to-end run (2026-11-21, on this VM)
 
 - **New E2E test** `crates/sync-queue/tests/e2e_live_chain.rs`:

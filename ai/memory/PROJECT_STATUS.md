@@ -1,7 +1,8 @@
 # RepoNyx — Project Status
 
-Last updated: 2026-11-21 (Phase 6 / Phase 7 fixes verified + live
-end-to-end run on this VM — see "Phase 6 / Phase 7 fixes +
+Last updated: 2026-11-21 (Phase 8 Schedules page built — see
+"Phase 8 — Schedules page" below; Phase 6 / Phase 7 fixes verified
++ live end-to-end run on this VM — see "Phase 6 / Phase 7 fixes +
 re-verification" and "Live end-to-end run" below)
 
 ## Current phase
@@ -16,13 +17,48 @@ and verified the same day (assistant, uncommitted at the time of
 writing — see "Phase 6 / Phase 7 fixes + re-verification" below).
 Phase 7 — Scheduler and Background Agent — scheduler crate verified
 2026-11-19; agent, IPC, tray, and Agent page code landed 2026-11-21
-and were fixed and verified the same day (same section).** The
+and were fixed and verified the same day (same section).**
+**Phase 8 — Desktop UI — started 2026-11-21: the Schedules page is
+built (see "Phase 8 — Schedules page" below); the other pages
+(Repositories, Synchronization, Activity, Storage, Settings) are
+still placeholders.** The
 desktop Rust wiring is verified by `cargo fmt` + review only (the
 gdk blocker); the real desktop compile check is the user's Windows
 build. Remaining honest gaps are listed in the fixes section.
 Work is on `main` going forward.
 
 ## Completed tasks
+
+- **Phase 8 — Schedules page (actual, 2026-11-21, assistant,
+  uncommitted at the time of writing):** the first Phase 8 page,
+  built on the Phase 7 scheduler backend (7 Tauri commands, zod
+  schemas, typed api-client calls — no backend changes were needed).
+  `apps/desktop/src/routes/Schedules.tsx` (new) is wired to
+  `/schedules` in `App.tsx`, replacing the placeholder.
+  - **What it does:** lists every schedule (scope, cadence in plain
+    words, timezone, next run, enabled badge, next-run error when
+    the cadence no longer parses); create with scope global /
+    account (dropdown from `listAccounts`) / repository (id field —
+    no repository list exists yet, so the id is typed in);
+    enable/disable toggle; inline edit of cadence, timezone, and
+    enabled flag; delete with a confirm dialog; per-schedule
+    preview of the next 5 runs in the schedule's timezone; "Run due
+    schedules now" (`materializeDue`) with the full report
+    (checked/primed/created/skipped/errors); effective-schedule
+    lookup by repository id (repository > account > global).
+  - **Honest limits:** repository scope needs a typed UUID (no
+    Repositories page yet); cadence input is free text per type
+    (hours / `HH:MM` / `days HH:MM` / minutes) and the backend is
+    the validator — an invalid cadence is rejected with a real
+    error, never silently stored; no frontend tests exist yet (the
+    plan asks for them; the page is verified by typecheck + build +
+    eslint only, as with the other pages).
+  - **Verification (actual, 2026-11-21):** `cargo fmt --check`
+    pass (no Rust changes); `pnpm -r typecheck` pass; `pnpm
+    --filter @reponyx/desktop build` pass (1.88 s); desktop eslint
+    pass on the two touched files (exit 0). No Rust tests change:
+    the suite stands at 331 passed / 0 failed. The desktop itself
+    still needs its first Windows compile check.
 
 - **Phase 7 — Scheduler crate only (PARTIAL, actual, 2026-11-19,
   on `main`):** the scheduler part of Phase 7.

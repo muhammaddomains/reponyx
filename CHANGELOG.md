@@ -5,6 +5,32 @@ All notable changes to RepoNyx are documented here. Format follows
 
 ## [Unreleased]
 
+### Added — More GitHub workflows tailored to RepoNyx (2026-11-21)
+
+- **`lint.yml`** — Markdown trailing-whitespace check, workflow
+  YAML parse check, and the private-key scan
+  (`scripts/check-no-private-key.sh`). No frontmatter / link /
+  docs-status steps: RepoNyx has no such scripts, so they were
+  left out rather than ported as dead steps.
+- **`scheduled-maintenance.yml`** — weekly (Monday 07:00 UTC)
+  dependency audits: `cargo audit` (RustSec) and `pnpm audit`.
+  The template's stale-skill and upstream-monitoring jobs have no
+  RepoNyx equivalent and were dropped.
+- **`security-audit.yml`** — private-key scan + Semgrep SAST
+  (`p/rust` over the crates and Rust binaries, `p/typescript` over
+  the desktop frontend and shared packages) on every push/PR and
+  weekly. Verified locally before committing: Semgrep 1.186.0 ran
+  85 rules over 125 files — 1 finding (`current_exe` in
+  `agent.rs`), a false positive for this use (path hint for the
+  bundled agent binary, not a trust decision), suppressed with a
+  `nosemgrep` comment carrying the justification; re-run is
+  0 findings. `pnpm audit` also run locally: no known
+  vulnerabilities found.
+- The uploaded `labeler.yml` was NOT changed: it is the old
+  wrong-paths version (`src/**`, `src-tauri/**` at the repo
+  root); the repo's tailored `labeler.yml` (already pushed) is
+  correct and covers it.
+
 ### Fixed — GitHub workflows and templates tailored to RepoNyx (2026-11-21)
 
 - **`.github` was copy-pasted from another project** (DesktopDashboards):

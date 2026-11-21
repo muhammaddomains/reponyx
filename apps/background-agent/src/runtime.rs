@@ -1,15 +1,16 @@
 //! Agent runtime: queue + scheduler ticks + IPC command handling.
 
 use chrono::Utc;
-use reponyx_core::{ErrorCode, JobType, RepoNyxError, SyncMode};
+use reponyx_core::{ErrorCode, JobStatus, JobType, RepoNyxError, SyncMode};
 use reponyx_credential_store::{CredentialStore, default_store};
-use reponyx_database::jobs::{JobFilter, NewJob, create_job, get_job, list_jobs};
+use reponyx_database::jobs::{JobFilter, NewJob, create_job, list_jobs, request_cancel_job};
 use reponyx_database::repositories::get_repository;
+use reponyx_github_provider::DEFAULT_BROKER_BASE_URL;
 use reponyx_ipc::protocol::{AgentStatus, PROTOCOL_VERSION, ServerMessage};
 use reponyx_ipc::{AgentCommand, AgentIpcServer};
 use reponyx_scheduler::materialize_due;
 use reponyx_sync_queue::{
-    DefaultCredentialResolver, GitJobRunner, QueueConfig, QueueHandle, WorkerPool,
+    GitJobRunner, QueueConfig, QueueHandle, WorkerPool, default_resolver_from_settings,
 };
 use sqlx::SqlitePool;
 use std::path::Path;
@@ -18,7 +19,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
-use tracing::{error, info, warn};
+use tracing::{error, info};
 use uuid::Uuid;
 
 pub struct AgentState {
@@ -31,10 +32,16 @@ pub struct AgentState {
     pub last_materialize_created: tokio::sync::Mutex<Option<usize>>,
 }
 
-pub async fn start_queue(pool: SqlitePool) -> Result<(QueueHandle, Arc<dyn CredentialStore>), RepoNyxError> {
+pub async fn start_queue(
+    pool: SqlitePool,
+) -> Result<(QueueHandle, Arc<dyn CredentialStore>), RepoNyxError> {
     let store = default_store();
-    let resolver = Arc::new(DefaultCredentialResolver::pat_only(Arc::clone(&store)));
-    // Full App support: use default_resolver_from_settings when device.identifier is set.
+    // Full resolver: PAT accounts use the OS store; GitHub App
+    // accounts mint installation tokens via the broker when a device
+    // identifier is paired (device.identifier setting). Without a
+    // paired device, App accounts fail per-job with a clear error.
+    let resolver =
+        default_resolver_from_settings(&pool, Arc::clone(&store), DEFAULT_BROKER_BASE_URL).await?;
     let runner = GitJobRunner::new(resolver).into_arc();
     let config = QueueConfig::from_settings(&pool).await;
     let handle = WorkerPool::start(pool, runner, config).await?;
@@ -56,9 +63,9 @@ pub async fn scheduler_loop(pool: SqlitePool, cancel: CancellationToken, state: 
                 if state.paused.load(Ordering::SeqCst) {
                     continue;
                 }
-                match materialize_due(&pool).await {
+                match materialize_due(&pool, Utc::now()).await {
                     Ok(report) => {
-                        if report.created.len() > 0 || report.checked > 0 {
+                        if !report.created.is_empty() || report.checked > 0 {
                             info!(
                                 checked = report.checked,
                                 created = report.created.len(),
@@ -146,24 +153,25 @@ pub async fn command_loop(
                 job_id,
                 reply,
             } => {
-                // Soft cancel: mark intent in logs; full cooperative cancel
-                // is owned by the queue worker cancellation token (future).
-                let msg = match get_job(&state.pool, job_id).await {
-                    Ok(Some(job)) => {
-                        warn!(%job_id, status = ?job.status, "cancel requested (best-effort)");
+                // Real cancel: a pending job is cancelled immediately;
+                // a running job gets `cancel_requested_at` and the
+                // owning worker cancels cooperatively on its next
+                // heartbeat check.
+                let msg = match request_cancel_job(&state.pool, job_id).await {
+                    Ok(job) => {
+                        let note = match job.status {
+                            JobStatus::Cancelled => "cancelled",
+                            JobStatus::Running => "cancel requested",
+                            _ => "already finished",
+                        };
+                        info!(%job_id, status = ?job.status, "cancel requested");
                         ServerMessage::Ack {
                             request_id,
                             ok: true,
-                            message: Some(format!("cancel noted for job in status {:?}", job.status)),
+                            message: Some(note.into()),
                             job_id: Some(job_id),
                         }
                     }
-                    Ok(None) => ServerMessage::Ack {
-                        request_id,
-                        ok: false,
-                        message: Some("job not found".into()),
-                        job_id: None,
-                    },
                     Err(e) => ServerMessage::Ack {
                         request_id,
                         ok: false,
@@ -196,14 +204,12 @@ async fn build_status(state: &AgentState) -> AgentStatus {
 }
 
 async fn enqueue_now(pool: &SqlitePool, repository_id: Uuid) -> Result<Uuid, RepoNyxError> {
-    let repo = get_repository(pool, repository_id)
-        .await?
-        .ok_or_else(|| {
-            RepoNyxError::new(
-                ErrorCode::RepositoryNotFound,
-                format!("repository {repository_id} not found"),
-            )
-        })?;
+    let repo = get_repository(pool, repository_id).await?.ok_or_else(|| {
+        RepoNyxError::new(
+            ErrorCode::RepositoryNotFound,
+            format!("repository {repository_id} not found"),
+        )
+    })?;
     if !repo.sync_enabled {
         return Err(RepoNyxError::new(
             ErrorCode::InvalidInput,

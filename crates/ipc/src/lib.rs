@@ -26,7 +26,7 @@ pub use auth::{
 pub use client::{IpcClient, agent_reachable};
 pub use frame::{FrameError, read_frame, write_frame};
 pub use protocol::{
-    PROTOCOL_VERSION, AgentStatus, ClientMessage, ServerMessage, parse_client_message,
+    AgentStatus, ClientMessage, PROTOCOL_VERSION, ServerMessage, parse_client_message,
     parse_server_message,
 };
 pub use server::{AgentCommand, AgentIpcServer, IpcServerConfig};

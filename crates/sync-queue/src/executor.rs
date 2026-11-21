@@ -8,10 +8,9 @@
 //!    schedule a new retry job after backoff
 
 use chrono::Utc;
-use rand::Rng;
 use reponyx_core::{JobStatus, RepoNyxError, SyncJob, SyncResult};
 use reponyx_database::jobs::{
-    JobOutcome, NewJob, complete_job_with_history, create_job, get_job,
+    JobOutcome, complete_job_with_history, create_retry_job, get_job, is_unique_violation,
 };
 use sqlx::SqlitePool;
 use std::sync::Arc;
@@ -35,11 +34,14 @@ pub enum ExecutionOutcome {
 }
 
 /// Run one already-claimed (`running`) job to a terminal state.
+///
+/// `pool` and `config` are taken by value so the worker can run the
+/// job in a child task (panic isolation); both are cheap clones.
 pub async fn execute_claimed_job(
-    pool: &SqlitePool,
+    pool: SqlitePool,
     job: SyncJob,
     runner: Arc<dyn JobRunner>,
-    config: &QueueConfig,
+    config: QueueConfig,
     cancel: CancellationToken,
     events: Option<broadcast::Sender<SyncProgressEvent>>,
 ) -> Result<ExecutionOutcome, RepoNyxError> {
@@ -62,7 +64,7 @@ pub async fn execute_claimed_job(
             job.attempt_count, config.max_attempts
         );
         complete_job_with_history(
-            pool,
+            &pool,
             job.id,
             JobOutcome {
                 result: SyncResult::Failed,
@@ -92,7 +94,7 @@ pub async fn execute_claimed_job(
         job: job.clone(),
         timeout: config.job_timeout,
         cancel: cancel.child_token(),
-        progress: None,
+        progress: events.clone(),
     };
 
     let run_result = runner.run(ctx).await;
@@ -101,7 +103,7 @@ pub async fn execute_claimed_job(
     match run_result {
         Ok(result) => {
             complete_job_with_history(
-                pool,
+                &pool,
                 job.id,
                 JobOutcome {
                     result: SyncResult::Success,
@@ -125,7 +127,7 @@ pub async fn execute_claimed_job(
         }
         Err(err) => {
             let class = classify_error(&err);
-            handle_failure(pool, &job, &err, class, duration_ms, config, &events).await
+            handle_failure(&pool, &job, &err, class, duration_ms, &config, &events).await
         }
     }
 }
@@ -196,45 +198,69 @@ async fn handle_failure(
         FailureClass::Transient => {
             let will = should_retry(class, job.attempt_count, config.max_attempts);
             if will {
-                // New job row — never transition back to pending.
-                let retry = create_job(
-                    pool,
-                    NewJob {
-                        repository_id: job.repository_id,
-                        job_type: job.job_type,
-                        priority: job.priority,
-                    },
-                )
-                .await?;
-
-                let mut rng = rand::rng();
-                let delay = compute_backoff(
-                    job.attempt_count as u32,
-                    config.base_backoff,
-                    config.max_backoff,
-                    &mut rng,
-                );
-
-                emit(
-                    events,
-                    SyncProgressEvent::JobFailed {
-                        job_id: job.id,
-                        repository_id: job.repository_id,
-                        error_code: err.code.as_str().to_string(),
-                        message: err.message.clone(),
-                        will_retry: true,
-                        next_attempt: Some(retry.attempt_count + 1),
-                    },
-                );
-                info!(
-                    job_id = %job.id,
-                    retry_job_id = %retry.id,
-                    delay_ms = delay.as_millis() as u64,
-                    "transient failure; retry scheduled"
-                );
-                // Soft delay before the new job is attractive to claimers.
-                // Workers just sleep; the new job sits pending.
-                Ok(ExecutionOutcome::FailedWillRetry { delay })
+                // `ThreadRng` is not `Send`; scope it so it is dropped
+                // before the await below (the executor runs in a
+                // spawned task, so its future must be `Send`).
+                let delay = {
+                    let mut rng = rand::rng();
+                    compute_backoff(
+                        job.attempt_count as u32,
+                        config.base_backoff,
+                        config.max_backoff,
+                        &mut rng,
+                    )
+                };
+                // The backoff is enforced on the retry row itself
+                // (available_at), not by the failing worker's sleep:
+                // any worker claiming it before then is refused by
+                // the claim query, and the attempt count is carried
+                // over so the budget binds across retries.
+                let available_at = Utc::now()
+                    + chrono::Duration::from_std(delay).unwrap_or(chrono::Duration::seconds(0));
+                match create_retry_job(pool, job, available_at).await {
+                    Ok(retry) => {
+                        emit(
+                            events,
+                            SyncProgressEvent::JobFailed {
+                                job_id: job.id,
+                                repository_id: job.repository_id,
+                                error_code: err.code.as_str().to_string(),
+                                message: err.message.clone(),
+                                will_retry: true,
+                                next_attempt: Some(retry.attempt_count + 1),
+                            },
+                        );
+                        info!(
+                            job_id = %job.id,
+                            retry_job_id = %retry.id,
+                            delay_ms = delay.as_millis() as u64,
+                            "transient failure; retry scheduled"
+                        );
+                        Ok(ExecutionOutcome::FailedWillRetry { delay })
+                    }
+                    Err(e) if is_unique_violation(&e) => {
+                        // Another writer already queued the same work
+                        // (dedupe index); the retry is not lost, it
+                        // is just owned by the other row.
+                        warn!(
+                            job_id = %job.id,
+                            "transient failure; retry already queued by another writer"
+                        );
+                        emit(
+                            events,
+                            SyncProgressEvent::JobFailed {
+                                job_id: job.id,
+                                repository_id: job.repository_id,
+                                error_code: err.code.as_str().to_string(),
+                                message: err.message.clone(),
+                                will_retry: true,
+                                next_attempt: None,
+                            },
+                        );
+                        Ok(ExecutionOutcome::FailedWillRetry { delay })
+                    }
+                    Err(e) => Err(e),
+                }
             } else {
                 emit(
                     events,

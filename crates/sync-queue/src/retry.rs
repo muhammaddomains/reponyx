@@ -6,7 +6,6 @@
 //! - Permanent auth / permission / not-found errors → no further retry
 //!   after the current attempt is recorded as failed.
 
-use rand::Rng;
 use reponyx_core::{ErrorCode, RepoNyxError};
 use std::time::Duration;
 
@@ -51,7 +50,7 @@ pub fn compute_backoff(
     attempt: u32,
     base: Duration,
     max: Duration,
-    rng: &mut impl rand::Rng,
+    rng: &mut impl rand::RngExt,
 ) -> Duration {
     let exp = attempt.saturating_sub(1).min(16);
     let factor = 1u64 << exp;
@@ -71,8 +70,8 @@ pub fn compute_backoff(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use rand::rngs::StdRng;
     use rand::SeedableRng;
+    use rand::rngs::StdRng;
 
     #[test]
     fn transient_codes_are_retryable_class() {

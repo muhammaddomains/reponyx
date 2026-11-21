@@ -7,9 +7,7 @@
 //! - Tokens are never logged or written to SQLite
 
 use async_trait::async_trait;
-use reponyx_core::{
-    Account, AccountStatus, AuthenticationMethod, ErrorCode, RepoNyxError,
-};
+use reponyx_core::{Account, AccountStatus, AuthenticationMethod, ErrorCode, RepoNyxError};
 use reponyx_credential_store::{
     ACCOUNT_DEVICE_TOKEN_PREFIX, CredentialStore, PatTokenSource, SERVICE_BROKER, SERVICE_PAT,
     device_token_account,
@@ -72,17 +70,29 @@ impl CredentialResolver for DefaultCredentialResolver {
         account: &Account,
     ) -> Result<Arc<dyn CredentialSource>, RepoNyxError> {
         match account.status {
-            AccountStatus::Connected | AccountStatus::Paused => {}
+            AccountStatus::Connected => {}
+            AccountStatus::Paused => {
+                return Err(RepoNyxError::new(
+                    ErrorCode::InvalidInput,
+                    format!("account {} is paused; resume it to sync", account.username),
+                ));
+            }
             AccountStatus::TokenExpired => {
                 return Err(RepoNyxError::new(
                     ErrorCode::AuthenticationExpired,
-                    format!("account {} token expired; reconnect required", account.username),
+                    format!(
+                        "account {} token expired; reconnect required",
+                        account.username
+                    ),
                 ));
             }
             AccountStatus::Revoked => {
                 return Err(RepoNyxError::new(
                     ErrorCode::AuthenticationRevoked,
-                    format!("account {} is revoked; reconnect required", account.username),
+                    format!(
+                        "account {} is revoked; reconnect required",
+                        account.username
+                    ),
                 ));
             }
             AccountStatus::Error => {
@@ -203,10 +213,7 @@ pub async fn storage_root_from_settings(
     let setting = reponyx_database::settings::get_setting(pool, "storage.root")
         .await?
         .ok_or_else(|| {
-            RepoNyxError::new(
-                ErrorCode::InvalidInput,
-                "storage.root is not configured",
-            )
+            RepoNyxError::new(ErrorCode::InvalidInput, "storage.root is not configured")
         })?;
     let path = setting.value.trim();
     if path.is_empty() {

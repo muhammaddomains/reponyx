@@ -17,6 +17,7 @@ reponyx-credential-store.workspace = true
 reponyx-database.workspace = true
 reponyx-git-engine.workspace = true
 reponyx-github-provider.workspace = true
+reponyx-ipc.workspace = true
 reponyx-logging.workspace = true
 reponyx-provider-abstractions.workspace = true
 reponyx-scheduler.workspace = true

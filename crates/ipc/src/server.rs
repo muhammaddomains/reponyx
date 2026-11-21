@@ -3,13 +3,13 @@
 use crate::auth::{ensure_shared_secret, token_matches};
 use crate::frame::{read_frame, write_frame};
 use crate::protocol::{
-    PROTOCOL_VERSION, AgentStatus, ClientMessage, ServerMessage, parse_client_message,
+    AgentStatus, ClientMessage, PROTOCOL_VERSION, ServerMessage, parse_client_message,
 };
 use crate::transport::{self, Listener, TransportError};
 use reponyx_credential_store::CredentialStore;
 use std::path::Path;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64};
 use tokio::sync::{RwLock, mpsc};
 use tracing::{debug, info, warn};
 use uuid::Uuid;
@@ -53,9 +53,7 @@ pub struct IpcServerConfig {
 
 impl Default for IpcServerConfig {
     fn default() -> Self {
-        Self {
-            generation: 1,
-        }
+        Self { generation: 1 }
     }
 }
 
@@ -90,9 +88,8 @@ impl AgentIpcServer {
         generation: u64,
         commands: mpsc::Sender<AgentCommand>,
     ) -> Result<Self, TransportError> {
-        let secret = ensure_shared_secret(store).map_err(|e| {
-            TransportError::Other(format!("ipc secret: {e}"))
-        })?;
+        let secret = ensure_shared_secret(store)
+            .map_err(|e| TransportError::Other(format!("ipc secret: {e}")))?;
         let listener = transport::listen(data_dir).await?;
         info!(endpoint = %transport::socket_path(data_dir).display(), "ipc listening");
         Ok(Self {
@@ -124,11 +121,11 @@ impl AgentIpcServer {
                     match accepted {
                         Ok(conn) => {
                             let token = self.expected_token.clone();
-                            let gen = self.generation;
+                            let generation = self.generation;
                             let commands = self.commands.clone();
                             let cancel = cancel.child_token();
                             tokio::spawn(async move {
-                                if let Err(e) = handle_connection(conn, token, gen, commands, cancel).await {
+                                if let Err(e) = handle_connection(conn, token, generation, commands, cancel).await {
                                     debug!(error = %e, "ipc connection ended");
                                 }
                             });
@@ -159,7 +156,7 @@ async fn handle_connection(
                     Err(crate::frame::FrameError::Closed) => return Ok(()),
                     Err(e) => return Err(e.to_string()),
                 };
-                let msg = parse_client_message(&body).map_err(|e| e)?;
+                let msg = parse_client_message(&body)?;
                 let reply = dispatch(msg, &expected_token, generation, &commands).await;
                 let bytes = serde_json::to_vec(&reply).map_err(|e| e.to_string())?;
                 write_frame(&mut conn, &bytes).await.map_err(|e| e.to_string())?;
@@ -203,7 +200,10 @@ async fn dispatch(
         ClientMessage::AgentStatus { request_id, .. } => {
             let (tx, rx) = tokio::sync::oneshot::channel();
             if commands
-                .send(AgentCommand::Status { request_id, reply: tx })
+                .send(AgentCommand::Status {
+                    request_id,
+                    reply: tx,
+                })
                 .await
                 .is_err()
             {
@@ -239,9 +239,7 @@ async fn dispatch(
             rx.await.unwrap_or_else(|_| unavailable(request_id))
         }
         ClientMessage::CancelJob {
-            request_id,
-            job_id,
-            ..
+            request_id, job_id, ..
         } => {
             let (tx, rx) = tokio::sync::oneshot::channel();
             if commands

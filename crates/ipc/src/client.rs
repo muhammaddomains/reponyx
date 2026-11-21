@@ -3,7 +3,7 @@
 use crate::auth::load_shared_secret;
 use crate::frame::{read_frame, write_frame};
 use crate::protocol::{
-    PROTOCOL_VERSION, AgentStatus, ClientMessage, ServerMessage, parse_server_message,
+    AgentStatus, ClientMessage, PROTOCOL_VERSION, ServerMessage, parse_server_message,
 };
 use crate::transport::{self, TransportError};
 use reponyx_core::{ErrorCode, RepoNyxError};
@@ -21,8 +21,11 @@ pub struct IpcClient {
 impl IpcClient {
     /// Load the shared secret from the OS store (must already exist —
     /// created the first time the agent starts).
-    pub fn open(data_dir: impl Into<std::path::PathBuf>, store: &Arc<dyn CredentialStore>) -> Result<Self, RepoNyxError> {
-        let secret = load_shared_secret(store).map_err(|e| RepoNyxError::from(e))?;
+    pub fn open(
+        data_dir: impl Into<std::path::PathBuf>,
+        store: &Arc<dyn CredentialStore>,
+    ) -> Result<Self, RepoNyxError> {
+        let secret = load_shared_secret(store).map_err(RepoNyxError::from)?;
         Ok(Self {
             data_dir: data_dir.into(),
             token: secret.expose().to_string(),
@@ -30,12 +33,13 @@ impl IpcClient {
     }
 
     pub async fn ping(&self) -> Result<(u64 /* generation */, u32 /* protocol */), RepoNyxError> {
-        match self.roundtrip(ClientMessage::Ping {
-            protocol_version: PROTOCOL_VERSION,
-            token: self.token.clone(),
-            request_id: Uuid::new_v4(),
-        })
-        .await?
+        match self
+            .roundtrip(ClientMessage::Ping {
+                protocol_version: PROTOCOL_VERSION,
+                token: self.token.clone(),
+                request_id: Uuid::new_v4(),
+            })
+            .await?
         {
             ServerMessage::Pong {
                 agent_generation,
@@ -72,13 +76,43 @@ impl IpcClient {
             })
             .await?
         {
-            ServerMessage::Ack { ok, message, job_id, .. } => {
+            ServerMessage::Ack {
+                ok,
+                message,
+                job_id,
+                ..
+            } => {
                 if ok {
                     Ok(job_id)
                 } else {
                     Err(RepoNyxError::new(
                         ErrorCode::InvalidInput,
                         message.unwrap_or_else(|| "enqueue failed".into()),
+                    ))
+                }
+            }
+            ServerMessage::Error { code, message, .. } => Err(map_ipc_error(&code, &message)),
+            other => Err(unexpected(&other)),
+        }
+    }
+
+    pub async fn cancel_job(&self, job_id: Uuid) -> Result<(), RepoNyxError> {
+        match self
+            .roundtrip(ClientMessage::CancelJob {
+                protocol_version: PROTOCOL_VERSION,
+                token: self.token.clone(),
+                request_id: Uuid::new_v4(),
+                job_id,
+            })
+            .await?
+        {
+            ServerMessage::Ack { ok, message, .. } => {
+                if ok {
+                    Ok(())
+                } else {
+                    Err(RepoNyxError::new(
+                        ErrorCode::InvalidInput,
+                        message.unwrap_or_else(|| "cancel failed".into()),
                     ))
                 }
             }
@@ -140,9 +174,7 @@ impl IpcClient {
         })?;
         write_frame(&mut conn, &body).await.map_err(map_frame)?;
         let resp = read_frame(&mut conn).await.map_err(map_frame)?;
-        parse_server_message(&resp).map_err(|e| {
-            RepoNyxError::new(ErrorCode::InternalError, e)
-        })
+        parse_server_message(&resp).map_err(|e| RepoNyxError::new(ErrorCode::InternalError, e))
     }
 }
 

@@ -8,9 +8,12 @@ use reponyx_core::{ErrorCode, JobStatus, JobType, SyncResult};
 use reponyx_database::history::{count_history_for_repository, list_history_for_job};
 use reponyx_database::jobs::{
     JobFilter, JobOutcome, NewJob, cancel_job, claim_next_job, complete_job,
-    complete_job_with_history, count_jobs_by_status, create_job, fail_job, get_job, list_jobs,
+    complete_job_with_history, count_jobs_by_status, create_job, create_retry_job, fail_job,
+    get_job, heartbeat_job, list_jobs, request_cancel_job,
 };
 use std::collections::HashSet;
+
+const TEST_LEASE: std::time::Duration = std::time::Duration::from_secs(60);
 
 #[tokio::test]
 async fn create_and_get_round_trip() {
@@ -70,7 +73,7 @@ async fn claim_order_is_priority_then_oldest() {
         pool(&db),
         NewJob {
             repository_id: repo.id,
-            job_type: JobType::Fetch,
+            job_type: JobType::MirrorClone,
             priority: 10,
         },
     )
@@ -80,20 +83,26 @@ async fn claim_order_is_priority_then_oldest() {
         pool(&db),
         NewJob {
             repository_id: repo.id,
-            job_type: JobType::Fetch,
+            job_type: JobType::WorkingClone,
             priority: 1,
         },
     )
     .await
     .unwrap();
 
-    let first = claim_next_job(pool(&db)).await.unwrap().unwrap();
+    let first = claim_next_job(pool(&db), "test-worker", TEST_LEASE)
+        .await
+        .unwrap()
+        .unwrap();
     assert_eq!(first.id, high.id, "highest priority first");
     assert_eq!(first.status, JobStatus::Running);
     assert_eq!(first.attempt_count, 1);
     assert!(first.started_at.is_some());
 
-    let second = claim_next_job(pool(&db)).await.unwrap().unwrap();
+    let second = claim_next_job(pool(&db), "test-worker", TEST_LEASE)
+        .await
+        .unwrap()
+        .unwrap();
     assert_eq!(second.id, low.id, "oldest of the remaining first");
 }
 
@@ -101,9 +110,19 @@ async fn claim_order_is_priority_then_oldest() {
 async fn claim_is_atomic_under_concurrency() {
     let (_dir, db) = open_test_db().await;
     let account = make_account(pool(&db), "octocat").await;
-    let repo = make_repository(pool(&db), account.id, "456", "octocat", "hello").await;
     let mut created = Vec::new();
-    for _ in 0..3 {
+    for i in 0..3 {
+        // One active job per (repository, job type) — the dedupe index
+        // forbids three identical Fetch jobs for one repo, so each
+        // job here targets its own repository.
+        let repo = make_repository(
+            pool(&db),
+            account.id,
+            &format!("456-{i}"),
+            "octocat",
+            &format!("hello-{i}"),
+        )
+        .await;
         created.push(
             create_job(
                 pool(&db),
@@ -118,11 +137,11 @@ async fn claim_is_atomic_under_concurrency() {
         );
     }
     let mut handles = Vec::new();
-    for _ in 0..4 {
+    for worker in 0..4 {
         let pool_clone = pool(&db).clone();
-        handles.push(tokio::spawn(
-            async move { claim_next_job(&pool_clone).await },
-        ));
+        handles.push(tokio::spawn(async move {
+            claim_next_job(&pool_clone, &format!("worker-{worker}"), TEST_LEASE).await
+        }));
     }
     let mut claimed: HashSet<uuid::Uuid> = HashSet::new();
     let mut none_count = 0;
@@ -168,7 +187,10 @@ async fn invalid_job_transitions_rejected() {
     assert_eq!(cancelled.status, JobStatus::Cancelled);
     assert!(cancelled.completed_at.is_some());
     assert!(
-        claim_next_job(pool(&db)).await.unwrap().is_none(),
+        claim_next_job(pool(&db), "test-worker", TEST_LEASE)
+            .await
+            .unwrap()
+            .is_none(),
         "cancelled job is not claimable"
     );
     let job2 = create_job(
@@ -181,7 +203,10 @@ async fn invalid_job_transitions_rejected() {
     )
     .await
     .unwrap();
-    claim_next_job(pool(&db)).await.unwrap().unwrap();
+    claim_next_job(pool(&db), "test-worker", TEST_LEASE)
+        .await
+        .unwrap()
+        .unwrap();
     let failed = fail_job(pool(&db), job2.id, "GitFetchFailed", "boom")
         .await
         .unwrap();
@@ -209,7 +234,10 @@ async fn complete_job_with_history_writes_both() {
     )
     .await
     .unwrap();
-    claim_next_job(pool(&db)).await.unwrap().unwrap();
+    claim_next_job(pool(&db), "test-worker", TEST_LEASE)
+        .await
+        .unwrap()
+        .unwrap();
     let (finished, history) = complete_job_with_history(
         pool(&db),
         job.id,
@@ -303,7 +331,7 @@ async fn list_and_count_jobs_by_status() {
         pool(&db),
         NewJob {
             repository_id: repo.id,
-            job_type: JobType::Fetch,
+            job_type: JobType::MirrorClone,
             priority: 0,
         },
     )
@@ -345,4 +373,199 @@ async fn list_and_count_jobs_by_status() {
         .unwrap_or(0);
     assert_eq!(pending_count, 1);
     assert_eq!(cancelled_count, 1);
+}
+
+#[tokio::test]
+async fn retry_row_is_not_claimable_before_available_at() {
+    let (_dir, db) = open_test_db().await;
+    let account = make_account(pool(&db), "octocat").await;
+    let repo = make_repository(pool(&db), account.id, "456", "octocat", "hello").await;
+    let job = create_job(
+        pool(&db),
+        NewJob {
+            repository_id: repo.id,
+            job_type: JobType::Fetch,
+            priority: 0,
+        },
+    )
+    .await
+    .unwrap();
+    let claimed = claim_next_job(pool(&db), "test-worker", TEST_LEASE)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(claimed.id, job.id);
+
+    // In the real flow the failed job is terminal before its retry
+    // row is created (otherwise the dedupe index would reject it).
+    let failed = fail_job(pool(&db), claimed.id, "NetworkUnavailable", "down")
+        .await
+        .unwrap();
+    assert_eq!(failed.attempt_count, 1);
+
+    // Retry row carries the attempt count and is not claimable
+    // before its backoff elapses.
+    let retry = create_retry_job(
+        pool(&db),
+        &failed,
+        chrono::Utc::now() + chrono::Duration::seconds(60),
+    )
+    .await
+    .unwrap();
+    assert_ne!(retry.id, claimed.id);
+    assert_eq!(retry.attempt_count, 1, "attempt count carries over");
+    assert!(retry.available_at.is_some());
+    assert!(
+        claim_next_job(pool(&db), "test-worker", TEST_LEASE)
+            .await
+            .unwrap()
+            .is_none(),
+        "backoff must be enforced by the claim query"
+    );
+
+    // Once the backoff has passed, the retry is claimable.
+    sqlx::query("UPDATE sync_jobs SET available_at = ? WHERE id = ?")
+        .bind("2020-01-01T00:00:00Z")
+        .bind(retry.id.to_string())
+        .execute(pool(&db))
+        .await
+        .unwrap();
+    let claimed_retry = claim_next_job(pool(&db), "test-worker", TEST_LEASE)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(claimed_retry.id, retry.id);
+    assert_eq!(claimed_retry.attempt_count, 2);
+}
+
+#[tokio::test]
+async fn priority_aging_promotes_old_jobs() {
+    let (_dir, db) = open_test_db().await;
+    let account = make_account(pool(&db), "octocat").await;
+    let repo_old = make_repository(pool(&db), account.id, "456", "octocat", "hello").await;
+    let repo_new = make_repository(pool(&db), account.id, "457", "octocat", "world").await;
+    // Old low-priority job (priority 0, created 4h ago).
+    let old = create_job(
+        pool(&db),
+        NewJob {
+            repository_id: repo_old.id,
+            job_type: JobType::Fetch,
+            priority: 0,
+        },
+    )
+    .await
+    .unwrap();
+    let four_hours_ago = (chrono::Utc::now() - chrono::Duration::hours(4))
+        .to_rfc3339_opts(chrono::SecondsFormat::Secs, true);
+    sqlx::query("UPDATE sync_jobs SET created_at = ? WHERE id = ?")
+        .bind(&four_hours_ago)
+        .bind(old.id.to_string())
+        .execute(pool(&db))
+        .await
+        .unwrap();
+    // Fresh higher-priority job (priority 2).
+    let fresh = create_job(
+        pool(&db),
+        NewJob {
+            repository_id: repo_new.id,
+            job_type: JobType::Fetch,
+            priority: 2,
+        },
+    )
+    .await
+    .unwrap();
+
+    // Aging (+3 after 3h) lifts the old job to effective 3 > 2.
+    let first = claim_next_job(pool(&db), "test-worker", TEST_LEASE)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        first.id, old.id,
+        "aged job must win over fresh higher priority"
+    );
+    let second = claim_next_job(pool(&db), "test-worker", TEST_LEASE)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(second.id, fresh.id);
+}
+
+#[tokio::test]
+async fn request_cancel_pending_and_running() {
+    let (_dir, db) = open_test_db().await;
+    let account = make_account(pool(&db), "octocat").await;
+    let repo = make_repository(pool(&db), account.id, "456", "octocat", "hello").await;
+    let pending = create_job(
+        pool(&db),
+        NewJob {
+            repository_id: repo.id,
+            job_type: JobType::Fetch,
+            priority: 0,
+        },
+    )
+    .await
+    .unwrap();
+    let cancelled = request_cancel_job(pool(&db), pending.id).await.unwrap();
+    assert_eq!(cancelled.status, JobStatus::Cancelled);
+    assert!(cancelled.cancel_requested_at.is_some());
+
+    let running = create_job(
+        pool(&db),
+        NewJob {
+            repository_id: repo.id,
+            job_type: JobType::MirrorClone,
+            priority: 0,
+        },
+    )
+    .await
+    .unwrap();
+    claim_next_job(pool(&db), "test-worker", TEST_LEASE)
+        .await
+        .unwrap()
+        .unwrap();
+    let still_running = request_cancel_job(pool(&db), running.id).await.unwrap();
+    assert_eq!(still_running.status, JobStatus::Running);
+    assert!(
+        still_running.cancel_requested_at.is_some(),
+        "running job records the request for cooperative cancel"
+    );
+}
+
+#[tokio::test]
+async fn heartbeat_renews_lease_only_for_owner() {
+    let (_dir, db) = open_test_db().await;
+    let account = make_account(pool(&db), "octocat").await;
+    let repo = make_repository(pool(&db), account.id, "456", "octocat", "hello").await;
+    let job = create_job(
+        pool(&db),
+        NewJob {
+            repository_id: repo.id,
+            job_type: JobType::Fetch,
+            priority: 0,
+        },
+    )
+    .await
+    .unwrap();
+    let claimed = claim_next_job(pool(&db), "worker-1", TEST_LEASE)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(claimed.worker_id.as_deref(), Some("worker-1"));
+    assert!(claimed.lease_expires_at.is_some());
+    assert!(claimed.heartbeat_at.is_some());
+
+    // Another worker cannot renew someone else's lease.
+    assert!(
+        heartbeat_job(pool(&db), job.id, "worker-2", TEST_LEASE)
+            .await
+            .unwrap()
+            .is_none()
+    );
+    // The owner can.
+    let renewed = heartbeat_job(pool(&db), job.id, "worker-1", TEST_LEASE)
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(renewed.lease_expires_at.unwrap() >= claimed.lease_expires_at.unwrap());
 }

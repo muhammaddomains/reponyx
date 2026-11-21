@@ -1,5 +1,5 @@
 use reponyx_ipc::protocol::{
-    PROTOCOL_VERSION, ClientMessage, ServerMessage, parse_client_message, parse_server_message,
+    ClientMessage, PROTOCOL_VERSION, ServerMessage, parse_client_message, parse_server_message,
 };
 use uuid::Uuid;
 

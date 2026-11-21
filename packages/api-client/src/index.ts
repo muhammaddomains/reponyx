@@ -12,6 +12,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { z } from "zod";
 import {
   accountSchema,
+  agentHealthSchema,
   appInfoSchema,
   brokerInstallationSchema,
   brokerStatusSchema,
@@ -27,6 +28,7 @@ import {
 } from "@reponyx/shared";
 import type {
   Account,
+  AgentHealth,
   AppInfo,
   BrokerInstallation,
   BrokerStatus,
@@ -262,4 +264,61 @@ export async function effectiveSchedule(
       repository_id: repositoryId,
     }),
   );
+}
+
+/** Phase 7 background-agent commands (Tauri `agent.rs`). The agent
+ *  process is separate from the UI; these calls go over IPC, so a
+ *  missing agent surfaces as a real error, never fabricated health. */
+
+export async function agentHealth(): Promise<AgentHealth> {
+  return agentHealthSchema.parse(await invokeCommand("agent_health_command"));
+}
+
+export async function agentPing(): Promise<[number, number]> {
+  return z
+    .tuple([z.number().int().nonnegative(), z.number().int().nonnegative()])
+    .parse(await invokeCommand("agent_ping_command"));
+}
+
+export async function agentPause(): Promise<void> {
+  await invokeCommand("agent_pause_command");
+}
+
+export async function agentResume(): Promise<void> {
+  await invokeCommand("agent_resume_command");
+}
+
+export async function agentEnqueue(
+  repositoryId: string,
+): Promise<string | null> {
+  return z
+    .string()
+    .nullable()
+    .parse(
+      await invokeCommand("agent_enqueue_command", {
+        repository_id: repositoryId,
+      }),
+    );
+}
+
+export async function agentCancelJob(jobId: string): Promise<void> {
+  await invokeCommand("agent_cancel_command", { job_id: jobId });
+}
+
+export async function ensureAgentRunning(): Promise<AgentHealth> {
+  return agentHealthSchema.parse(
+    await invokeCommand("ensure_agent_running_command"),
+  );
+}
+
+export async function registerAgentAutostart(): Promise<string> {
+  return z
+    .string()
+    .parse(await invokeCommand("register_agent_autostart_command"));
+}
+
+export async function unregisterAgentAutostart(): Promise<string> {
+  return z
+    .string()
+    .parse(await invokeCommand("unregister_agent_autostart_command"));
 }

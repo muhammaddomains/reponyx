@@ -135,10 +135,14 @@ async fn materialize_after_job_completes_creates_the_next_job() {
     let first = materialize_due(pool(&db), now()).await.unwrap();
     assert_eq!(first.created.len(), 1);
     // A pending job must be claimed (running) before it can complete.
-    let claimed = reponyx_database::jobs::claim_next_job(pool(&db))
-        .await
-        .unwrap()
-        .unwrap();
+    let claimed = reponyx_database::jobs::claim_next_job(
+        pool(&db),
+        "test-worker",
+        std::time::Duration::from_secs(60),
+    )
+    .await
+    .unwrap()
+    .unwrap();
     assert_eq!(claimed.id, first.created[0].id);
     complete_job(pool(&db), first.created[0].id).await.unwrap();
 

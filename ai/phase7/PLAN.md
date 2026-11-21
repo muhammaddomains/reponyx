@@ -74,3 +74,13 @@ Phase 6 queue; Phase 5 credentials.
 **Deliverable complete for Phase 7 scope (2026-11-21).** Remaining is
 merge to `main` and verification on a full desktop toolchain — not
 missing feature design for the listed tasks.
+
+**Fixes 2026-11-21 (assistant, on top of the landed code):**
+`materialize_due` arity, desktop agent/tray modules + 9 commands +
+`/agent` route, agent resolver (PAT + GitHub App), `storage.root`
+provisioning, real IPC cancel — all verified (`cargo test --workspace
+--exclude reponyx-desktop` **328 passed, 0 failed**; `pnpm -r
+typecheck` pass). Desktop Rust still needs the Windows build to
+compile-check (gdk blocker on this VM). See
+`ai/memory/PROJECT_STATUS.md` ("Phase 6 / Phase 7 fixes +
+re-verification").

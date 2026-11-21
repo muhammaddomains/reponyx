@@ -127,6 +127,30 @@ export interface SyncJob {
   errorCode?: string | null;
   errorMessage?: string | null;
   createdAt: string;
+  availableAt?: string | null;
+  workerId?: string | null;
+  leaseExpiresAt?: string | null;
+  heartbeatAt?: string | null;
+  cancelRequestedAt?: string | null;
+  dedupeKey?: string | null;
+}
+
+export interface AgentStatus {
+  generation: number;
+  startedAt: string;
+  protocolVersion: number;
+  paused: boolean;
+  pendingJobs: number;
+  runningJobs: number;
+  workers: number;
+  lastMaterializeAt?: string | null;
+  lastMaterializeCreated?: number | null;
+}
+
+export interface AgentHealth {
+  reachable: boolean;
+  status?: AgentStatus | null;
+  message: string;
 }
 
 export interface Schedule {

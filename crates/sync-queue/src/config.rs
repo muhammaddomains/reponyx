@@ -25,6 +25,16 @@ pub struct QueueConfig {
     pub job_timeout: Duration,
     /// Running jobs older than this are treated as abandoned on recovery.
     pub recovery_grace: Duration,
+    /// Lease a worker holds on a claimed job; the worker heartbeats
+    /// every `lease_duration / 3` and recovery only reclaims a job
+    /// after its lease expires. Default 60 s.
+    pub lease_duration: Duration,
+    /// Job starts per minute across all accounts (token bucket).
+    /// 0 = unlimited. Default 120.
+    pub global_jobs_per_minute: u32,
+    /// Job starts per minute per account (token bucket).
+    /// 0 = unlimited. Default 60.
+    pub per_account_jobs_per_minute: u32,
 }
 
 impl Default for QueueConfig {
@@ -37,6 +47,9 @@ impl Default for QueueConfig {
             max_backoff: Duration::from_secs(300),
             job_timeout: Duration::from_secs(600),
             recovery_grace: Duration::from_secs(30),
+            lease_duration: Duration::from_secs(60),
+            global_jobs_per_minute: 120,
+            per_account_jobs_per_minute: 60,
         }
     }
 }
@@ -72,12 +85,27 @@ impl QueueConfig {
         self
     }
 
+    pub fn with_lease_duration(mut self, d: Duration) -> Self {
+        self.lease_duration = d;
+        self
+    }
+
+    pub fn with_global_jobs_per_minute(mut self, n: u32) -> Self {
+        self.global_jobs_per_minute = n;
+        self
+    }
+
+    pub fn with_per_account_jobs_per_minute(mut self, n: u32) -> Self {
+        self.per_account_jobs_per_minute = n;
+        self
+    }
+
     /// Load `sync.concurrency` from settings when present; other fields
     /// keep their defaults. Invalid / out-of-range values fall back to
     /// the default concurrency rather than panicking.
     pub async fn from_settings(pool: &SqlitePool) -> Self {
         let mut cfg = Self::default();
-        if let Ok(Some(setting)) = get_setting(pool, "sync.concurrency")
+        if let Ok(Some(setting)) = get_setting(pool, "sync.concurrency").await
             && let Ok(n) = setting.value.parse::<usize>()
         {
             cfg.max_concurrency = n.clamp(1, 10);
@@ -92,11 +120,17 @@ mod tests {
 
     #[test]
     fn concurrency_is_clamped() {
-        assert_eq!(QueueConfig::default().with_concurrency(0).max_concurrency, 1);
+        assert_eq!(
+            QueueConfig::default().with_concurrency(0).max_concurrency,
+            1
+        );
         assert_eq!(
             QueueConfig::default().with_concurrency(100).max_concurrency,
             10
         );
-        assert_eq!(QueueConfig::default().with_concurrency(5).max_concurrency, 5);
+        assert_eq!(
+            QueueConfig::default().with_concurrency(5).max_concurrency,
+            5
+        );
     }
 }

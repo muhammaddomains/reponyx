@@ -1,12 +1,14 @@
 # IPC Protocol
 
-Status: Accepted (Phase 1) · Code landed 2026-11-21, NOT verified
-complete — see `ai/memory/PROJECT_STATUS.md` ("Phase 6 / Phase 7
-verification"). The protocol v1 types, frame codec, shared-secret
-auth, server, and client exist in `crates/ipc`, but the crate is not
-a workspace member (cannot be built), progress push is unwired
-(`set_progress_source` has no callers), the client has no
-`cancel_job` method, and there are no server/client/auth tests.
+Status: Accepted (Phase 1) · Code landed 2026-11-21, fixed + verified
+the same day — see `ai/memory/PROJECT_STATUS.md` ("Phase 6 / Phase 7
+fixes + re-verification"). The protocol v1 types, frame codec,
+shared-secret auth, server, and client exist in `crates/ipc` and are
+workspace members now; `CancelJob` is a real operation end to end
+(client `cancel_job` → agent `request_cancel_job`). Progress push is
+still unwired (`set_progress_source` has no callers) — the queue emits
+`JobProgress` events, but forwarding them over IPC to the desktop is
+not done. There are still no server/client/auth tests.
 
 ## Transport
 

@@ -6,8 +6,10 @@
 //!
 //! Phase 5 auth commands live in `auth.rs`.
 
+mod agent;
 mod auth;
 mod schedules;
+mod tray;
 mod commands {
     use crate::auth::CommandResult;
     use reponyx_core::{DashboardCounts, GitStatus};
@@ -78,10 +80,25 @@ pub fn run() {
         .plugin(tauri_plugin_updater::Builder::new().build())
         .manage(db_state)
         .manage(auth::AuthState::new())
+        .setup(|app| {
+            if let Err(e) = tray::setup_tray(app.handle()) {
+                tracing::warn!(error = %e, "tray setup failed; continuing without tray");
+            }
+            Ok(())
+        })
         .invoke_handler(tauri::generate_handler![
             commands::get_app_info,
             commands::get_git_status,
             commands::get_dashboard_counts,
+            agent::agent_health_command,
+            agent::agent_ping_command,
+            agent::agent_pause_command,
+            agent::agent_resume_command,
+            agent::agent_enqueue_command,
+            agent::agent_cancel_command,
+            agent::ensure_agent_running_command,
+            agent::register_agent_autostart_command,
+            agent::unregister_agent_autostart_command,
             auth::list_accounts_command,
             auth::add_pat_account_command,
             auth::replace_pat_account_command,

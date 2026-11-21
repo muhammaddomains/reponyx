@@ -9,7 +9,7 @@ use reponyx_core::{JobType, RepoNyxError, SyncJob};
 use sqlx::SqlitePool;
 use std::sync::Arc;
 use std::time::Duration;
-use tokio::sync::{Mutex, mpsc};
+use tokio::sync::{Mutex, broadcast};
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
@@ -22,7 +22,9 @@ pub struct JobContext {
     pub timeout: Duration,
     pub cancel: CancellationToken,
     /// Optional sink for fine-grained progress (stage lines, etc.).
-    pub progress: Option<mpsc::Sender<SyncProgressEvent>>,
+    /// The queue passes its broadcast sender here; runners forward
+    /// git progress events through it.
+    pub progress: Option<broadcast::Sender<SyncProgressEvent>>,
 }
 
 /// Successful or failed outcome from a runner (before queue-level

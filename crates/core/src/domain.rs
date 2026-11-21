@@ -210,6 +210,21 @@ pub struct SyncJob {
     pub error_code: Option<String>,
     pub error_message: Option<String>,
     pub created_at: DateTime<Utc>,
+    /// Not claimable before this time (retry backoff / rate-limit
+    /// defer). `None` means immediately claimable. (V4)
+    pub available_at: Option<DateTime<Utc>>,
+    /// Worker currently owning a running job. (V4)
+    pub worker_id: Option<String>,
+    /// Lease ownership expires here; recovery only treats a running
+    /// job as abandoned after this time. (V4)
+    pub lease_expires_at: Option<DateTime<Utc>>,
+    /// Last worker heartbeat. (V4)
+    pub heartbeat_at: Option<DateTime<Utc>>,
+    /// Cooperative cancellation requested while running. (V4)
+    pub cancel_requested_at: Option<DateTime<Utc>>,
+    /// Deterministic `repo:<id>:<job_type>`; at most one active job
+    /// per key (partial unique index). (V4)
+    pub dedupe_key: Option<String>,
 }
 
 impl JobStatus {

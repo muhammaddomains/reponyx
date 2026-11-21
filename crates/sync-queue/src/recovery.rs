@@ -1,18 +1,25 @@
 //! Startup recovery for jobs left in `running` after a crash.
 //!
-//! Policy: a `running` job whose `started_at` is older than
-//! `recovery_grace` (or missing) is treated as abandoned. We mark it
-//! `failed` with a stable error code and enqueue a **new** pending job
-//! of the same type so work is not lost and is not duplicated under the
-//! same row id. Jobs still within the grace window are left alone
-//! (another live worker may still own them).
+//! Policy: a `running` job is abandoned only when its **lease has
+//! expired** (`lease_expires_at <= now`). Jobs written before leases
+//! existed (no `lease_expires_at`) fall back to the old grace rule:
+//! `started_at` older than `recovery_grace` (or missing). Jobs still
+//! within their lease are left alone — another live worker may still
+//! own them.
+//!
+//! An abandoned attempt is marked `failed` (error code
+//! `CrashRecovered`) with a history entry, and a new pending job of
+//! the same type is created **carrying the attempt count**, so the
+//! retry budget still binds. When the budget is already exhausted
+//! the job is failed only (`failed_only`).
 
 use chrono::{Duration as ChronoDuration, Utc};
+use reponyx_core::SyncResult;
 use reponyx_core::{JobStatus, JobType, SyncJob};
 use reponyx_database::jobs::{
-    JobFilter, JobOutcome, NewJob, complete_job_with_history, create_job, list_jobs,
+    JobFilter, JobOutcome, complete_job_with_history, create_retry_job, is_unique_violation,
+    list_jobs,
 };
-use reponyx_core::SyncResult;
 use sqlx::SqlitePool;
 use std::time::Duration;
 use tracing::{info, warn};
@@ -30,6 +37,7 @@ pub struct RecoveryReport {
 pub async fn recover_interrupted_jobs(
     pool: &SqlitePool,
     grace: Duration,
+    max_attempts: u32,
 ) -> Result<RecoveryReport, reponyx_core::RepoNyxError> {
     let running = list_jobs(
         pool,
@@ -49,9 +57,14 @@ pub async fn recover_interrupted_jobs(
     let grace_chrono = ChronoDuration::from_std(grace).unwrap_or(ChronoDuration::seconds(30));
 
     for job in running {
-        let started = job.started_at.unwrap_or(job.created_at);
-        let age = now.signed_duration_since(started);
-        if age < grace_chrono {
+        let abandoned = match job.lease_expires_at {
+            Some(expires_at) => expires_at <= now,
+            None => {
+                let started = job.started_at.unwrap_or(job.created_at);
+                now.signed_duration_since(started) >= grace_chrono
+            }
+        };
+        if !abandoned {
             report.skipped_fresh += 1;
             continue;
         }
@@ -59,7 +72,6 @@ pub async fn recover_interrupted_jobs(
         warn!(
             job_id = %job.id,
             repository_id = %job.repository_id,
-            age_secs = age.num_seconds(),
             "recovering abandoned running job"
         );
 
@@ -69,7 +81,11 @@ pub async fn recover_interrupted_jobs(
             job.id,
             JobOutcome {
                 result: SyncResult::Failed,
-                duration_ms: Some(age.num_milliseconds().max(0)),
+                duration_ms: Some(
+                    now.signed_duration_since(job.started_at.unwrap_or(job.created_at))
+                        .num_milliseconds()
+                        .max(0),
+                ),
                 bytes_received: None,
                 error_code: Some("CrashRecovered".to_string()),
                 error_message: Some(
@@ -79,19 +95,27 @@ pub async fn recover_interrupted_jobs(
         )
         .await?;
 
-        // New job — domain rule: never move terminal → pending.
-        create_job(
-            pool,
-            NewJob {
-                repository_id: job.repository_id,
-                job_type: job.job_type,
-                priority: job.priority,
-            },
-        )
-        .await?;
+        if job.attempt_count >= max_attempts as i32 {
+            // Budget already exhausted: fail only, do not requeue.
+            report.failed_only += 1;
+            info!(job_id = %job.id, "abandoned job failed; attempt budget exhausted");
+            continue;
+        }
 
-        report.requeued += 1;
-        info!(job_id = %job.id, "abandoned job failed + requeued");
+        // New job — domain rule: never move terminal → pending.
+        // The retry carries the attempt count so the budget binds.
+        match create_retry_job(pool, &job, now).await {
+            Ok(_) => {
+                report.requeued += 1;
+                info!(job_id = %job.id, "abandoned job failed + requeued");
+            }
+            Err(e) if is_unique_violation(&e) => {
+                // Another writer already queued the same work.
+                report.requeued += 1;
+                info!(job_id = %job.id, "abandoned job failed; retry already queued");
+            }
+            Err(e) => return Err(e),
+        }
     }
 
     Ok(report)

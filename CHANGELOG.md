@@ -5,6 +5,44 @@ All notable changes to RepoNyx are documented here. Format follows
 
 ## [Unreleased]
 
+### Fixed — Phase 6 + Phase 7 integration (2026-11-21, verified)
+
+- **Workspace membership:** `crates/sync-queue`, `crates/ipc`, and
+  `apps/background-agent` are now workspace members (`Cargo.lock`
+  regenerated); the new crates build and their tests run for the
+  first time. Fixed the rand 0.10 API breaks and the bogus
+  `tokio-util` `sync` feature in the process.
+- **Retry budget binds:** transient failures now carry
+  `attempt_count` across retry rows (`create_retry_job`) and the
+  exponential backoff with full jitter is enforced on the job's
+  `available_at` (new V4 migration `0004_queue_fields.sql`), so
+  retries stop at `max_attempts` instead of looping forever.
+- **Leases, heartbeats, cancel:** `claim_next_job` takes a worker
+  id + lease; heartbeats renew only for the owning worker; crash
+  recovery is lease-based; IPC `CancelJob` is real (pending jobs
+  cancel, running jobs get a cooperative cancel request).
+- **Rate limiting + priority aging:** in-memory token buckets
+  (global + per-account); refused claims defer the job instead of
+  failing it; claim ordering adds up to +3 effective priority after
+  3 h waiting.
+- **JobProgress emission:** the git runner forwards git progress
+  events and stage events over the queue's broadcast channel; the
+  working-clone path now honours the job cancellation token.
+- **Agent:** GitHub App accounts now work (broker-backed resolver),
+  paused accounts are refused, `storage.root` is provisioned on
+  start, `materialize_due` arity fixed.
+- **Desktop wiring:** agent/tray modules declared, 9 agent commands
+  registered, `/agent` route + sidebar entry, `AgentHealth` /
+  `AgentStatus` types and all nine api-client agent functions added
+  — `pnpm -r typecheck` passes.
+- **Verification (actual, 2026-11-21):** `cargo fmt --check` pass;
+  clippy 0 warnings; `cargo test --workspace --exclude
+  reponyx-desktop` **328 passed, 0 failed** (was 302; 26 new tests
+  incl. retry-budget, rate-limit, and lease-recovery coverage);
+  `pnpm -r typecheck` pass; desktop vite build + eslint pass.
+  Desktop Rust is verified by `cargo fmt` + review only on this VM
+  (gdk blocker); IPC progress push to the UI is still unwired.
+
 ### Added — Phase 6 + Phase 7 code (user, 2026-11-21; NOT verified complete)
 
 - **Sync queue (`crates/sync-queue`):** WorkerPool, atomic claiming
@@ -18,10 +56,10 @@ All notable changes to RepoNyx are documented here. Format follows
 - **Background agent (`apps/background-agent`):** scheduler loop,
   queue startup, IPC server, Task Scheduler helpers, plus desktop
   `agent.rs` / `tray.rs` and an Agent health page (`Agent.tsx`).
-- **Verification (actual, 2026-11-21) — these are NOT done:** the
-  three new crates are not workspace members and cannot be built
-  (`cargo check` fails with the workspace-membership error);
-  `pnpm -r typecheck` fails because `Agent.tsx` imports six
+- **Verification (actual, 2026-11-21) — these were NOT done as
+  landed:** the three new crates are not workspace members and
+  cannot be built (`cargo check` fails with the workspace-membership
+  error); `pnpm -r typecheck` fails because `Agent.tsx` imports six
   api-client functions and an `AgentHealth` type that do not exist;
   the agent does not compile (`materialize_due` called with one
   argument, needs two); the desktop never declares the agent/tray
@@ -31,7 +69,8 @@ All notable changes to RepoNyx are documented here. Format follows
   limiting, no priority aging. See
   `ai/memory/PROJECT_STATUS.md` ("Phase 6 / Phase 7 verification")
   for the full list. The scheduler crate remains the only
-  verified-complete Phase 7 piece.
+  verified-complete Phase 7 piece. **All of the above was fixed the
+  same day — see "Fixed — Phase 6 + Phase 7 integration" above.**
 
 ### Fixed — web preview (plain browser, no Tauri backend)
 

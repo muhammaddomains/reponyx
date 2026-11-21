@@ -16,6 +16,7 @@ use tauri::State;
 use uuid::Uuid;
 
 #[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct AgentHealthView {
     pub reachable: bool,
     pub status: Option<AgentStatusView>,
@@ -23,6 +24,7 @@ pub struct AgentHealthView {
 }
 
 #[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct AgentStatusView {
     pub generation: u64,
     pub started_at: String,
@@ -122,6 +124,15 @@ pub async fn agent_enqueue_command(repository_id: String) -> CommandResult<Optio
     })?;
     let job = client()?.enqueue(id).await.map_err(CommandError::from)?;
     Ok(job.map(|j| j.to_string()))
+}
+
+#[tauri::command]
+pub async fn agent_cancel_command(job_id: String) -> CommandResult<()> {
+    let id = Uuid::parse_str(&job_id).map_err(|_| CommandError {
+        code: "InvalidInput".into(),
+        message: "invalid job id".into(),
+    })?;
+    client()?.cancel_job(id).await.map_err(CommandError::from)
 }
 
 /// Start the agent process if it is not already reachable.

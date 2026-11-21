@@ -133,3 +133,24 @@ export const effectiveScheduleSchema = z.object({
   schedule: scheduleWithNextRunSchema,
   nextRuns: z.array(z.string()),
 });
+
+/** Phase 7 background-agent DTOs: camelCase, matching the Tauri
+ *  `agent.rs` DTOs. */
+
+export const agentStatusSchema = z.object({
+  generation: z.number().int().nonnegative(),
+  startedAt: z.string(),
+  protocolVersion: z.number().int().nonnegative(),
+  paused: z.boolean(),
+  pendingJobs: z.number().int().nonnegative(),
+  runningJobs: z.number().int().nonnegative(),
+  workers: z.number().int().nonnegative(),
+  lastMaterializeAt: z.string().nullable().optional(),
+  lastMaterializeCreated: z.number().int().nullable().optional(),
+});
+
+export const agentHealthSchema = z.object({
+  reachable: z.boolean(),
+  status: agentStatusSchema.nullable().optional(),
+  message: z.string(),
+});

@@ -11,29 +11,27 @@
 
 use async_trait::async_trait;
 use chrono::Utc;
-use reponyx_core::{
-    ErrorCode, JobType, RepoNyxError, Repository, SyncMode,
-};
+use reponyx_core::{ErrorCode, JobType, RepoNyxError, Repository, SyncMode};
 use reponyx_database::accounts::get_account;
 use reponyx_database::repositories::{get_repository, mark_synced};
-use reponyx_git_engine::{
-    Credential, CredentialHelper, RepoLockManager, SyncOptions, detect_git, mirror_clone,
-    mirror_fetch, working_fetch,
-};
 use reponyx_git_engine::commands::build_clone_working;
 use reponyx_git_engine::credentials::reject_embedded_credentials;
 use reponyx_git_engine::paths::RepositoryLayout;
-use reponyx_git_engine::process::{map_git_failure, never_cancel, run_git_command};
+use reponyx_git_engine::process::{map_git_failure, run_git_command};
+use reponyx_git_engine::{
+    Credential, CredentialHelper, ProgressEvent, RepoLockManager, SyncOptions, detect_git,
+    mirror_clone, mirror_fetch, working_fetch,
+};
 use reponyx_github_provider::CredentialSource;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
+use tokio::sync::broadcast;
 use tracing::{debug, info};
 
-use crate::credentials_resolve::{
-    CredentialResolver, storage_root_from_settings,
-};
-use crate::runner::{JobContext, JobRunResult, JobRunner};
+use crate::credentials_resolve::{CredentialResolver, storage_root_from_settings};
+use crate::progress::SyncProgressEvent;
+use crate::runner::{JobContext, JobRunResult, JobRunner, operation_label};
 
 /// Optional override for storage root / git binary (tests).
 #[derive(Debug, Clone)]
@@ -122,7 +120,10 @@ impl JobRunner for GitJobRunner {
             .ok_or_else(|| {
                 RepoNyxError::new(
                     ErrorCode::InvalidInput,
-                    format!("account {} not found for repo {}", repo.account_id, repo.full_name),
+                    format!(
+                        "account {} not found for repo {}",
+                        repo.account_id, repo.full_name
+                    ),
                 )
             })?;
 
@@ -139,22 +140,62 @@ impl JobRunner for GitJobRunner {
             None => storage_root_from_settings(&ctx.pool).await?,
         };
 
-        let layout = RepositoryLayout::new(
-            &storage_root,
-            &account.username,
-            &repo.owner,
-            &repo.name,
-        )?;
+        let layout =
+            RepositoryLayout::new(&storage_root, &account.username, &repo.owner, &repo.name)?;
 
         let timeout = self.config.job_timeout.min(ctx.timeout);
-        let opts = SyncOptions::new()
+        let mut opts = SyncOptions::new()
             .with_timeout(timeout)
             .with_lock_timeout(self.config.lock_timeout)
             .with_cancel(ctx.cancel.child_token())
             .with_credential(Arc::clone(&helper));
 
+        // Forward git progress events to the queue's broadcast channel
+        // as JobProgress events. The forwarder ends on its own when
+        // the git operation drops the sender.
+        if let Some(progress) = &ctx.progress {
+            let (tx, mut rx) = tokio::sync::mpsc::channel::<ProgressEvent>(64);
+            let job_id = ctx.job.id;
+            let out = progress.clone();
+            tokio::spawn(async move {
+                while let Some(event) = rx.recv().await {
+                    let (stage, detail) = match &event {
+                        ProgressEvent::CountingObjects { .. } => {
+                            ("counting objects", event.to_string())
+                        }
+                        ProgressEvent::CompressingObjects { .. } => {
+                            ("compressing objects", event.to_string())
+                        }
+                        ProgressEvent::ReceivingObjects { .. } => {
+                            ("receiving objects", event.to_string())
+                        }
+                        ProgressEvent::ResolvingDeltas { .. } => {
+                            ("resolving deltas", event.to_string())
+                        }
+                        ProgressEvent::CheckingOut { .. } => ("checking out", event.to_string()),
+                        ProgressEvent::UpdatingFiles { .. } => {
+                            ("updating files", event.to_string())
+                        }
+                        ProgressEvent::Other(_) => ("git progress", event.to_string()),
+                    };
+                    let _ = out.send(SyncProgressEvent::JobProgress {
+                        job_id,
+                        stage: stage.to_string(),
+                        detail: Some(detail),
+                    });
+                }
+            });
+            opts = opts.with_progress(tx);
+        }
+
         reject_embedded_credentials(&repo.clone_url)?;
 
+        emit_stage(
+            &ctx.progress,
+            ctx.job.id,
+            operation_label(ctx.job.job_type),
+            "started",
+        );
         match ctx.job.job_type {
             JobType::MirrorClone => {
                 self.run_mirror_clone(&ctx, &git, &repo, &layout, opts)
@@ -169,6 +210,12 @@ impl JobRunner for GitJobRunner {
             }
             JobType::LfsFetch | JobType::SubmoduleSync => unreachable!(),
         }
+        emit_stage(
+            &ctx.progress,
+            ctx.job.id,
+            operation_label(ctx.job.job_type),
+            "finished",
+        );
 
         mark_synced(&ctx.pool, repo.id, Utc::now()).await?;
 
@@ -233,8 +280,11 @@ impl GitJobRunner {
         }
         if let Some(parent) = dest.parent() {
             std::fs::create_dir_all(parent).map_err(|e| {
-                RepoNyxError::new(ErrorCode::InternalError, "cannot create working clone parent")
-                    .with_details(e.to_string())
+                RepoNyxError::new(
+                    ErrorCode::InternalError,
+                    "cannot create working clone parent",
+                )
+                .with_details(e.to_string())
             })?;
         }
 
@@ -245,10 +295,20 @@ impl GitJobRunner {
         if let Some(helper) = &opts.credential {
             helper.install(&mut cmd);
         }
-        // Cancellation is enforced at the worker level via job timeout;
-        // process API uses a watch channel (never_cancel here — cancel
-        // is still applied by the outer job timeout / pool shutdown).
-        let output = run_git_command(&cmd, opts.timeout, never_cancel()).await?;
+        // Wire the job cancellation token into the process watch
+        // channel (previously `never_cancel()`, so a cancelled job
+        // kept cloning until the timeout).
+        let (cancel_tx, cancel_rx) = tokio::sync::watch::channel(false);
+        let watcher = {
+            let token = ctx.cancel.clone();
+            tokio::spawn(async move {
+                token.cancelled().await;
+                let _ = cancel_tx.send(true);
+            })
+        };
+        let output = run_git_command(&cmd, opts.timeout, cancel_rx).await;
+        watcher.abort();
+        let output = output?;
         if !output.success {
             return Err(map_git_failure(&cmd, &output));
         }
@@ -355,18 +415,41 @@ async fn set_local_path(
     }
     let now = chrono::Utc::now().to_rfc3339();
     let path_str = path.to_string_lossy();
-    sqlx::query(
-        "UPDATE repositories SET local_path = ?, updated_at = ? WHERE id = ?",
-    )
-    .bind(path_str.as_ref())
-    .bind(&now)
-    .bind(id.to_string())
-    .execute(pool)
-    .await
-    .map_err(|e| {
-        RepoNyxError::new(ErrorCode::DatabaseError, "failed to set local_path")
-            .with_details(e.to_string())
-    })?;
+    let affected =
+        sqlx::query("UPDATE repositories SET local_path = ?, updated_at = ? WHERE id = ?")
+            .bind(path_str.as_ref())
+            .bind(&now)
+            .bind(id.to_string())
+            .execute(pool)
+            .await
+            .map_err(|e| {
+                RepoNyxError::new(ErrorCode::DatabaseError, "failed to set local_path")
+                    .with_details(e.to_string())
+            })?
+            .rows_affected();
+    if affected == 0 {
+        return Err(RepoNyxError::new(
+            ErrorCode::RepositoryNotFound,
+            format!("repository {id} not found while setting local_path"),
+        ));
+    }
     Ok(())
 }
 
+/// Emit one coarse stage event (op start / finish) when a progress
+/// sink is attached. Fine-grained git progress comes through the
+/// `SyncOptions` progress channel instead.
+fn emit_stage(
+    progress: &Option<broadcast::Sender<SyncProgressEvent>>,
+    job_id: uuid::Uuid,
+    stage: &str,
+    detail: &str,
+) {
+    if let Some(tx) = progress {
+        let _ = tx.send(SyncProgressEvent::JobProgress {
+            job_id,
+            stage: stage.to_string(),
+            detail: Some(detail.to_string()),
+        });
+    }
+}

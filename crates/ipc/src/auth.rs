@@ -1,8 +1,8 @@
 //! IPC shared secret stored in the OS credential store (never in SQLite).
 
+use rand::RngExt;
 use reponyx_core::{ErrorCode, RepoNyxError};
 use reponyx_credential_store::{CredentialStore, SecretString};
-use rand::RngCore;
 use sha2::{Digest, Sha256};
 use std::sync::Arc;
 use thiserror::Error;
@@ -31,9 +31,7 @@ impl From<IpcAuthError> for RepoNyxError {
     }
 }
 
-pub fn load_shared_secret(
-    store: &Arc<dyn CredentialStore>,
-) -> Result<SecretString, IpcAuthError> {
+pub fn load_shared_secret(store: &Arc<dyn CredentialStore>) -> Result<SecretString, IpcAuthError> {
     match store
         .get(SERVICE_IPC, ACCOUNT_SHARED_SECRET)
         .map_err(|e| IpcAuthError::Store(e.to_string()))?
@@ -60,7 +58,7 @@ pub fn ensure_shared_secret(
         Ok(s) => Ok(s),
         Err(IpcAuthError::Missing) => {
             let mut bytes = [0u8; 32];
-            rand::rngs::OsRng.fill_bytes(&mut bytes);
+            rand::rng().fill(&mut bytes);
             let hex: String = bytes.iter().map(|b| format!("{b:02x}")).collect();
             store_shared_secret(store, &hex)?;
             Ok(SecretString::new(hex))

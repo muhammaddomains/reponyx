@@ -1,7 +1,7 @@
 # RepoNyx — Project Status
 
-Last updated: 2026-11-21 (verification of the user's Phase 6 + Phase 7
-code landed on `main` — see "Phase 6 / Phase 7 verification" below)
+Last updated: 2026-11-21 (Phase 6 / Phase 7 fixes verified — see
+"Phase 6 / Phase 7 fixes + re-verification" below)
 
 ## Current phase
 
@@ -10,12 +10,15 @@ code landed on `main` — see "Phase 6 / Phase 7 verification" below)
 2026-11-18. Phase 3 — Git Engine — complete 2026-11-18. Phase 4 —
 GitHub Integration — complete 2026-11-18. Phase 5 — Authentication
 — complete 2026-11-18. Phase 6 — Sync Queue — code landed on
-`main` 2026-11-21 (user commits `adb21b9`, `b24acb1`) but NOT
-verified complete: the new crates are not workspace members and
-cannot be built, and the queue is not wired into any running path.
-Phase 7 — Scheduler and Background Agent — code for the agent, IPC,
-tray, and Agent page also landed 2026-11-21, but it is likewise
-unwired and uncompilable as committed (see verification section).**
+`main` 2026-11-21 (user commits `adb21b9`, `b24acb1`), then fixed
+and verified the same day (assistant, uncommitted at the time of
+writing — see "Phase 6 / Phase 7 fixes + re-verification" below).
+Phase 7 — Scheduler and Background Agent — scheduler crate verified
+2026-11-19; agent, IPC, tray, and Agent page code landed 2026-11-21
+and were fixed and verified the same day (same section).** The
+desktop Rust wiring is verified by `cargo fmt` + review only (the
+gdk blocker); the real desktop compile check is the user's Windows
+build. Remaining honest gaps are listed in the fixes section.
 Work is on `main` going forward.
 
 ## Completed tasks
@@ -122,8 +125,8 @@ Work is on `main` going forward.
     blocked on this VM by missing `gdk-3.0` / WebViewGTK system
     libraries — not claimed passed.
 
-- **Phase 6 — Sync Queue — CODE LANDED, NOT VERIFIED COMPLETE
-  (2026-11-21, on `main`, user commits `adb21b9` + `b24acb1`):**
+- **Phase 6 — Sync Queue — CODE LANDED 2026-11-21, FIXED + VERIFIED
+  the same day (see the fixes section below):**
   - crates/sync-queue: WorkerPool, claim/complete/fail/retry, crash recovery,
     progress broadcast events, JobRunner trait.
   - GitJobRunner: mirror_clone / mirror_fetch / working_fetch / working clone
@@ -138,7 +141,9 @@ Work is on `main` going forward.
     `members`, there is no `reponyx-sync-queue` workspace path
     dependency, and `Cargo.lock` has no entry for it. The crate cannot
     be built by `cargo --workspace` or standalone (cargo: "current
-    package believes it's in a workspace when it's not").
+    package believes it's in a workspace when it's not"). **Fixed
+    2026-11-21: all three new crates are workspace members now and
+    `Cargo.lock` has entries for them.**
   - Deliberately NOT done: background-agent binary / Task Scheduler / tray
     (rest of Phase 7), desktop queue UI (Phase 8), LFS/submodules (Phase 9).
 
@@ -222,6 +227,132 @@ Work is on `main` going forward.
   - Phase 6 and the Phase 7 remainder are therefore NOT complete
     as of this verification. The scheduler crate (Phase 7 partial,
     2026-11-19) remains the only verified-complete Phase 7 piece.
+
+- **Phase 6 / Phase 7 fixes + re-verification (actual, 2026-11-21,
+  assistant, on top of the user's code; uncommitted at the time of
+  writing):** every issue in the verification above was fixed, in
+  small steps, by editing the user's own code directly (no
+  re-delegation of the build):
+  - **Workspace (Fix 1):** root `Cargo.toml` `members` gained
+    `apps/background-agent`, `crates/sync-queue`, `crates/ipc`;
+    `[workspace.dependencies]` gained path deps for sync-queue and
+    ipc; `Cargo.lock` regenerated with entries for all three.
+    `cargo metadata` confirms 13 members. The new crates were
+    written against an older rand API — fixed to rand 0.10
+    (`RngExt` / `rand::rng().fill`, `compute_backoff` bound), the
+    `tokio-util` `sync` feature (does not exist in 0.7) dropped in
+    all three crates, a `read_exact` return-type fix, a `gen`
+    reserved-keyword rename in `server.rs`, and a missing `.await`
+    in `config.rs`.
+  - **Agent arity (Fix 2):** `runtime.rs:59` now calls
+    `materialize_due(&pool, Utc::now())`.
+  - **V4 migration (Fix 5/6):**
+    `migrations/sqlite/0004_queue_fields.sql` adds `available_at`,
+    `worker_id`, `lease_expires_at`, `heartbeat_at`,
+    `cancel_requested_at`, `dedupe_key` to `sync_jobs`, a partial
+    UNIQUE index on `dedupe_key` for active jobs, and indexes on
+    `available_at` / running leases. V1–V3 untouched.
+  - **Retry budget (Fix 5):** `create_retry_job` carries
+    `attempt_count` from the failed parent and sets `available_at`
+    to now + the computed exponential backoff (full jitter); the
+    executor computes the delay before the retry row is written
+    (unique-violation on the dedupe index is tolerated as "already
+    queued"). The old worker sleep was removed — backoff is now
+    enforced on the job, not on the worker. A new test scripts 20
+    transient failures with `max_attempts = 3` and asserts exactly
+    3 failed rows with attempt counts [1, 2, 3] and 0 pending.
+  - **Leases / heartbeats / cancel (Fix 6):**
+    `claim_next_job(pool, worker_id, lease)` sets worker, lease
+    (default 60 s), and heartbeat, and refuses jobs whose
+    `available_at` is in the future; `heartbeat_job` renews only
+    for the owning worker; `request_cancel_job` cancels pending
+    jobs outright and marks running jobs for cooperative cancel;
+    `defer_job` is the rate-limit path (pending again, attempt
+    refunded). Crash recovery is lease-based
+    (`lease_expires_at <= now`, with the old `started_at` grace
+    only for rows without a lease) and `failed_only` is now actually
+    counted. IPC `CancelJob` is real: the agent calls
+    `request_cancel_job` and reports cancelled / cancel requested /
+    already finished instead of a false success. `IpcClient` gained
+    `cancel_job`; the desktop gained `agent_cancel_command`.
+  - **Rate limiting + aging + progress (Fix 7):** new
+    `crates/sync-queue/src/rate_limit.rs` — in-memory token buckets,
+    global (default 120/min) + per-account (default 60/min);
+    `QueueConfig` gained `lease_duration`, `global_jobs_per_minute`,
+    `per_account_jobs_per_minute`. A worker whose claim is refused
+    defers the job via `defer_job` and sleeps `min(wait, 5 s)`.
+    Claim ordering applies priority aging (up to +3 effective
+    priority after 3 h waiting, documented in `jobs.rs`).
+    `JobProgress` events are now emitted: `git_runner` forwards git
+    `ProgressEvent`s over the broadcast channel and emits
+    `started`/`finished` stage events; the working-clone path no
+    longer uses `never_cancel()` — it watches the job token.
+    Worker panics no longer shrink the pool silently: execution
+    runs in a child task and a panic fails the job with
+    `WorkerPanic`. `QueueHandle.join` takes `&self` and logs join
+    errors.
+  - **Agent auth + storage (Fix 8):** the agent now uses
+    `default_resolver_from_settings` (PAT from the OS store, GitHub
+    App via the broker when a device is paired) instead of
+    `pat_only`; paused accounts are refused at resolve time with a
+    permanent error; `ensure_storage_root` seeds `storage.root` to
+    `<data_dir>/repositories` on agent start so real syncs no longer
+    fail before touching git; agent `generation` is unix millis.
+  - **Desktop wiring (Fix 3/4):** desktop `Cargo.toml` depends on
+    `reponyx-ipc`; `lib.rs` declares `mod agent; mod tray;`, sets up
+    the tray (warns and continues without it on failure), and
+    registers 9 agent commands; `agent.rs` gained camelCase serde
+    renames + `agent_cancel_command`; `tray.rs` no longer unwraps
+    the window icon. `packages/shared` gained `AgentStatus` /
+    `AgentHealth` types + zod schemas; `packages/api-client` gained
+    the 9 agent functions; `App.tsx` gained the `/agent` route and
+    the sidebar gained an Agent entry. `externalBin` was deliberately
+    NOT added to `tauri.conf.json` (tauri-build errors when the file
+    is missing at build time; the agent resolves via same-dir /
+    `REPONYX_AGENT_EXE` / PATH).
+  - **Concurrency hardening found by the new tests:** the 100-job
+    test failed with "database is locked" (no busy timeout + a
+    deferred-transaction lock-upgrade deadlock in
+    `complete_job_with_history`). Fixed with a 5 s busy timeout in
+    `pool.rs` and an 8-attempt retry inside
+    `complete_job_with_history` (read-back kept outside the retry
+    so a committed job is never completed twice). The 100-job test
+    now uses 100 repos (one job each) instead of 100 jobs for one
+    repo.
+  - **New tests (all passing):** database `jobs.rs` 12 (4 new:
+    retry not claimable before `available_at`, priority aging,
+    cancel pending/running, heartbeat owner-only); sync-queue
+    rate-limit unit 3 (new module); queue_integration 8 (3 new:
+    retry budget, rate limiter defers, lease-driven recovery).
+  - **Verification (actual, 2026-11-21):** `cargo fmt --check`
+    pass; clippy (`--workspace --exclude reponyx-desktop
+    --all-targets`) pass, 0 warnings (5 warnings found and fixed
+    during the run: `map_or` → `is_some_and`, redundant closure,
+    identity `map_err`, 9-arg worker function bundled into a
+    `WorkerArgs` struct, unused imports, `len() > 0` →
+    `!is_empty()`); `cargo test --workspace --exclude
+    reponyx-desktop` **328 passed, 0 failed** (was 302); `pnpm -r
+    typecheck` pass; `pnpm --filter @reponyx/desktop build` pass
+    (1.76 s); desktop eslint pass. Tauri binary build still blocked
+    on this VM by missing `gdk-3.0` / WebViewGTK system libraries —
+    not claimed passed.
+  - **Honest remaining gaps (not overclaimed):** desktop Rust
+    (agent/tray/lib wiring) is verified by `cargo fmt` + review
+    only on this VM — the real compile check is the user's Windows
+    build. IPC progress push is still not wired end-to-end to the
+    desktop UI (`set_progress_source` has no callers;
+    `ServerMessage::Progress` never sent) — the queue now emits
+    `JobProgress` events, but forwarding them over IPC is not done.
+    No `queued`/`retry_wait` lifecycle states (retry state is
+    `available_at` on a pending row). No per-repo exclusion at claim
+    time (serialization still happens at git-execution time via the
+    git-engine lock). No single-instance enforcement for the agent.
+    `windows_task.rs` schtasks helpers still have zero callers (the
+    desktop does its own autostart registration). The generated
+    `apps/desktop/src-tauri/gen/schemas/*.json` files remain
+    committed. The Phase 6 spec's 12 acceptance tests are only
+    partially covered by automated tests (no real-GitHub or Windows
+    runs on this VM).
 
 - **Phase 5 — Authentication (actual, 2026-11-18, on `main`):**
   - **Auth Broker (`apps/auth-broker`, axum 0.8.9):** a separate
@@ -973,18 +1104,24 @@ Phase 1 handoff). Top level: `Cargo.toml`, `package.json`,
    user's go-ahead.~~ **Done 2026-11-18** (see "Completed tasks" above).
 5. ~~Phase 5: Authentication (`ai/phase5/PLAN.md`) — awaiting the
    user's go-ahead.~~ **Done 2026-11-18** (see "Completed tasks" above).
-6. Phase 6: Sync Queue (`ai/phase6/PLAN.md`) — code landed on `main`
-   2026-11-21 (user) but NOT verified complete. To finish: add
-   `crates/sync-queue` (+ `crates/ipc`, `apps/background-agent`) to
-   the workspace and `Cargo.lock`; fix the retry-budget and backoff
-   bugs; add the missing cancel / rate-limit / heartbeat / aging
-   pieces (or explicitly descope them); run the new crates' tests.
-   See "Phase 6 / Phase 7 verification" above.
-7. Phase 7: Scheduler and Background Agent — scheduler crate done
+6. ~~Phase 6: Sync Queue (`ai/phase6/PLAN.md`) — code landed on
+   `main` 2026-11-21 (user) but NOT verified complete.~~ **Fixed +
+   verified 2026-11-21** (see "Phase 6 / Phase 7 fixes +
+   re-verification" above): workspace membership, retry budget +
+   backoff on the job, leases/heartbeats/cancel, rate limiting,
+   priority aging, `JobProgress` emission, 26 new tests, full suite
+   328 passed / 0 failed. Remaining gaps: IPC progress push to the
+   UI, per-repo exclusion at claim time, single-instance
+   enforcement.
+7. ~~Phase 7: Scheduler and Background Agent — scheduler crate done
    2026-11-19 (verified). Agent, IPC, tray, and Agent page code
-   landed 2026-11-21 but are unwired and uncompilable as committed:
-   fix the `materialize_due` arity, declare the desktop modules,
-   add the api-client functions + `AgentHealth` type + `/agent`
-   route, bundle the agent binary. Then re-verify end to end.
+   landed 2026-11-21 but are unwired and uncompilable as
+   committed.~~ **Fixed + verified 2026-11-21** (same section):
+   `materialize_due` arity, desktop modules + 9 commands + `/agent`
+   route, agent resolver (PAT + GitHub App), `storage.root`
+   provisioning. Desktop Rust still needs the user's Windows build
+   to compile-check (gdk blocker on this VM); the agent binary is
+   resolved via same-dir / `REPONYX_AGENT_EXE` / PATH, not
+   `externalBin`.
 8. On a machine with the WebViewGTK dev libraries (or Windows):
    re-run `cargo check -p reponyx-desktop` and `cargo tauri build`.

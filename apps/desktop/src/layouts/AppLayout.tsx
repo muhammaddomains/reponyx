@@ -1,5 +1,6 @@
 import {
   Activity,
+  Bot,
   CalendarClock,
   FolderGit2,
   HardDrive,
@@ -19,6 +20,7 @@ const NAV = [
   { to: "/repositories", label: "Repositories", icon: FolderGit2 },
   { to: "/synchronization", label: "Synchronization", icon: RefreshCw },
   { to: "/schedules", label: "Schedules", icon: CalendarClock },
+  { to: "/agent", label: "Agent", icon: Bot },
   { to: "/activity", label: "Activity", icon: Activity },
   { to: "/storage", label: "Storage", icon: HardDrive },
   { to: "/settings", label: "Settings", icon: Settings },

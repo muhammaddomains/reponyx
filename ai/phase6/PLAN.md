@@ -81,11 +81,29 @@ cargo clippy -p reponyx-sync-queue --all-targets
 
 ## Known issues
 
-- Retry backoff sleeps only a capped slice in the worker; the new pending job is claimable immediately by other workers (acceptable for Phase 6; optional `not_before` column later).
-- Working-clone path uses `run_git_command` + `never_cancel` for cancel watch; outer job timeout still applies.
+- ~~Retry backoff sleeps only a capped slice in the worker; the new
+  pending job is claimable immediately by other workers (acceptable
+  for Phase 6; optional `not_before` column later).~~ **Fixed
+  2026-11-21:** V4 migration adds `available_at` (plus `worker_id`,
+  `lease_expires_at`, `heartbeat_at`, `cancel_requested_at`,
+  `dedupe_key`); retries carry the attempt count and are not
+  claimable before `available_at`.
+- ~~Working-clone path uses `run_git_command` + `never_cancel` for
+  cancel watch; outer job timeout still applies.~~ **Fixed
+  2026-11-21:** the working-clone path now watches the job
+  cancellation token.
 - Official `set_local_path` helper not yet in `reponyx-database` — GitJobRunner updates via bound SQL (equivalent).
 - **This session could not push to GitHub** (`403 Resource not accessible by integration`). Apply locally via `APPLY.md` / tarball.
 
 ## Completion status
 
 Core queue + GitJobRunner implemented in deliverable tree. Merge to `main` and green CI still required before claiming Phase 6 complete on the remote.
+
+**Fixes 2026-11-21 (assistant, on top of the landed code):** workspace
+membership, retry budget + backoff on the job, leases/heartbeats/
+cancel, rate limiting, priority aging, `JobProgress` emission — all
+verified (`cargo test --workspace --exclude reponyx-desktop` **328
+passed, 0 failed**). See `ai/memory/PROJECT_STATUS.md` ("Phase 6 /
+Phase 7 fixes + re-verification") for the full list and the remaining
+honest gaps (IPC progress push to the UI, per-repo exclusion at claim
+time, single-instance enforcement).

@@ -58,18 +58,40 @@ fn row_to_job(row: &SqliteRow) -> Result<SyncJob, sqlx::Error> {
         error_code: opt_col(row, "error_code")?,
         error_message: opt_col(row, "error_message")?,
         created_at: col(row, "created_at")?,
+        available_at: opt_col(row, "available_at")?,
+        worker_id: opt_col(row, "worker_id")?,
+        lease_expires_at: opt_col(row, "lease_expires_at")?,
+        heartbeat_at: opt_col(row, "heartbeat_at")?,
+        cancel_requested_at: opt_col(row, "cancel_requested_at")?,
+        dedupe_key: opt_col(row, "dedupe_key")?,
     })
+}
+
+/// Deterministic dedup key: at most one active job per (repository,
+/// job type). The partial unique index enforces it; callers also
+/// check before enqueueing so the common path never hits the index.
+pub fn dedupe_key_for(repository_id: Uuid, job_type: JobType) -> String {
+    format!("repo:{repository_id}:{}", job_type.as_str())
+}
+
+/// True when `err` is a SQLite unique-constraint violation (e.g. the
+/// dedupe index). Callers use this to tolerate an enqueue race: if
+/// another writer already queued the same work, the job exists and
+/// there is nothing to retry.
+pub fn is_unique_violation(err: &RepoNyxError) -> bool {
+    err.message.contains("UNIQUE constraint failed")
 }
 
 pub async fn create_job(pool: &SqlitePool, input: NewJob) -> Result<SyncJob, RepoNyxError> {
     let id = Uuid::new_v4();
     let now = now_iso();
+    let dedupe_key = dedupe_key_for(input.repository_id, input.job_type);
     sqlx::query(
         r#"
         INSERT INTO sync_jobs
             (id, repository_id, job_type, status, priority,
-             attempt_count, created_at)
-        VALUES (?, ?, ?, 'pending', ?, 0, ?)
+             attempt_count, created_at, dedupe_key)
+        VALUES (?, ?, ?, 'pending', ?, 0, ?, ?)
         "#,
     )
     .bind(id.to_string())
@@ -77,12 +99,52 @@ pub async fn create_job(pool: &SqlitePool, input: NewJob) -> Result<SyncJob, Rep
     .bind(input.job_type.as_str())
     .bind(input.priority)
     .bind(&now)
+    .bind(&dedupe_key)
     .execute(pool)
     .await
     .map_err(map_error)?;
     get_job(pool, id)
         .await?
         .ok_or_else(|| invalid("job just created but not found"))
+}
+
+/// Create the next attempt of a failed job as a new row (a terminal job
+/// is never moved back to `pending`).
+///
+/// The retry row **carries the parent's `attempt_count`** so the
+/// attempt budget binds across retries, and it is not claimable before
+/// `available_at` (the computed backoff), so the delay is enforced by
+/// the claim query instead of by whichever worker happened to fail it.
+pub async fn create_retry_job(
+    pool: &SqlitePool,
+    parent: &SyncJob,
+    available_at: DateTime<Utc>,
+) -> Result<SyncJob, RepoNyxError> {
+    let id = Uuid::new_v4();
+    let now = now_iso();
+    let dedupe_key = dedupe_key_for(parent.repository_id, parent.job_type);
+    sqlx::query(
+        r#"
+        INSERT INTO sync_jobs
+            (id, repository_id, job_type, status, priority,
+             attempt_count, created_at, available_at, dedupe_key)
+        VALUES (?, ?, ?, 'pending', ?, ?, ?, ?, ?)
+        "#,
+    )
+    .bind(id.to_string())
+    .bind(parent.repository_id.to_string())
+    .bind(parent.job_type.as_str())
+    .bind(parent.priority)
+    .bind(parent.attempt_count)
+    .bind(&now)
+    .bind(available_at)
+    .bind(&dedupe_key)
+    .execute(pool)
+    .await
+    .map_err(map_error)?;
+    get_job(pool, id)
+        .await?
+        .ok_or_else(|| invalid("retry job just created but not found"))
 }
 
 pub async fn get_job(pool: &SqlitePool, id: Uuid) -> Result<Option<SyncJob>, RepoNyxError> {
@@ -150,30 +212,57 @@ pub async fn count_jobs_by_status(pool: &SqlitePool) -> Result<Vec<JobStatusCoun
     Ok(counts)
 }
 
-/// Atomically claim the next pending job: highest priority, oldest
-/// first. Returns `None` when no job is pending.
+/// Atomically claim the next pending job and take a lease on it.
+/// Returns `None` when no job is claimable.
 ///
 /// This is a single `UPDATE ... RETURNING` statement, so the pick and
 /// the move to `running` happen under one write lock — two claimers
 /// can never take the same job. (A select-then-update transaction
 /// deadlocks here: both claimers hold a shared read lock and neither
 /// can upgrade to write.)
-pub async fn claim_next_job(pool: &SqlitePool) -> Result<Option<SyncJob>, RepoNyxError> {
-    let now = now_iso();
+///
+/// Claiming records the owning `worker_id` plus a lease
+/// (`lease_expires_at` / `heartbeat_at`, `lease` from now). Recovery
+/// only treats a running job as abandoned after its lease expires.
+///
+/// Selection rules:
+/// - Only jobs whose `available_at` is null or already passed are
+///   eligible (retry backoff and rate-limit defer are enforced here,
+///   not by whichever worker failed the job).
+/// - Priority ordering with aging: a pending job gains up to +3
+///   effective priority after 3 hours waiting
+///   (`MIN(3, hours_waiting)`), so low-priority work cannot starve
+///   forever while higher-priority work keeps arriving. FIFO is
+///   preserved within the same effective priority.
+pub async fn claim_next_job(
+    pool: &SqlitePool,
+    worker_id: &str,
+    lease: std::time::Duration,
+) -> Result<Option<SyncJob>, RepoNyxError> {
+    let now = now_utc();
+    let lease_expires_at =
+        now + chrono::Duration::from_std(lease).unwrap_or(chrono::Duration::seconds(60));
     let row = sqlx::query(
         r#"
         UPDATE sync_jobs
-        SET status = 'running', started_at = ?, attempt_count = attempt_count + 1
+        SET status = 'running', started_at = ?, attempt_count = attempt_count + 1,
+            worker_id = ?, lease_expires_at = ?, heartbeat_at = ?
         WHERE id = (
             SELECT id FROM sync_jobs
             WHERE status = 'pending'
-            ORDER BY priority DESC, created_at ASC
+              AND (available_at IS NULL OR available_at <= ?)
+            ORDER BY (priority + COALESCE(CAST(MIN(3.0, (julianday('now') - julianday(created_at)) * 24.0) AS INTEGER), 0)) DESC,
+                     created_at ASC
             LIMIT 1
         )
         RETURNING id
         "#,
     )
-    .bind(&now)
+    .bind(now.to_rfc3339_opts(chrono::SecondsFormat::Secs, true))
+    .bind(worker_id)
+    .bind(lease_expires_at)
+    .bind(now)
+    .bind(now.to_rfc3339_opts(chrono::SecondsFormat::Secs, true))
     .fetch_optional(pool)
     .await
     .map_err(map_error)?;
@@ -187,6 +276,108 @@ pub async fn claim_next_job(pool: &SqlitePool) -> Result<Option<SyncJob>, RepoNy
         }
         None => Ok(None),
     }
+}
+
+/// Renew a running job's lease. Only the owning worker may renew
+/// (`worker_id` must match and the job must still be `running`);
+/// returns `None` when the job is no longer owned by this worker
+/// (e.g. recovery already reclaimed it).
+pub async fn heartbeat_job(
+    pool: &SqlitePool,
+    id: Uuid,
+    worker_id: &str,
+    lease: std::time::Duration,
+) -> Result<Option<SyncJob>, RepoNyxError> {
+    let now = now_utc();
+    let lease_expires_at =
+        now + chrono::Duration::from_std(lease).unwrap_or(chrono::Duration::seconds(60));
+    let affected = sqlx::query(
+        r#"
+        UPDATE sync_jobs
+        SET heartbeat_at = ?, lease_expires_at = ?
+        WHERE id = ? AND status = 'running' AND worker_id = ?
+        "#,
+    )
+    .bind(now)
+    .bind(lease_expires_at)
+    .bind(id.to_string())
+    .bind(worker_id)
+    .execute(pool)
+    .await
+    .map_err(map_error)?
+    .rows_affected();
+    if affected == 0 {
+        return Ok(None);
+    }
+    get_job(pool, id).await
+}
+
+/// Request cancellation of a job.
+///
+/// - `pending` → cancelled immediately (terminal) and the request is
+///   recorded.
+/// - `running` → only `cancel_requested_at` is set; the owning worker
+///   sees it on its next heartbeat check and cancels cooperatively.
+/// - terminal jobs are returned unchanged.
+pub async fn request_cancel_job(pool: &SqlitePool, id: Uuid) -> Result<SyncJob, RepoNyxError> {
+    let current = get_job(pool, id)
+        .await?
+        .ok_or_else(|| invalid(format!("job {id} not found")))?;
+    match current.status {
+        JobStatus::Pending => {
+            sqlx::query("UPDATE sync_jobs SET cancel_requested_at = ? WHERE id = ?")
+                .bind(now_utc())
+                .bind(id.to_string())
+                .execute(pool)
+                .await
+                .map_err(map_error)?;
+            transition_job(pool, id, JobStatus::Cancelled, None, None).await
+        }
+        JobStatus::Running => {
+            sqlx::query(
+                "UPDATE sync_jobs SET cancel_requested_at = ? WHERE id = ? AND status = 'running'",
+            )
+            .bind(now_utc())
+            .bind(id.to_string())
+            .execute(pool)
+            .await
+            .map_err(map_error)?;
+            get_job(pool, id)
+                .await?
+                .ok_or_else(|| invalid(format!("job {id} not found")))
+        }
+        _ => Ok(current),
+    }
+}
+
+/// Queue-internal defer: put a claimed-but-not-executed job back to
+/// `pending` with a not-before time (rate-limit path only). The
+/// consumed attempt is refunded (`attempt_count - 1`) because the job
+/// never ran. This is deliberately NOT a general state transition —
+/// the transition table stays strict (a failed job is never moved
+/// back to `pending`; retries are new rows).
+pub async fn defer_job(
+    pool: &SqlitePool,
+    id: Uuid,
+    available_at: DateTime<Utc>,
+) -> Result<SyncJob, RepoNyxError> {
+    sqlx::query(
+        r#"
+        UPDATE sync_jobs
+        SET status = 'pending', started_at = NULL, worker_id = NULL,
+            lease_expires_at = NULL, heartbeat_at = NULL,
+            available_at = ?, attempt_count = MAX(0, attempt_count - 1)
+        WHERE id = ? AND status = 'running'
+        "#,
+    )
+    .bind(available_at)
+    .bind(id.to_string())
+    .execute(pool)
+    .await
+    .map_err(map_error)?;
+    get_job(pool, id)
+        .await?
+        .ok_or_else(|| invalid(format!("job {id} not found")))
 }
 
 /// Move a job to a new status, enforcing the allowed-transition table.
@@ -263,11 +454,50 @@ pub async fn cancel_job(pool: &SqlitePool, id: Uuid) -> Result<SyncJob, RepoNyxE
 /// `completed`, `failed` → `failed`, `cancelled` → `cancelled`) and
 /// the history row is written with the job's type as `operation`.
 /// Either both land or the transaction rolls back.
+///
+/// The transaction phase is retried on `database is locked`: the
+/// transaction starts deferred, so its `SELECT` takes a shared lock
+/// and the `UPDATE` must upgrade it — when two workers do that at
+/// once neither can upgrade (upgrade deadlock) and one side fails
+/// fast even with a busy timeout. Retrying the whole transaction is
+/// safe (a failed attempt rolls back; the check re-reads the row),
+/// and the final read-back is deliberately outside the retry loop
+/// so a committed job is never completed twice.
 pub async fn complete_job_with_history(
     pool: &SqlitePool,
     job_id: Uuid,
     outcome: JobOutcome,
 ) -> Result<(SyncJob, SyncHistory), RepoNyxError> {
+    let mut attempt = 0;
+    let history = loop {
+        match complete_job_in_tx(pool, job_id, &outcome).await {
+            Ok(history) => break history,
+            Err(e) if is_locked(&e) && attempt < 8 => {
+                attempt += 1;
+                tokio::time::sleep(std::time::Duration::from_millis(10 * attempt as u64)).await;
+            }
+            Err(e) => return Err(e),
+        }
+    };
+    let job = get_job(pool, job_id)
+        .await?
+        .ok_or_else(|| invalid(format!("job {job_id} not found")))?;
+    Ok((job, history))
+}
+
+/// True when `err` is a SQLite lock-contention failure. Used to retry
+/// a transaction that lost an upgrade race instead of failing the job.
+fn is_locked(err: &RepoNyxError) -> bool {
+    err.details
+        .as_deref()
+        .is_some_and(|d| d.contains("database is locked"))
+}
+
+async fn complete_job_in_tx(
+    pool: &SqlitePool,
+    job_id: Uuid,
+    outcome: &JobOutcome,
+) -> Result<SyncHistory, RepoNyxError> {
     let job_status = match outcome.result {
         SyncResult::Success => JobStatus::Completed,
         SyncResult::Failed => JobStatus::Failed,
@@ -323,8 +553,5 @@ pub async fn complete_job_with_history(
     )
     .await?;
     tx.commit().await.map_err(map_error)?;
-    let job = get_job(pool, job_id)
-        .await?
-        .ok_or_else(|| invalid(format!("job {job_id} not found")))?;
-    Ok((job, history))
+    Ok(history)
 }

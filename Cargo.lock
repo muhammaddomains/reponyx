@@ -4019,6 +4019,30 @@ dependencies = [
 ]
 
 [[package]]
+name = "reponyx-background-agent"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "chrono",
+ "reponyx-core",
+ "reponyx-credential-store",
+ "reponyx-database",
+ "reponyx-github-provider",
+ "reponyx-ipc",
+ "reponyx-logging",
+ "reponyx-scheduler",
+ "reponyx-sync-queue",
+ "serde",
+ "serde_json",
+ "sqlx",
+ "tempfile",
+ "tokio",
+ "tokio-util",
+ "tracing",
+ "uuid",
+]
+
+[[package]]
 name = "reponyx-core"
 version = "0.1.0"
 dependencies = [
@@ -4074,6 +4098,7 @@ dependencies = [
  "reponyx-database",
  "reponyx-git-engine",
  "reponyx-github-provider",
+ "reponyx-ipc",
  "reponyx-logging",
  "reponyx-provider-abstractions",
  "reponyx-scheduler",
@@ -4123,6 +4148,25 @@ dependencies = [
 ]
 
 [[package]]
+name = "reponyx-ipc"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "rand",
+ "reponyx-core",
+ "reponyx-credential-store",
+ "serde",
+ "serde_json",
+ "sha2 0.11.1",
+ "tempfile",
+ "thiserror 2.0.21",
+ "tokio",
+ "tokio-util",
+ "tracing",
+ "uuid",
+]
+
+[[package]]
 name = "reponyx-logging"
 version = "0.1.0"
 dependencies = [
@@ -4154,6 +4198,27 @@ dependencies = [
  "sqlx",
  "tempfile",
  "tokio",
+ "uuid",
+]
+
+[[package]]
+name = "reponyx-sync-queue"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "chrono",
+ "rand",
+ "reponyx-core",
+ "reponyx-credential-store",
+ "reponyx-database",
+ "reponyx-git-engine",
+ "reponyx-github-provider",
+ "serde",
+ "sqlx",
+ "tempfile",
+ "tokio",
+ "tokio-util",
+ "tracing",
  "uuid",
 ]
 

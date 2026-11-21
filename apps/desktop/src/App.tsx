@@ -1,6 +1,7 @@
 import { HashRouter, Route, Routes } from "react-router";
 import AppLayout from "./layouts/AppLayout";
 import Accounts from "./routes/Accounts";
+import Agent from "./routes/Agent";
 import Overview from "./routes/Overview";
 import Placeholder from "./routes/Placeholder";
 
@@ -11,6 +12,7 @@ export default function App() {
         <Route element={<AppLayout />}>
           <Route index element={<Overview />} />
           <Route path="accounts" element={<Accounts />} />
+          <Route path="agent" element={<Agent />} />
           <Route
             path="repositories"
             element={<Placeholder title="Repositories" phase={8} />}

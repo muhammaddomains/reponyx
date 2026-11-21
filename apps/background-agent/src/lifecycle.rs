@@ -4,6 +4,7 @@ use crate::paths::{data_dir, db_path, log_dir};
 use crate::runtime::{AgentState, bind_ipc, command_loop, scheduler_loop, start_queue};
 use chrono::Utc;
 use reponyx_database::open_database;
+use reponyx_database::settings::{get_setting, set_setting};
 use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
 use tokio_util::sync::CancellationToken;
@@ -17,7 +18,7 @@ pub async fn run_agent() -> Result<(), Box<dyn std::error::Error>> {
 
     let generation = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_secs())
+        .map(|d| d.as_millis() as u64)
         .unwrap_or(1);
 
     info!(
@@ -28,6 +29,14 @@ pub async fn run_agent() -> Result<(), Box<dyn std::error::Error>> {
 
     let database = open_database(&db_path(&data)).await?;
     let pool = database.pool.clone();
+
+    // A real sync cannot run without a storage root (the V1 seed is
+    // empty and nothing sets it yet). Default to
+    // `<data_dir>/repositories` on first run and say so loudly, so
+    // the agent never fails a job with "storage.root is not
+    // configured" before touching git. The desktop Settings page
+    // (Phase 8) can change it later.
+    ensure_storage_root(&pool, &data).await?;
 
     let (queue, store) = start_queue(pool.clone()).await?;
     let state = Arc::new(AgentState {
@@ -110,7 +119,23 @@ async fn shutdown_signal() {
     }
 }
 
-#[allow(dead_code)]
-fn warn_if_no_storage_root() {
-    warn!("set storage.root in settings before real git sync");
+/// Set `storage.root` to `<data_dir>/repositories` when it is
+/// missing or empty. Returns the effective root.
+async fn ensure_storage_root(
+    pool: &sqlx::SqlitePool,
+    data_dir: &std::path::Path,
+) -> Result<std::path::PathBuf, Box<dyn std::error::Error>> {
+    let configured = get_setting(pool, "storage.root").await?;
+    if let Some(setting) = configured
+        && !setting.value.trim().is_empty()
+    {
+        return Ok(std::path::PathBuf::from(setting.value));
+    }
+    let root = data_dir.join("repositories");
+    set_setting(pool, "storage.root", root.to_string_lossy().as_ref()).await?;
+    warn!(
+        root = %root.display(),
+        "storage.root was not configured; defaulting to <data_dir>/repositories"
+    );
+    Ok(root)
 }

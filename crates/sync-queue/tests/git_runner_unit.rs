@@ -14,11 +14,9 @@ use reponyx_sync_queue::{
     GitJobRunner, GitRunnerConfig, JobContext, JobRunner, StaticCredentialResolver,
 };
 use sqlx::SqlitePool;
-use std::sync::Arc;
 use std::time::Duration;
 use tempfile::TempDir;
 use tokio_util::sync::CancellationToken;
-use uuid::Uuid;
 
 async fn open_db() -> (TempDir, reponyx_database::Database) {
     let dir = tempfile::tempdir().unwrap();
@@ -82,7 +80,10 @@ async fn git_runner_fails_cleanly_when_storage_root_missing() {
     .await
     .unwrap();
 
-    let job = claim_next_job(p).await.unwrap().unwrap();
+    let job = claim_next_job(p, "test-worker", std::time::Duration::from_secs(60))
+        .await
+        .unwrap()
+        .unwrap();
     assert_eq!(job.status, JobStatus::Running);
 
     // Fake PAT source — we never reach the network if storage.root is unset.
@@ -158,7 +159,10 @@ async fn git_runner_rejects_lfs_job_type() {
     .await
     .unwrap();
 
-    let job = claim_next_job(p).await.unwrap().unwrap();
+    let job = claim_next_job(p, "test-worker", std::time::Duration::from_secs(60))
+        .await
+        .unwrap()
+        .unwrap();
     let resolver = StaticCredentialResolver::new(static_pat("ghp_test_not_real_token", "octocat"));
     let runner = GitJobRunner::with_config(
         resolver,

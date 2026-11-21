@@ -2,6 +2,7 @@
 resolver = "2"
 members = [
     "apps/auth-broker",
+    "apps/background-agent",
     "apps/desktop/src-tauri",
     "crates/core",
     "crates/credential-store",
@@ -11,6 +12,8 @@ members = [
     "crates/github-provider",
     "crates/database",
     "crates/scheduler",
+    "crates/sync-queue",
+    "crates/ipc",
 ]
 
 [workspace.package]
@@ -27,6 +30,8 @@ reponyx-provider-abstractions = { path = "crates/provider-abstractions" }
 reponyx-github-provider = { path = "crates/github-provider" }
 reponyx-database = { path = "crates/database" }
 reponyx-scheduler = { path = "crates/scheduler" }
+reponyx-sync-queue = { path = "crates/sync-queue" }
+reponyx-ipc = { path = "crates/ipc" }
 
 async-trait = "0.1"
 axum = { version = "0.8", features = ["json", "query", "http1", "tokio"] }

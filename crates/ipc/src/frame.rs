@@ -21,7 +21,7 @@ pub enum FrameError {
 pub async fn read_frame<R: AsyncRead + Unpin>(reader: &mut R) -> Result<Vec<u8>, FrameError> {
     let mut len_buf = [0u8; 4];
     match reader.read_exact(&mut len_buf).await {
-        Ok(()) => {}
+        Ok(_) => {}
         Err(e) if e.kind() == io::ErrorKind::UnexpectedEof => return Err(FrameError::Closed),
         Err(e) => return Err(FrameError::Io(e)),
     }

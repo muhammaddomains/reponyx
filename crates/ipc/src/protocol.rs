@@ -78,9 +78,7 @@ pub enum ServerMessage {
         message: String,
     },
     /// Push: forwarded from the sync-queue progress channel.
-    Progress {
-        event: serde_json::Value,
-    },
+    Progress { event: serde_json::Value },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -99,13 +97,27 @@ pub struct AgentStatus {
 impl ClientMessage {
     pub fn protocol_version(&self) -> u32 {
         match self {
-            Self::Ping { protocol_version, .. }
-            | Self::AgentStatus { protocol_version, .. }
-            | Self::Enqueue { protocol_version, .. }
-            | Self::CancelJob { protocol_version, .. }
-            | Self::Pause { protocol_version, .. }
-            | Self::Resume { protocol_version, .. }
-            | Self::Shutdown { protocol_version, .. } => *protocol_version,
+            Self::Ping {
+                protocol_version, ..
+            }
+            | Self::AgentStatus {
+                protocol_version, ..
+            }
+            | Self::Enqueue {
+                protocol_version, ..
+            }
+            | Self::CancelJob {
+                protocol_version, ..
+            }
+            | Self::Pause {
+                protocol_version, ..
+            }
+            | Self::Resume {
+                protocol_version, ..
+            }
+            | Self::Shutdown {
+                protocol_version, ..
+            } => *protocol_version,
         }
     }
 

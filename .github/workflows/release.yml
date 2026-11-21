@@ -9,15 +9,22 @@ name: Release
 #   git tag v0.1.0
 #   git push origin v0.1.0
 #
-# Windows only: this app targets Windows (bundle targets: ["nsis"] in
-# src-tauri/tauri.conf.json), so the workflow ships a Windows installer
-# and a portable ZIP only.
+# Windows only: RepoNyx targets Windows first (bundle targets: "all"
+# in apps/desktop/src-tauri/tauri.conf.json; the Windows bundles are
+# NSIS + MSI), so the workflow ships a Windows installer and a
+# portable ZIP only.
+#
+# Signing: the updater is configured in tauri.conf.json (endpoint
+# https://github.com/muhammaddomains/reponyx/releases/latest/download/latest.json
+# with a minisign public key), so releases must be signed. Set these
+# repo secrets (Settings -> Secrets and variables -> Actions) BEFORE
+# the first release, otherwise the build fails at signing:
+#   TAURI_SIGNING_PRIVATE_KEY, TAURI_SIGNING_PRIVATE_KEY_PASSWORD
 
 on:
   push:
     tags:
       - "v*"
-  workflow_dispatch: {}
 
 # Required to create the release and upload assets, otherwise
 # tauri-action fails with a permission error such as
@@ -30,22 +37,23 @@ jobs:
     runs-on: windows-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v7
+        uses: actions/checkout@v4
 
       # Install pnpm BEFORE setup-node — setup-node's pnpm cache option
       # (below) looks for an already-available pnpm executable.
+      # No `version:` input here: package.json already pins the pnpm
+      # version via `packageManager` (pnpm@12.21.0), and pnpm/action-setup
+      # reads it (setting both errors out with "Multiple versions of
+      # pnpm specified").
       - name: Install pnpm
-        uses: pnpm/action-setup@v6
-        # No `version:` input here: package.json already pins the pnpm
-        # version via `packageManager`, and pnpm/action-setup v6 errors
-        # out when both are set ("Multiple versions of pnpm specified").
+        uses: pnpm/action-setup@v4
         with:
           run_install: false
 
       - name: Install Node
-        uses: actions/setup-node@v7
+        uses: actions/setup-node@v4
         with:
-          node-version: 24
+          node-version: 26
           cache: pnpm
 
       - name: Verify Node and pnpm
@@ -71,29 +79,26 @@ jobs:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         with:
+          # The Tauri project lives in apps/desktop, not the repo root.
+          projectPath: apps/desktop
           tagName: ${{ github.ref_name }}
-          releaseName: "DesktopDashboards ${{ github.ref_name }}"
+          releaseName: "RepoNyx ${{ github.ref_name }}"
           releaseBody: |
-            ## DesktopDashboards v0.1.0 — first release
+            ## RepoNyx ${{ github.ref_name }}
 
-            A lightweight Windows desktop gadget app (Tauri 2 + WebView2). Keep any web app, Muse Space, or local HTML file resident on your desktop — pinned to the very back or embedded in the wallpaper layer — instead of in browser tabs.
+            Your Repositories. One Local Universe — a Windows-first desktop app (Tauri 2 + React + Rust) that synchronizes GitHub repositories to your machine as local Git mirror archives and working clones, with a background agent and a persistent scheduler.
 
-            ## What's new in v0.1.0 (Phases 1–3)
+            See [CHANGELOG.md](https://github.com/muhammaddomains/reponyx/blob/main/CHANGELOG.md) for what changed in this release.
 
-            - **Phase 1 (MVP)**: CLI (`--add-url`, `--manager`, `--silent`), single-instance protection, atomic `config.json` persistence, pinned-to-bottom mode, navigation control, manager window + tray
-            - **Phase 2**: lock, opacity 20–100% + click-through, no-focus-steal, zoom 50–200%, auto-reload with input guard, multi-monitor DPI support
-            - **Phase 3**: `WorkerW` wallpaper embedding (survives `Win + D`, auto re-attach after Explorer restart), custom CSS injection per gadget
-            - **Session isolation**: dedicated WebView2 profile (`%LOCALAPPDATA%\DesktopDashboards\webview`) — login state shared across gadgets
+            ## Download
 
-            ## Download (.exe)
-
-            - **Installer**: `Reponyx-Desktop_0.1.0_x64-setup.exe` (NSIS, per-user install, no admin needed)
-            - **Portable ZIP**: `reponyx-desktop-x64.zip` (unzip and run `desktop-dashboards.exe`; README.md included)
+            - **Installer**: `RepoNyx_${{ github.ref_name }}_x64-setup.exe` (NSIS, per-user install, no admin needed)
+            - **Portable ZIP**: `reponyx-desktop-x64.zip` (unzip and run `reponyx-desktop.exe`; README.md included)
             - **Requires**: Windows 10 / 11 (x64)
 
             ## Notes
 
-            - First release. The auto-updater (`latest.json`) is included, but the update flow has not been tested end to end yet.
+            - The auto-updater artifacts (`latest.json`) are included, but the update flow has not been tested end to end yet.
             - If Windows SmartScreen warns ("Windows protected your PC"), click **More info** → **Run anyway** (new binary from an individual developer).
           releaseDraft: true
           prerelease: false
@@ -105,11 +110,11 @@ jobs:
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force -Path portable | Out-Null
-          Copy-Item src-tauri/target/release/desktop-dashboards.exe portable/
+          Copy-Item apps/desktop/src-tauri/target/release/reponyx-desktop.exe portable/
           Copy-Item README.md portable/
-          Compress-Archive -Path portable/* -DestinationPath desktop-dashboards-x64.zip
+          Compress-Archive -Path portable/* -DestinationPath reponyx-desktop-x64.zip
 
       - name: Upload portable ZIP to the release
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: gh release upload ${{ github.ref_name }} desktop-dashboards-x64.zip --clobber
+        run: gh release upload ${{ github.ref_name }} reponyx-desktop-x64.zip --clobber

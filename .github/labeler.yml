@@ -5,5 +5,40 @@
 # of bare glob strings is rejected by labeler v5+.)
 #
 # NOTE: every label below must exist in the repo (Settings -> Labels)
-# before the workflow can apply it. `documentation` already exists;
-# create `frontend`, `backend`, `workflows` and `tests` first.
+# before the workflow can apply it, otherwise the run fails. The
+# defaults `bug` and `enhancement` already exist (used by the issue
+# templates); create `frontend`, `backend`, `agent`, `broker`,
+# `workflows`, `documentation` and `tests` first.
+frontend:
+  - changed-files:
+      - any-glob-to-any-file:
+          - apps/desktop/src/**
+          - packages/**
+backend:
+  - changed-files:
+      - any-glob-to-any-file:
+          - crates/**
+          - apps/desktop/src-tauri/**
+agent:
+  - changed-files:
+      - any-glob-to-any-file:
+          - apps/background-agent/**
+broker:
+  - changed-files:
+      - any-glob-to-any-file:
+          - apps/auth-broker/**
+workflows:
+  - changed-files:
+      - any-glob-to-any-file:
+          - .github/**
+documentation:
+  - changed-files:
+      - any-glob-to-any-file:
+          - docs/**
+          - ai/**
+          - "*.md"
+tests:
+  - changed-files:
+      - any-glob-to-any-file:
+          - "**/tests/**"
+          - "**/*.test.*"

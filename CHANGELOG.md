@@ -5,6 +5,34 @@ All notable changes to RepoNyx are documented here. Format follows
 
 ## [Unreleased]
 
+### Added — Phase 6 + Phase 7 code (user, 2026-11-21; NOT verified complete)
+
+- **Sync queue (`crates/sync-queue`):** WorkerPool, atomic claiming
+  via Phase 2 `claim_next_job`, complete/fail/retry, crash recovery,
+  progress broadcast events, `GitJobRunner` using the git-engine
+  (mirror clone/fetch, working fetch/clone) with credentials from the
+  OS store (PAT) or the Auth Broker (GitHub App).
+- **IPC (`crates/ipc`):** protocol v1 over named pipes (Windows) /
+  Unix sockets, length-prefixed JSON frames, shared-secret auth from
+  the OS credential store, server + client.
+- **Background agent (`apps/background-agent`):** scheduler loop,
+  queue startup, IPC server, Task Scheduler helpers, plus desktop
+  `agent.rs` / `tray.rs` and an Agent health page (`Agent.tsx`).
+- **Verification (actual, 2026-11-21) — these are NOT done:** the
+  three new crates are not workspace members and cannot be built
+  (`cargo check` fails with the workspace-membership error);
+  `pnpm -r typecheck` fails because `Agent.tsx` imports six
+  api-client functions and an `AgentHealth` type that do not exist;
+  the agent does not compile (`materialize_due` called with one
+  argument, needs two); the desktop never declares the agent/tray
+  modules and has no `/agent` route; the retry budget never binds
+  (transient failures create a fresh row with `attempt_count = 0`);
+  no heartbeat/lease columns, no queue cancel, no queue rate
+  limiting, no priority aging. See
+  `ai/memory/PROJECT_STATUS.md` ("Phase 6 / Phase 7 verification")
+  for the full list. The scheduler crate remains the only
+  verified-complete Phase 7 piece.
+
 ### Fixed — web preview (plain browser, no Tauri backend)
 
 - **Cryptic `invoke` error:** opening the Vite dev server in a plain

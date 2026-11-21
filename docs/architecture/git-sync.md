@@ -113,5 +113,9 @@ crate has no dependency that could run one (core + database only).
   visible. A due run outside the current window creates no job and
   is advanced to the next valid run.
 - **Not in this crate:** the background agent, IPC, Task Scheduler
-  registration, tray, and job execution — the rest of Phase 7,
-  blocked on Phase 6.
+  registration, tray, and job execution — the rest of Phase 7.
+  Code for all of it landed on `main` 2026-11-21 (user commits),
+  but it is not verified complete: the new crates are not workspace
+  members and cannot be built, the agent does not compile, and
+  nothing is wired into the desktop. See
+  `ai/memory/PROJECT_STATUS.md` ("Phase 6 / Phase 7 verification").

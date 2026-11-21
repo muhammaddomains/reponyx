@@ -10,10 +10,13 @@ merged to `main` 2026-11-18); Phase 2 — Core Database and Domain
 (complete 2026-11-18); Phase 3 — Git Engine (complete
 2026-11-18); Phase 4 — GitHub Integration (complete
 2026-11-18); Phase 5 — Authentication (complete
-2026-11-18); Phase 7 — Scheduler and Background Agent (partial:
-scheduler crate only, 2026-11-19 — background agent, IPC, and Task
-Scheduler work blocked on Phase 6)**. See `ai/memory/PROJECT_STATUS.md` for the
-honest current state.
+2026-11-18); Phase 6 — Sync Queue (code landed on `main` 2026-11-21
+but NOT verified complete — new crates are not workspace members and
+cannot be built, see `ai/memory/PROJECT_STATUS.md`); Phase 7 —
+Scheduler and Background Agent (scheduler crate verified complete
+2026-11-19; agent, IPC, tray, and Agent page code landed 2026-11-21
+but unwired and uncompilable as committed)**. See
+`ai/memory/PROJECT_STATUS.md` for the honest current state.
 
 ## Branch & safety
 
@@ -42,14 +45,17 @@ cargo tauri build                          # apps/desktop; needs WebViewGTK dev 
 ## Layout
 
 - `apps/desktop` — React frontend + Tauri backend (`src-tauri`)
-- `crates/{core,logging,git-engine,provider-abstractions,github-provider,database,credential-store,scheduler}` — Rust libs
+- `crates/{core,logging,git-engine,provider-abstractions,github-provider,database,credential-store,scheduler,sync-queue,ipc}` — Rust libs
+  (`sync-queue` and `ipc` exist on disk since 2026-11-21 but are NOT
+  workspace members yet and cannot be built — see PROJECT_STATUS.md)
 - `apps/auth-broker` — Auth Broker (holds the GitHub App private key; never a desktop dependency)
+- `apps/background-agent` — background agent binary (landed 2026-11-21,
+  not workspace member, not wired, does not compile as committed)
 - `packages/{shared,ui,api-client,config}` — shared TS
 - `docs/architecture`, `docs/decisions` (ADRs 001–010), `docs/security`
 - `ai/phaseN/PLAN.md`, `ai/memory/PROJECT_STATUS.md`
 
-Planned, not yet created: `apps/background-agent`,
-`crates/{sync-queue,ipc,testing}`.
+Planned, not yet created: `crates/testing`.
 
 ## Hard rules
 

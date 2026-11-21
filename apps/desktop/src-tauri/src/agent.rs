@@ -191,6 +191,10 @@ fn resolve_agent_exe() -> Option<PathBuf> {
         return Some(PathBuf::from(p));
     }
     // Same directory as the desktop binary (bundled layout).
+    // The result is only a path hint for locating our own bundled
+    // agent binary, never an identity or trust decision: anyone able
+    // to replace that binary already controls this machine.
+    // nosemgrep: rust.lang.security.current-exe.current-exe
     if let Ok(me) = std::env::current_exe() {
         if let Some(dir) = me.parent() {
             #[cfg(windows)]

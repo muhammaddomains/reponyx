@@ -407,9 +407,19 @@ Work is on `main` going forward.
     WebViewGTK libs); IPC progress push to the UI is still unwired.
     The remaining real proof is the user's Windows build + a first
     sync against a real GitHub account.
+  - **Follow-up fix from the live-run review (2026-11-21):**
+    `is_unique_violation` in `crates/database/src/jobs.rs` only
+    checked `err.message`, but `map_error` rewrites a UNIQUE
+    violation's message to a friendly string and puts the raw SQLite
+    text in `details` — so the helper could never match, and the
+    executor's / recovery's "already queued" tolerance was dead code
+    under contention. Fixed to check `details` too (same pattern as
+    `is_locked`), with a regression test
+    (`duplicate_retry_row_is_a_unique_violation`) that fails without
+    the fix and passes with it. Uncommitted — needs a push.
   - **Verification after the fix:** `cargo fmt --check` pass;
     clippy 0 warnings; `cargo test --workspace --exclude
-    reponyx-desktop` **330 passed, 0 failed**; `pnpm -r typecheck`
+    reponyx-desktop` **331 passed, 0 failed**; `pnpm -r typecheck`
     pass; desktop vite build pass; desktop eslint pass.
 
 - **Phase 5 — Authentication (actual, 2026-11-18, on `main`):**

@@ -78,8 +78,16 @@ pub fn dedupe_key_for(repository_id: Uuid, job_type: JobType) -> String {
 /// dedupe index). Callers use this to tolerate an enqueue race: if
 /// another writer already queued the same work, the job exists and
 /// there is nothing to retry.
+/// A unique-constraint failure. `map_error` rewrites the message to a
+/// friendly "already exists" string and puts the raw SQLite text in
+/// `details`, so both must be checked — checking only `message` misses
+/// every mapped violation (found by the 2026-11-21 live-run review).
 pub fn is_unique_violation(err: &RepoNyxError) -> bool {
     err.message.contains("UNIQUE constraint failed")
+        || err
+            .details
+            .as_deref()
+            .is_some_and(|d| d.contains("UNIQUE constraint failed"))
 }
 
 pub async fn create_job(pool: &SqlitePool, input: NewJob) -> Result<SyncJob, RepoNyxError> {

@@ -9,7 +9,7 @@ use reponyx_database::history::{count_history_for_repository, list_history_for_j
 use reponyx_database::jobs::{
     JobFilter, JobOutcome, NewJob, cancel_job, claim_next_job, complete_job,
     complete_job_with_history, count_jobs_by_status, create_job, create_retry_job, fail_job,
-    get_job, heartbeat_job, list_jobs, request_cancel_job,
+    get_job, heartbeat_job, is_unique_violation, list_jobs, request_cancel_job,
 };
 use std::collections::HashSet;
 
@@ -436,6 +436,50 @@ async fn retry_row_is_not_claimable_before_available_at() {
         .unwrap();
     assert_eq!(claimed_retry.id, retry.id);
     assert_eq!(claimed_retry.attempt_count, 2);
+}
+
+#[tokio::test]
+async fn duplicate_retry_row_is_a_unique_violation() {
+    let (_dir, db) = open_test_db().await;
+    let account = make_account(pool(&db), "octocat").await;
+    let repo = make_repository(pool(&db), account.id, "456", "octocat", "hello").await;
+    let job = create_job(
+        pool(&db),
+        NewJob {
+            repository_id: repo.id,
+            job_type: JobType::Fetch,
+            priority: 0,
+        },
+    )
+    .await
+    .unwrap();
+    let claimed = claim_next_job(pool(&db), "test-worker", TEST_LEASE)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(claimed.id, job.id);
+    let failed = fail_job(pool(&db), claimed.id, "NetworkUnavailable", "down")
+        .await
+        .unwrap();
+    let _retry = create_retry_job(pool(&db), &failed, chrono::Utc::now())
+        .await
+        .unwrap();
+
+    // A second retry row for the same parent collides on the dedupe
+    // index while the first retry is still pending. The executor and
+    // recovery rely on recognising this collision ("already queued").
+    // Regression: `map_error` rewrites the message, so the check must
+    // also look at `details`.
+    let err = create_retry_job(pool(&db), &failed, chrono::Utc::now())
+        .await
+        .unwrap_err();
+    assert_eq!(err.code, ErrorCode::InvalidInput);
+    assert!(
+        is_unique_violation(&err),
+        "a dedupe collision must be recognised as a unique violation; got message {:?} details {:?}",
+        err.message,
+        err.details
+    );
 }
 
 #[tokio::test]

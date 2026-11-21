@@ -29,6 +29,14 @@ All notable changes to RepoNyx are documented here. Format follows
   `<data_dir>` itself; re-verified live with a fresh data dir
   (mirror at `<data>/repositories/github/...`, HEAD identical to
   the remote).
+- **`is_unique_violation` never matched (found in the live-run
+  review, fixed 2026-11-21):** `map_error` rewrites a UNIQUE
+  violation's message to a friendly "already exists" string and puts
+  the raw SQLite text in `details`, but the helper only checked
+  `message` — so the executor's and recovery's "already queued"
+  tolerance could never trigger under contention. The helper now
+  checks `details` too (same pattern as `is_locked`), with a
+  regression test that fails without the fix and passes with it.
 
 ### Fixed — Phase 6 + Phase 7 integration (2026-11-21, verified)
 

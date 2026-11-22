@@ -346,28 +346,24 @@ mod tests {
 
     #[test]
     fn tail_lines_returns_last_n() {
-        let path = std::env::temp_dir().join(format!(
-            "reponyx-logging-tail-test-{}.txt",
-            std::process::id()
-        ));
+        let file = tempfile::NamedTempFile::new().unwrap();
         let content = (1..=10)
             .map(|i| format!("line {i}"))
             .collect::<Vec<_>>()
             .join("\n");
-        std::fs::write(&path, content).unwrap();
-        let tail = tail_lines(&path, 3).unwrap();
+        std::fs::write(file.path(), content).unwrap();
+        let tail = tail_lines(file.path(), 3).unwrap();
         assert_eq!(tail, vec!["line 8", "line 9", "line 10"]);
-        let all = tail_lines(&path, 50).unwrap();
+        let all = tail_lines(file.path(), 50).unwrap();
         assert_eq!(all.len(), 10);
-        std::fs::remove_file(&path).unwrap();
+        // `NamedTempFile` deletes the file on drop.
+        file.close().unwrap();
     }
 
     #[test]
     fn tail_lines_missing_file_errors() {
-        let path = std::env::temp_dir().join(format!(
-            "reponyx-logging-tail-missing-{}.txt",
-            std::process::id()
-        ));
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("missing.txt");
         assert!(tail_lines(&path, 5).is_err());
     }
 }

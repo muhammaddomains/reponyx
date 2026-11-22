@@ -243,14 +243,18 @@ pub async fn export_diagnostics_command(
                 .rev()
                 .map(|line| redact_secrets(line))
                 .collect();
-            let errors: Vec<String> = recent
+            let mut errors: Vec<String> = recent
                 .iter()
                 .filter(|line| line.contains("ERROR"))
-                .rev()
-                .take(50)
-                .rev()
                 .map(|line| redact_secrets(line))
                 .collect();
+            // Keep only the last 50, in order. (A `.rev().take(50)
+            // .rev()` chain does not compile here: `Take` is only
+            // `DoubleEndedIterator` over an `ExactSizeIterator`,
+            // and `Filter` is not one.)
+            if errors.len() > 50 {
+                errors.drain(..errors.len() - 50);
+            }
             (tail, errors)
         }
         None => (Vec::new(), Vec::new()),

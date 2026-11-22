@@ -33,3 +33,7 @@ Thumbs.db
 # pnpm / npm
 pnpm-debug.log
 npm-debug.log
+
+#Key
+reponyx.key
+reponyx.key.pub

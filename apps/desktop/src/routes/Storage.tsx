@@ -1,12 +1,20 @@
 import { useCallback, useEffect, useState } from "react";
 import {
+  deleteLocalArchive,
+  deleteOrphan,
   getStorageOverview,
   listAccounts,
+  moveArchiveForRename,
   openRepositoryLocation,
   openStorageRoot,
 } from "@reponyx/api-client";
-import type { StorageOverview } from "@reponyx/shared";
-import { Button, Card } from "@reponyx/ui";
+import type {
+  OrphanArchive,
+  RenamedArchive,
+  StorageOverview,
+  StoredRepository,
+} from "@reponyx/shared";
+import { Badge, Button, Card } from "@reponyx/ui";
 
 function commandMessage(error: unknown): string {
   if (typeof error === "object" && error !== null) {
@@ -36,17 +44,20 @@ function formatDate(value: string | null | undefined): string {
 }
 
 /** Storage: where the archives live, how much space they take, and
- *  how full the volume is. Sizes are computed on demand by the
- *  backend, so this page loads on request (Refresh) rather than
- *  polling — a large archive takes a moment to walk. Read-only in
- *  v1: there is no delete action; deleting a local archive is
- *  destructive and needs its own confirm flow. */
+ *  how full the volume is — plus what is wrong with the storage
+ *  (orphans, missing archives, renamed archives) and the actions
+ *  that fix it. Sizes are computed on demand by the backend, so
+ *  this page loads on request (Refresh) rather than polling — a
+ *  large archive takes a moment to walk. Every destructive action
+ *  asks first and is re-verified server-side before anything is
+ *  removed. */
 export default function Storage() {
   const [overview, setOverview] = useState<StorageOverview | null>(null);
   const [accountNames, setAccountNames] = useState<Record<string, string>>(
     {},
   );
   const [error, setError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [loading, setLoading] = useState(true);
 
@@ -80,6 +91,7 @@ export default function Storage() {
 
   async function handleRefresh() {
     setError(null);
+    setNotice(null);
     setBusy(true);
     try {
       await refresh();
@@ -108,6 +120,76 @@ export default function Storage() {
     }
   }
 
+  async function handleDeleteOrphan(orphan: OrphanArchive) {
+    if (
+      !window.confirm(
+        `Delete this orphan archive?\n\n${orphan.path}\n\n${formatBytes(orphan.bytes)} will be freed. No repository points at it, so nothing can re-create it. This cannot be undone.`,
+      )
+    ) {
+      return;
+    }
+    setError(null);
+    setNotice(null);
+    setBusy(true);
+    try {
+      const freed = await deleteOrphan(orphan.path);
+      setNotice(`Deleted the orphan archive — freed ${formatBytes(freed)}.`);
+      await refresh();
+    } catch (e: unknown) {
+      setError(commandMessage(e));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function handleDeleteArchive(repo: StoredRepository) {
+    if (
+      !window.confirm(
+        `Delete the local archive for ${repo.fullName}?\n\nThe repository row stays — the next sync will re-clone it. ${formatBytes(repo.bytes)} will be freed. This cannot be undone.`,
+      )
+    ) {
+      return;
+    }
+    setError(null);
+    setNotice(null);
+    setBusy(true);
+    try {
+      const freed = await deleteLocalArchive(repo.repositoryId);
+      setNotice(
+        `Deleted the local archive for ${repo.fullName} — freed ${formatBytes(freed)}. It will re-clone on the next sync.`,
+      );
+      await refresh();
+    } catch (e: unknown) {
+      setError(commandMessage(e));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function handleMoveArchive(renamed: RenamedArchive) {
+    if (
+      !window.confirm(
+        `Move the archive to match the new name?\n\n${renamed.currentPath}\n→ ${renamed.expectedPath}`,
+      )
+    ) {
+      return;
+    }
+    setError(null);
+    setNotice(null);
+    setBusy(true);
+    try {
+      const result = await moveArchiveForRename(renamed.repositoryId);
+      setNotice(
+        `Moved ${result.moved.length} archive${result.moved.length === 1 ? "" : "s"} to match ${renamed.fullName}.`,
+      );
+      await refresh();
+    } catch (e: unknown) {
+      setError(commandMessage(e));
+    } finally {
+      setBusy(false);
+    }
+  }
+
   const usedBytes =
     overview?.totalBytes != null && overview?.availableBytes != null
       ? overview.totalBytes - overview.availableBytes
@@ -116,6 +198,11 @@ export default function Storage() {
     overview?.totalBytes != null && overview.totalBytes > 0 && usedBytes != null
       ? Math.min(100, (usedBytes / overview.totalBytes) * 100)
       : null;
+  const lowSpace =
+    overview?.totalBytes != null &&
+    overview?.availableBytes != null &&
+    overview.totalBytes > 0 &&
+    overview.availableBytes < overview.totalBytes * 0.1;
 
   return (
     <div className="space-y-6 p-6">
@@ -139,6 +226,12 @@ export default function Storage() {
       {error && (
         <Card className="border-red-200 bg-red-50 p-4 text-sm whitespace-pre-line text-red-800 dark:border-red-900 dark:bg-red-950 dark:text-red-200">
           {error}
+        </Card>
+      )}
+
+      {notice && (
+        <Card className="border-emerald-200 bg-emerald-50 p-4 text-sm text-emerald-800 dark:border-emerald-900 dark:bg-emerald-950 dark:text-emerald-200">
+          {notice}
         </Card>
       )}
 
@@ -189,6 +282,13 @@ export default function Storage() {
                   {formatBytes(overview.totalBytes)} ·{" "}
                   {formatBytes(overview.availableBytes)} free
                 </p>
+                {lowSpace && (
+                  <p className="text-sm font-medium text-amber-700 dark:text-amber-300">
+                    Low space: less than 10% of this volume is free.
+                    Syncs will start failing once it fills up — delete
+                    an orphan or an archive you no longer need.
+                  </p>
+                )}
               </div>
             ) : (
               <p className="text-sm text-zinc-500">
@@ -239,6 +339,104 @@ export default function Storage() {
             </Card>
           </section>
 
+          {overview.orphans.length > 0 && (
+            <section className="space-y-4">
+              <div className="flex flex-wrap items-baseline gap-2">
+                <h2 className="text-lg font-semibold">Orphan archives</h2>
+                <span className="text-sm text-zinc-500">
+                  {formatBytes(overview.orphansBytes)} in directories no
+                  repository points at — safe to delete.
+                </span>
+              </div>
+              {overview.orphans.map((orphan) => (
+                <Card key={orphan.path} className="space-y-2 p-4">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <Badge variant="warning">
+                        {orphan.kind === "mirror" ? "Mirror" : "Working clone"}
+                      </Badge>
+                      <span className="font-medium">
+                        {orphan.owner}/{orphan.name}
+                      </span>
+                    </div>
+                    <span className="text-lg font-semibold">
+                      {formatBytes(orphan.bytes)}
+                    </span>
+                  </div>
+                  <p className="truncate font-mono text-sm text-zinc-600 dark:text-zinc-400">
+                    {orphan.path}
+                  </p>
+                  <div>
+                    <Button
+                      variant="danger"
+                      disabled={busy}
+                      onClick={() => void handleDeleteOrphan(orphan)}
+                    >
+                      Delete
+                    </Button>
+                  </div>
+                </Card>
+              ))}
+            </section>
+          )}
+
+          {overview.renamed.length > 0 && (
+            <section className="space-y-4">
+              <h2 className="text-lg font-semibold">Renamed on GitHub</h2>
+              <p className="text-sm text-zinc-500">
+                These repositories were renamed, but their archive
+                directories still carry the old name. Moving the
+                directory keeps the archive — no re-clone needed.
+              </p>
+              {overview.renamed.map((renamed) => (
+                <Card key={renamed.repositoryId} className="space-y-2 p-4">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <Badge>
+                      {renamed.kind === "mirror"
+                        ? "Mirror"
+                        : "Working clone"}
+                    </Badge>
+                    <span className="font-medium">{renamed.fullName}</span>
+                  </div>
+                  <p className="truncate font-mono text-sm text-zinc-600 dark:text-zinc-400">
+                    {renamed.currentPath}
+                  </p>
+                  <p className="truncate font-mono text-sm text-zinc-600 dark:text-zinc-400">
+                    → {renamed.expectedPath}
+                  </p>
+                  <div>
+                    <Button
+                      variant="secondary"
+                      disabled={busy}
+                      onClick={() => void handleMoveArchive(renamed)}
+                    >
+                      Move archive
+                    </Button>
+                  </div>
+                </Card>
+              ))}
+            </section>
+          )}
+
+          {overview.missing.length > 0 && (
+            <section className="space-y-4">
+              <h2 className="text-lg font-semibold">Missing archives</h2>
+              <p className="text-sm text-zinc-500">
+                These repositories have a recorded local path, but the
+                directory is gone from disk. Nothing to delete — the
+                next sync will re-clone them.
+              </p>
+              {overview.missing.map((missing) => (
+                <Card key={missing.repositoryId} className="space-y-2 p-4">
+                  <p className="font-medium">{missing.fullName}</p>
+                  <p className="truncate font-mono text-sm text-zinc-600 dark:text-zinc-400">
+                    {missing.localPath}
+                  </p>
+                </Card>
+              ))}
+            </section>
+          )}
+
           <section className="space-y-4">
             <h2 className="text-lg font-semibold">Repositories on disk</h2>
             {overview.repositories.length === 0 && (
@@ -275,6 +473,13 @@ export default function Storage() {
                     onClick={() => void handleOpenRepo(repo.repositoryId)}
                   >
                     Open folder
+                  </Button>
+                  <Button
+                    variant="danger"
+                    disabled={busy}
+                    onClick={() => void handleDeleteArchive(repo)}
+                  >
+                    Delete archive
                   </Button>
                 </div>
               </Card>

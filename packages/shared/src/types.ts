@@ -322,6 +322,33 @@ export interface StoredRepository {
   lastSyncedAt: string | null;
 }
 
+/** An archive directory on disk with no repository row (Phase 9). */
+export interface OrphanArchive {
+  path: string;
+  kind: string;
+  bytes: number;
+  account: string;
+  owner: string;
+  name: string;
+}
+
+/** A repository row whose archive is gone from disk (Phase 9). */
+export interface MissingArchive {
+  repositoryId: string;
+  fullName: string;
+  localPath: string;
+}
+
+/** A repository row whose archive directory still carries a
+ *  pre-rename name (Phase 9). */
+export interface RenamedArchive {
+  repositoryId: string;
+  fullName: string;
+  currentPath: string;
+  expectedPath: string;
+  kind: string;
+}
+
 export interface StorageOverview {
   root: string;
   rootConfigured: boolean;
@@ -332,6 +359,21 @@ export interface StorageOverview {
   logsBytes: number;
   storedRepositoryCount: number;
   repositories: StoredRepository[];
+  orphans: OrphanArchive[];
+  orphansBytes: number;
+  missing: MissingArchive[];
+  renamed: RenamedArchive[];
+}
+
+/** One side moved by `moveArchiveForRename` (Phase 9). */
+export interface MoveEntry {
+  from: string;
+  to: string;
+}
+
+export interface MoveArchiveResult {
+  moved: MoveEntry[];
+  newLocalPath: string | null;
 }
 
 export interface Settings {

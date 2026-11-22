@@ -5,6 +5,27 @@ All notable changes to RepoNyx are documented here. Format follows
 
 ## [Unreleased]
 
+### Added — Phase 9 storage management + orphan detection (2026-11-21)
+
+- The Storage page now shows what is wrong with the storage, not
+  just how big it is: orphan archives (directories on disk with no
+  repository row), rows whose archive is missing from disk (the
+  next sync re-clones them), and rows whose archive directory still
+  carries a pre-rename name, with a "Move archive" action that
+  renames each side on disk — refusing to overwrite an existing
+  destination and rolling back on failure — instead of re-cloning.
+  Orphans and stored archives can be deleted from the page (each
+  asks first and is re-verified server-side at delete time: the
+  path must scan as an archive under the storage root right now
+  and match no repository row); deleting a stored archive keeps
+  the row and returns its status to Pending, so the next sync
+  re-clones it. A low-space warning appears when less than 10% of
+  the volume is free. New engine `scan_archive_dirs` +
+  `delete_archive_dir` (canonical-path checks, never follows
+  symlinks out of the root), a shared DB `set_local_path` helper
+  (the runner's local SQL copy is gone), and 3 new Tauri commands.
+  Verified: `cargo test` 378 passed / 0 failed (was 373, +5).
+
 ### Added — Phase 9 submodule sync + Both-mode completion (2026-11-21)
 
 - Submodules are now synced as a separate step after a clone/fetch:

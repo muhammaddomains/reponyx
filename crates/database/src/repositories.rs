@@ -12,6 +12,7 @@ use crate::common::{
 use reponyx_core::{ArchiveStatus, RepoNyxError, Repository, SyncMode, Visibility};
 use sqlx::sqlite::SqliteRow;
 use sqlx::{QueryBuilder, Row, Sqlite, SqlitePool};
+use std::path::Path;
 use std::str::FromStr;
 use uuid::Uuid;
 
@@ -433,4 +434,31 @@ pub async fn delete_repository(pool: &SqlitePool, id: Uuid) -> Result<bool, Repo
         .await
         .map_err(map_error)?;
     Ok(result.rows_affected() > 0)
+}
+
+/// Persist (or clear, with `None`) a repository's local archive
+/// path. This is the helper the sync-queue runner's local copy was
+/// waiting for: clone jobs, the rename move, and archive deletion
+/// all go through it instead of issuing their own SQL.
+pub async fn set_local_path(
+    pool: &SqlitePool,
+    id: Uuid,
+    path: Option<&Path>,
+) -> Result<Repository, RepoNyxError> {
+    let now = now_iso();
+    let affected =
+        sqlx::query("UPDATE repositories SET local_path = ?, updated_at = ? WHERE id = ?")
+            .bind(path.map(|p| p.to_string_lossy().into_owned()))
+            .bind(now)
+            .bind(id.to_string())
+            .execute(pool)
+            .await
+            .map_err(map_error)?
+            .rows_affected();
+    if affected == 0 {
+        return Err(invalid(format!("repository {id} not found")));
+    }
+    get_repository(pool, id)
+        .await?
+        .ok_or_else(|| invalid(format!("repository {id} not found")))
 }

@@ -28,7 +28,7 @@ diagnostics, backup tools, import/export, performance improvements.
 - [x] LFS sync + verification
 - [x] Submodule sync
 - [x] Both-mode completion (mirror + working clone)
-- [ ] Storage management UI + orphan detection
+- [x] Storage management UI + orphan detection
 - [ ] Diagnostics export + DB backup tools
 - [ ] Import/export
 - [ ] Performance pass with measurements
@@ -64,6 +64,15 @@ Phases 3, 6–8.
 - Local-path remotes hardlink LFS objects; see the LFS tests for
   why corruption fixtures write a new file instead of editing in
   place.
+- Renames update the repository row but not `local_path`
+  (discovery, by design), so a renamed repo's archive directory
+  keeps the old name until the Storage page moves it; the move
+  refuses to overwrite an existing destination and rolls back
+  on failure.
+- Deletes never trust the UI's word alone: every delete re-scans
+  the storage root at delete time and refuses paths outside the
+  root, non-archive directories, and (for orphans) paths a
+  repository row still points at.
 
 ## Completion status
 
@@ -71,5 +80,8 @@ LFS sync + verification done 2026-11-21 (engine module +
 runner wiring + 5 fixture tests; `cargo test` 352 passed /
 0 failed). Submodule sync + Both-mode completion done the same
 day (engine `submodule` module + runner wiring + 9 fixture
-tests; `cargo test` 373 passed / 0 failed). Remaining: storage
-management, diagnostics/backup, import/export, performance.
+tests; `cargo test` 373 passed / 0 failed). Storage management
++ orphan detection done the same day (engine scan + safe
+delete, DB `set_local_path`, 3 new Tauri commands, Storage
+page sections + actions; `cargo test` 378 passed / 0 failed).
+Remaining: diagnostics/backup, import/export, performance.

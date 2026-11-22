@@ -250,6 +250,39 @@ export const storedRepositorySchema = z.object({
   lastSyncedAt: z.string().nullable(),
 });
 
+export const orphanArchiveSchema = z.object({
+  path: z.string(),
+  kind: z.string(),
+  bytes: z.number().int().nonnegative(),
+  account: z.string(),
+  owner: z.string(),
+  name: z.string(),
+});
+
+export const missingArchiveSchema = z.object({
+  repositoryId: z.string().uuid(),
+  fullName: z.string(),
+  localPath: z.string(),
+});
+
+export const renamedArchiveSchema = z.object({
+  repositoryId: z.string().uuid(),
+  fullName: z.string(),
+  currentPath: z.string(),
+  expectedPath: z.string(),
+  kind: z.string(),
+});
+
+export const moveEntrySchema = z.object({
+  from: z.string(),
+  to: z.string(),
+});
+
+export const moveArchiveResultSchema = z.object({
+  moved: z.array(moveEntrySchema),
+  newLocalPath: z.string().nullable(),
+});
+
 export const storageOverviewSchema = z.object({
   root: z.string(),
   rootConfigured: z.boolean(),
@@ -260,6 +293,10 @@ export const storageOverviewSchema = z.object({
   logsBytes: z.number().int().nonnegative(),
   storedRepositoryCount: z.number().int().nonnegative(),
   repositories: z.array(storedRepositorySchema),
+  orphans: z.array(orphanArchiveSchema),
+  orphansBytes: z.number().int().nonnegative(),
+  missing: z.array(missingArchiveSchema),
+  renamed: z.array(renamedArchiveSchema),
 });
 
 /** Phase 8 Settings DTO: camelCase, matching the Tauri

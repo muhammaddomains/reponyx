@@ -1,12 +1,13 @@
 # RepoNyx — Project Status
 
-Last updated: 2026-11-21 (Phase 9 submodules + Both-mode completion
-built — see "Phase 9 — Submodule sync + Both-mode completion" below;
-LFS sync built the same day; Phase 8 Settings page built — all 6 pages
-done; Schedules + Repositories + Synchronization + Activity + Storage
-pages done the same day; Phase 6 / Phase 7 fixes verified + live
-end-to-end run on this VM — see "Phase 6 / Phase 7 fixes +
-re-verification" and "Live end-to-end run" below)
+Last updated: 2026-11-21 (Phase 9 storage management + orphan
+detection built — see "Phase 9 — Storage management + orphan
+detection" below; submodules + Both-mode completion built the same
+day; LFS sync built the same day; Phase 8 Settings page built —
+all 6 pages done; Schedules + Repositories + Synchronization +
+Activity + Storage pages done the same day; Phase 6 / Phase 7
+fixes verified + live end-to-end run on this VM — see "Phase 6 /
+Phase 7 fixes + re-verification" and "Live end-to-end run" below)
 
 ## Current phase
 
@@ -25,8 +26,9 @@ and were fixed and verified the same day (same section).**
 built (Schedules, Repositories, Synchronization, Activity,
 Storage, and Settings — see the "Phase 8" sections below).**
 **Phase 9 — Advanced Features — started 2026-11-21: LFS sync +
-verification built, then submodule sync + Both-mode completion
-(see the "Phase 9" sections below).**
+verification built, then submodule sync + Both-mode completion,
+then storage management + orphan detection (see the "Phase 9"
+sections below).**
 The desktop Rust wiring is verified by `cargo fmt` + review
 only (the gdk blocker); the real desktop compile check is the
 user's Windows build. Remaining honest gaps are listed in the
@@ -126,11 +128,49 @@ fixes section. Work is on `main` going forward.
   in this step — the Synchronization page already lists
   SubmoduleSync/WorkingClone jobs and the Activity page already
   shows `submodule_sync` operations.
-  Still open in Phase 9: submodule sync, Both-modes completion
-  (a Both repo never gets its working clone today — the scheduler
-  only creates MirrorClone jobs for it), storage management +
-  orphan detection, diagnostics export + DB backup, import/export,
-  performance pass.
+  Still open in Phase 9: diagnostics export + DB backup,
+  import/export, performance pass.
+
+- **Phase 9 — Storage management + orphan detection (actual,
+  2026-11-21, assistant, uncommitted at the time of writing):**
+  the fourth Phase 9 task. The Storage page was read-only; it now
+  manages the archive. New engine pieces in
+  `crates/git-engine/src/storage.rs`: `ArchiveKind` (Mirror /
+  Working) + `ArchiveDir`, `scan_archive_dirs` (mirrors need a
+  HEAD file + objects dir, working clones need a `.git` entry;
+  stray directories are ignored) and `delete_archive_dir`
+  (canonicalizes both paths, refuses anything outside the root,
+  the root itself, or a non-archive directory, returns the bytes
+  freed). New shared DB helper `set_local_path` in
+  `crates/database/src/repositories.rs` — the runner's local SQL
+  copy of it (38 lines) is deleted; the runner now calls the
+  helper. The overview command now also reports orphans (scanned
+  dirs whose canonical path matches no row), missing archives
+  (local_path set but the path is gone) and renamed archives
+  (path exists but its basename no longer matches the row's
+  current name). Three new Tauri commands:
+  `delete_orphan_command` (re-scans at delete time, refuses a
+  path any row still points at), `delete_local_archive_command`
+  (deletes both sides for a Both repo, then clears `local_path`
+  and returns the status to Pending — the row stays, the next
+  sync re-clones), `move_archive_for_rename_command` (renames
+  each side on disk, never over an existing destination, rolls
+  back moved sides on failure, updates `local_path` only after
+  every move succeeded). The Storage page gains the three
+  sections (orphans with kind badge + Delete, renamed with
+  current → expected + "Move archive", missing with the
+  re-clone note), a per-repo "Delete archive" button, a freed-bytes
+  notice after each action, and a low-space warning below 10%
+  free. New tests: 4 engine storage tests + 1 DB
+  `set_local_path` test. Verified: fmt pass, clippy 0 warnings,
+  `cargo test` 378 passed / 0 failed (was 373, +5 — one earlier
+  full run showed a single failure in a 15-test suite that did
+  not reproduce in 2 subsequent full runs, same transient pattern
+  as the Settings commit), typecheck + desktop build (1.85 s) +
+  eslint pass. Desktop Rust is fmt + review only (gdk blocker),
+  as usual; the new commands' signatures were checked against
+  the real helpers (`set_local_path`, `set_archive_status`,
+  `get_account`, `CommandError` fields) by review.
 
 - **Phase 8 — Settings page (actual, 2026-11-21, assistant,
   uncommitted at the time of writing):** the sixth and last

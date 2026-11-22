@@ -24,8 +24,11 @@ built — engine `lfs` module + runner auto-enqueue + real git-lfs
 fixture tests, `cargo test` 352 passed / 0 failed; submodule sync
 + Both-mode completion built the same day — engine `submodule`
 module + runner auto-enqueue + 9 fixture tests, `cargo test` 373
-passed / 0 failed; storage management, diagnostics/backup,
-import/export, performance still open). See
+passed / 0 failed; storage management + orphan detection built
+the same day — engine scan + safe delete, DB `set_local_path`,
+3 Tauri commands, Storage page sections + actions, `cargo test`
+378 passed / 0 failed; diagnostics/backup, import/export,
+performance still open). See
 `ai/memory/PROJECT_STATUS.md` for the honest current state.
 
 ## Branch & safety

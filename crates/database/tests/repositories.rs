@@ -8,7 +8,8 @@ use reponyx_core::{ArchiveStatus, ErrorCode, SyncMode, Visibility};
 use reponyx_database::repositories::{
     NewRepository, RepositoryFilter, count_repositories, create_repository, delete_repository,
     get_repository, get_repository_by_provider_id, list_repositories, mark_synced,
-    rename_repository, set_archive_status, set_sync_enabled, set_sync_mode, upsert_repository,
+    rename_repository, set_archive_status, set_local_path, set_sync_enabled, set_sync_mode,
+    upsert_repository,
 };
 use uuid::Uuid;
 
@@ -247,6 +248,28 @@ async fn mark_synced_and_delete() {
     assert!(delete_repository(pool(&db), repo.id).await.unwrap());
     assert!(get_repository(pool(&db), repo.id).await.unwrap().is_none());
     assert!(!delete_repository(pool(&db), repo.id).await.unwrap());
+}
+
+#[tokio::test]
+async fn set_local_path_sets_and_clears() {
+    let (_dir, db) = open_test_db().await;
+    let account = make_account(pool(&db), "octocat").await;
+    let repo = make_repository(pool(&db), account.id, "456", "octocat", "hello").await;
+    assert!(repo.local_path.is_none());
+
+    let path = std::path::Path::new("/data/reponyx/repositories/github/octocat/octocat/hello.git");
+    let updated = set_local_path(pool(&db), repo.id, Some(path))
+        .await
+        .unwrap();
+    assert_eq!(updated.local_path.as_deref(), Some(path.to_str().unwrap()));
+
+    let cleared = set_local_path(pool(&db), repo.id, None).await.unwrap();
+    assert!(cleared.local_path.is_none());
+
+    let err = set_local_path(pool(&db), Uuid::new_v4(), Some(path))
+        .await
+        .unwrap_err();
+    assert_eq!(err.code, ErrorCode::InvalidInput);
 }
 
 #[tokio::test]

@@ -19,7 +19,7 @@ use chrono::Utc;
 use reponyx_core::{ErrorCode, JobType, RepoNyxError, Repository, SyncMode};
 use reponyx_database::accounts::get_account;
 use reponyx_database::jobs::{NewJob, create_job, is_unique_violation};
-use reponyx_database::repositories::{get_repository, mark_synced};
+use reponyx_database::repositories::{get_repository, mark_synced, set_local_path};
 use reponyx_git_engine::commands::build_clone_working;
 use reponyx_git_engine::credentials::reject_embedded_credentials;
 use reponyx_git_engine::lfs::{has_lfs_pointers, lfs_fetch};
@@ -266,7 +266,7 @@ impl GitJobRunner {
         let dest = &layout.mirror_path;
         debug!(path = %dest.display(), "mirror_clone");
         let info = mirror_clone(git, &repo.clone_url, dest, &self.locks, opts).await?;
-        set_local_path(&ctx.pool, repo.id, dest).await?;
+        set_local_path(&ctx.pool, repo.id, Some(dest)).await?;
         debug!(
             head = ?info.head_sha,
             branches = info.branches,
@@ -340,7 +340,7 @@ impl GitJobRunner {
             return Err(map_git_failure(&cmd, &output));
         }
 
-        set_local_path(&ctx.pool, repo.id, dest).await?;
+        set_local_path(&ctx.pool, repo.id, Some(dest)).await?;
         Ok(())
     }
 
@@ -392,7 +392,7 @@ impl GitJobRunner {
 
         // Keep local_path consistent if it was missing but layout paths exist.
         if repo.local_path.is_none() {
-            set_local_path(&ctx.pool, repo.id, &path).await?;
+            set_local_path(&ctx.pool, repo.id, Some(&path)).await?;
         }
         Ok(())
     }
@@ -603,44 +603,6 @@ fn resolve_existing_path(
             ),
         )),
     }
-}
-
-/// Persist `local_path` after a successful clone.
-///
-/// Preferred path: `reponyx_database::repositories::set_local_path` once
-/// that helper lands on main. Until then this crate issues the same SQL
-/// the repository module would use (bound parameters only, no secrets).
-async fn set_local_path(
-    pool: &sqlx::SqlitePool,
-    id: uuid::Uuid,
-    path: &Path,
-) -> Result<(), RepoNyxError> {
-    // Try the official API if present (linked at compile time once main has it).
-    #[allow(unused_imports)]
-    {
-        // Always use the local SQL so this crate compiles against current main.
-    }
-    let now = chrono::Utc::now().to_rfc3339();
-    let path_str = path.to_string_lossy();
-    let affected =
-        sqlx::query("UPDATE repositories SET local_path = ?, updated_at = ? WHERE id = ?")
-            .bind(path_str.as_ref())
-            .bind(&now)
-            .bind(id.to_string())
-            .execute(pool)
-            .await
-            .map_err(|e| {
-                RepoNyxError::new(ErrorCode::DatabaseError, "failed to set local_path")
-                    .with_details(e.to_string())
-            })?
-            .rows_affected();
-    if affected == 0 {
-        return Err(RepoNyxError::new(
-            ErrorCode::RepositoryNotFound,
-            format!("repository {id} not found while setting local_path"),
-        ));
-    }
-    Ok(())
 }
 
 /// Emit one coarse stage event (op start / finish) when a progress

@@ -22,10 +22,14 @@ import {
   gitStatusSchema,
   jobStatusCountSchema,
   materializeReportSchema,
+  missingArchiveSchema,
+  moveArchiveResultSchema,
   nextRunPreviewSchema,
+  orphanArchiveSchema,
   pairingInfoSchema,
   patExpirySchema,
   providerAccountInfoSchema,
+  renamedArchiveSchema,
   repositorySchema,
   scheduleWithNextRunSchema,
   settingsSchema,
@@ -46,6 +50,7 @@ import type {
   JobStatus,
   JobStatusCount,
   MaterializeReport,
+  MoveArchiveResult,
   NewScheduleInput,
   NextRunPreview,
   PairingInfo,
@@ -410,6 +415,41 @@ export async function getStorageOverview(): Promise<StorageOverview> {
 
 export async function openStorageRoot(): Promise<void> {
   await invokeCommand("open_storage_root_command");
+}
+
+/** Phase 9 Storage management (Tauri `storage.rs`). Each delete
+ *  is re-verified server-side before anything is removed; the
+ *  number returned is the bytes freed. */
+export async function deleteOrphan(path: string): Promise<number> {
+  return z
+    .number()
+    .int()
+    .nonnegative()
+    .parse(await invokeCommand("delete_orphan_command", { path }));
+}
+
+export async function deleteLocalArchive(
+  repositoryId: string,
+): Promise<number> {
+  return z
+    .number()
+    .int()
+    .nonnegative()
+    .parse(
+      await invokeCommand("delete_local_archive_command", {
+        repositoryId,
+      }),
+    );
+}
+
+export async function moveArchiveForRename(
+  repositoryId: string,
+): Promise<MoveArchiveResult> {
+  return moveArchiveResultSchema.parse(
+    await invokeCommand("move_archive_for_rename_command", {
+      repositoryId,
+    }),
+  );
 }
 
 /** Phase 8 Settings commands (Tauri `settings.rs`). Only the four

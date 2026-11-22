@@ -288,12 +288,20 @@ pub async fn rename_repository(
 
 /// Filters for listing / counting repositories. All fields are
 /// optional; `full_name_search` matches a substring (LIKE `%q%`).
+/// `limit` / `offset` page the list: `limit` caps the rows at
+/// 1..=500 (a safety net, not a page size — the Tauri command
+/// clamps tighter), `offset` is only applied with a limit. `None`
+/// for both means no paging, for internal callers that need every
+/// row (the config export, the scheduler); the Tauri command
+/// always pages.
 #[derive(Debug, Clone, Default)]
 pub struct RepositoryFilter {
     pub account_id: Option<Uuid>,
     pub archive_status: Option<ArchiveStatus>,
     pub sync_enabled: Option<bool>,
     pub full_name_search: Option<String>,
+    pub limit: Option<i64>,
+    pub offset: Option<i64>,
 }
 
 fn apply_filter(builder: &mut QueryBuilder<Sqlite>, filter: &RepositoryFilter) {
@@ -335,11 +343,47 @@ pub async fn list_repositories(
     let mut builder = QueryBuilder::new("SELECT * FROM repositories");
     apply_filter(&mut builder, &filter);
     builder.push(" ORDER BY full_name ASC");
+    if let Some(limit) = filter.limit {
+        builder.push(" LIMIT ");
+        builder.push_bind(limit.clamp(1, 500));
+        builder.push(" OFFSET ");
+        builder.push_bind(filter.offset.unwrap_or(0).max(0));
+    }
     let rows = builder.build().fetch_all(pool).await.map_err(map_error)?;
     rows.iter()
         .map(row_to_repository)
         .collect::<Result<_, _>>()
         .map_err(map_error)
+}
+
+/// Full names for a bounded list of repository ids, for pages that
+/// show rows from another table (jobs, history) and only need the
+/// names of the repositories actually displayed. The id list is
+/// capped at 500; an empty list returns an empty map without
+/// touching the database. Ids with no row are simply absent.
+pub async fn repository_names(
+    pool: &SqlitePool,
+    ids: &[Uuid],
+) -> Result<std::collections::HashMap<Uuid, String>, RepoNyxError> {
+    let mut out = std::collections::HashMap::new();
+    if ids.is_empty() {
+        return Ok(out);
+    }
+    let mut builder = QueryBuilder::new("SELECT id, full_name FROM repositories WHERE id IN (");
+    {
+        let mut separated = builder.separated(", ");
+        for id in ids.iter().take(500) {
+            separated.push_bind(id.to_string());
+        }
+        separated.push_unseparated(")");
+    }
+    let rows = builder.build().fetch_all(pool).await.map_err(map_error)?;
+    for row in &rows {
+        let id = col_uuid(row, "id").map_err(map_error)?;
+        let name = col::<String>(row, "full_name").map_err(map_error)?;
+        out.insert(id, name);
+    }
+    Ok(out)
 }
 
 pub async fn count_repositories(

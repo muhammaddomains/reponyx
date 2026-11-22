@@ -226,6 +226,7 @@ async fn enqueue_now(pool: &SqlitePool, repository_id: Uuid) -> Result<Uuid, Rep
             JobFilter {
                 repository_id: Some(repository_id),
                 status: Some(status),
+                ..Default::default()
             },
         )
         .await?;

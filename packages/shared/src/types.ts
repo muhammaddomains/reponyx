@@ -115,6 +115,13 @@ export interface Repository {
   updatedAt: string;
 }
 
+/** One page of repositories, with the total the filter matches.
+ *  The Repositories page loads pages of 100 and appends them. */
+export interface RepositoryPage {
+  items: Repository[];
+  total: number;
+}
+
 export interface SyncJob {
   id: string;
   repositoryId: string;

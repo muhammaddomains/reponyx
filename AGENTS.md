@@ -33,7 +33,11 @@ Tauri commands, Settings page section, restore staged for the
 next startup, `cargo test` 395 passed / 0 failed; import/export
 built 2026-11-22 — versioned JSON config file, native file
 dialogs, 2 Tauri commands, Settings page section, `cargo test`
-402 passed / 0 failed; performance still open). See
+402 passed / 0 failed; performance pass built 2026-11-22 —
+server-side pagination for repositories + jobs, bounded
+repository-name lookups, measured before/after at 1,000 repos /
+10,000 jobs, `cargo test` 404 passed / 0 failed; Phase 9
+complete). See
 `ai/memory/PROJECT_STATUS.md` for the honest current state.
 
 ## Branch & safety

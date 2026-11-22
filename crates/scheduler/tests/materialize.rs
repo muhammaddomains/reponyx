@@ -166,6 +166,7 @@ async fn materialize_after_job_completes_creates_the_next_job() {
         JobFilter {
             repository_id: Some(repo.id),
             status: None,
+            ..Default::default()
         },
     )
     .await

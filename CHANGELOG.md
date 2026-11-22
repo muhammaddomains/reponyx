@@ -5,6 +5,25 @@ All notable changes to RepoNyx are documented here. Format follows
 
 ## [Unreleased]
 
+### Added — Phase 9 performance pass (2026-11-22)
+
+- List queries are now paginated server-side, measured before
+  and after at a stress scale of 1,000 repositories / 10,000 jobs
+  / 5,000 history rows. `list_repositories_command` takes a page
+  (100 rows, offset) and returns `{ items, total }`; the
+  Repositories page loads pages of 100 and appends them on "Show
+  more" instead of loading the whole table on every search or
+  filter change. `list_sync_jobs_command` takes a limit (100 by
+  default), so the Synchronization page's 5-second poll no longer
+  loads every job row ever created. A new
+  `get_repository_names_command` resolves repository names only
+  for the rows actually on screen (Synchronization, Activity),
+  replacing two full-table loads. Measured medians on this scale:
+  repository page ~14 ms (was ~78 ms full), pending jobs ~5 ms
+  (was ~56 ms), completed jobs ~10 ms (was ~244 ms). The
+  pagination behaviour is covered by tests
+  (`crates/database/tests/performance.rs`).
+
 ### Added — Phase 9 import/export (2026-11-22)
 
 - The Settings page has an Import & export section. Export writes

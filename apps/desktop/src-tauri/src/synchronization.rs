@@ -125,6 +125,7 @@ pub async fn list_sync_jobs_command(
     db: State<'_, Option<Database>>,
     status: Option<String>,
     repository_id: Option<String>,
+    limit: Option<i64>,
 ) -> CommandResult<Vec<SyncJobDto>> {
     let database = require_db(&db)?;
     let status = status
@@ -138,11 +139,16 @@ pub async fn list_sync_jobs_command(
             Uuid::parse_str(&id).map_err(|_| invalid_input(format!("invalid repository id: {id}")))
         })
         .transpose()?;
+    // Server-side limit: the page polls every 5 seconds, and the
+    // job table only grows — without this, every poll loads every
+    // job row ever created.
+    let limit = limit.unwrap_or(100).clamp(1, 200);
     let jobs = list_jobs(
         &database.pool,
         JobFilter {
             repository_id,
             status,
+            limit: Some(limit),
         },
     )
     .await?;

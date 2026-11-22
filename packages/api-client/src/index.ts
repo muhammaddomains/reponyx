@@ -34,6 +34,7 @@ import {
   patExpirySchema,
   providerAccountInfoSchema,
   renamedArchiveSchema,
+  repositoryPageSchema,
   repositorySchema,
   restoreStagedSchema,
   scheduleWithNextRunSchema,
@@ -66,6 +67,7 @@ import type {
   PatExpiry,
   ProviderAccountInfo,
   Repository,
+  RepositoryPage,
   RestoreStaged,
   ScheduleWithNextRun,
   Settings,
@@ -306,17 +308,31 @@ export async function listRepositories(input?: {
   archive_status?: string | null;
   sync_enabled?: boolean | null;
   search?: string | null;
-}): Promise<Repository[]> {
-  return z
-    .array(repositorySchema)
-    .parse(
-      await invokeCommand("list_repositories_command", {
-        account_id: input?.account_id ?? null,
-        archive_status: input?.archive_status ?? null,
-        sync_enabled: input?.sync_enabled ?? null,
-        search: input?.search ?? null,
-      }),
-    );
+  limit?: number | null;
+  offset?: number | null;
+}): Promise<RepositoryPage> {
+  return repositoryPageSchema.parse(
+    await invokeCommand("list_repositories_command", {
+      account_id: input?.account_id ?? null,
+      archive_status: input?.archive_status ?? null,
+      sync_enabled: input?.sync_enabled ?? null,
+      search: input?.search ?? null,
+      limit: input?.limit ?? null,
+      offset: input?.offset ?? null,
+    }),
+  );
+}
+
+/** Full names for the repositories actually on screen, keyed by
+ *  id. The Synchronization and Activity pages show rows from other
+ *  tables and only need these names — they no longer load the
+ *  whole repository table for a lookup. */
+export async function getRepositoryNames(
+  ids: string[],
+): Promise<Record<string, string>> {
+  return z.record(z.string(), z.string()).parse(
+    await invokeCommand("get_repository_names_command", { ids }),
+  );
 }
 
 export async function discoverRepositories(
@@ -364,6 +380,7 @@ export async function openRepositoryInBrowser(id: string): Promise<void> {
 export async function listSyncJobs(input?: {
   status?: string | null;
   repository_id?: string | null;
+  limit?: number | null;
 }): Promise<SyncJob[]> {
   return z
     .array(syncJobSchema)
@@ -371,6 +388,7 @@ export async function listSyncJobs(input?: {
       await invokeCommand("list_sync_jobs_command", {
         status: input?.status ?? null,
         repository_id: input?.repository_id ?? null,
+        limit: input?.limit ?? null,
       }),
     );
 }

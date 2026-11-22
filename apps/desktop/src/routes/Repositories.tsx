@@ -81,7 +81,11 @@ export default function Repositories() {
   const [syncFilter, setSyncFilter] = useState<SyncFilter>("all");
   const [searchInput, setSearchInput] = useState("");
   const [search, setSearch] = useState("");
-  const [visibleCount, setVisibleCount] = useState(PAGE_SIZE);
+  // The total the filter matches, and the rows loaded so far.
+  // Pages of 100 are fetched from the server and appended; the
+  // whole table is never loaded, however many repositories exist.
+  const [total, setTotal] = useState(0);
+  const [loadingMore, setLoadingMore] = useState(false);
   const [selected, setSelected] = useState<ReadonlySet<string>>(new Set());
 
   const [discoverAccountId, setDiscoverAccountId] = useState("");
@@ -105,6 +109,8 @@ export default function Repositories() {
         sync_enabled:
           syncFilter === "all" ? null : syncFilter === "enabled",
         search: search.trim() ? search.trim() : null,
+        limit: PAGE_SIZE,
+        offset: 0,
       }),
       listAccounts(),
     ]);
@@ -114,8 +120,32 @@ export default function Repositories() {
     if (reposResult.status === "rejected") {
       throw reposResult.reason;
     }
-    setRepositories(reposResult.value);
+    setRepositories(reposResult.value.items);
+    setTotal(reposResult.value.total);
   }, [accountFilter, statusFilter, syncFilter, search]);
+
+  async function handleShowMore() {
+    if (loadingMore || repositories.length >= total) return;
+    setError(null);
+    setLoadingMore(true);
+    try {
+      const page = await listRepositories({
+        account_id: accountFilter === "all" ? null : accountFilter,
+        archive_status: statusFilter === "all" ? null : statusFilter,
+        sync_enabled:
+          syncFilter === "all" ? null : syncFilter === "enabled",
+        search: search.trim() ? search.trim() : null,
+        limit: PAGE_SIZE,
+        offset: repositories.length,
+      });
+      setRepositories((current) => [...current, ...page.items]);
+      setTotal(page.total);
+    } catch (e: unknown) {
+      setError(commandMessage(e));
+    } finally {
+      setLoadingMore(false);
+    }
+  }
 
   useEffect(() => {
     let cancelled = false;
@@ -263,7 +293,7 @@ export default function Repositories() {
     });
   }
 
-  const visible = repositories.slice(0, visibleCount);
+  const visible = repositories;
   const allVisibleSelected =
     visible.length > 0 && visible.every((r) => selected.has(r.id));
 
@@ -334,7 +364,7 @@ export default function Repositories() {
       <section className="space-y-4">
         <h2 className="text-lg font-medium">
           All repositories
-          {!loading && ` (${repositories.length})`}
+          {!loading && ` (${total})`}
         </h2>
         <div className="flex flex-wrap gap-3">
           <select
@@ -342,7 +372,6 @@ export default function Repositories() {
             value={accountFilter}
             onChange={(e) => {
               setAccountFilter(e.target.value);
-              setVisibleCount(PAGE_SIZE);
             }}
           >
             <option value="all">All accounts</option>
@@ -357,7 +386,6 @@ export default function Repositories() {
             value={statusFilter}
             onChange={(e) => {
               setStatusFilter(e.target.value as "all" | ArchiveStatus);
-              setVisibleCount(PAGE_SIZE);
             }}
           >
             <option value="all">Any status</option>
@@ -374,7 +402,6 @@ export default function Repositories() {
             value={syncFilter}
             onChange={(e) => {
               setSyncFilter(e.target.value as SyncFilter);
-              setVisibleCount(PAGE_SIZE);
             }}
           >
             <option value="all">Sync on or off</option>
@@ -388,7 +415,6 @@ export default function Repositories() {
             value={searchInput}
             onChange={(e) => {
               setSearchInput(e.target.value);
-              setVisibleCount(PAGE_SIZE);
             }}
           />
         </div>
@@ -586,14 +612,15 @@ export default function Repositories() {
             </div>
           </Card>
         ))}
-        {repositories.length > visibleCount && (
+        {repositories.length < total && (
           <Button
             variant="secondary"
-            onClick={() =>
-              setVisibleCount((count) => count + PAGE_SIZE)
-            }
+            disabled={loadingMore}
+            onClick={() => void handleShowMore()}
           >
-            Show more ({repositories.length - visibleCount} remaining)
+            {loadingMore
+              ? "Loading…"
+              : `Show more (${total - repositories.length} remaining)`}
           </Button>
         )}
       </section>

@@ -174,6 +174,11 @@ export const discoveryOutcomeSchema = z.object({
 /** Phase 8 synchronization DTOs: camelCase, matching the Tauri
  *  `synchronization.rs` DTOs. */
 
+export const repositoryPageSchema = z.object({
+  items: z.array(repositorySchema),
+  total: z.number(),
+});
+
 export const syncJobSchema = z.object({
   id: z.string(),
   repositoryId: z.string(),

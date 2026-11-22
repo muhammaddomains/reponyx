@@ -180,6 +180,7 @@ async fn wait_for_job(
             JobFilter {
                 repository_id: Some(repo_id),
                 status: Some(status),
+                ..Default::default()
             },
         )
         .await
@@ -193,6 +194,7 @@ async fn wait_for_job(
                 JobFilter {
                     repository_id: Some(repo_id),
                     status: Some(JobStatus::Failed),
+                    ..Default::default()
                 },
             )
             .await
@@ -301,6 +303,7 @@ async fn repo_without_lfs_gets_no_lfs_job() {
         JobFilter {
             repository_id: Some(repo.id),
             status: None,
+            ..Default::default()
         },
     )
     .await

@@ -18,8 +18,8 @@ use reponyx_core::{ArchiveStatus, Repository, SyncMode};
 use reponyx_database::Database;
 use reponyx_database::accounts::get_account;
 use reponyx_database::repositories::{
-    RepositoryFilter, delete_repository, get_repository, list_repositories, set_sync_enabled,
-    set_sync_mode,
+    RepositoryFilter, count_repositories, delete_repository, get_repository, list_repositories,
+    repository_names, set_sync_enabled, set_sync_mode,
 };
 use reponyx_github_provider::GitHubProvider;
 use reponyx_github_provider::sync::discover_and_sync;
@@ -53,6 +53,16 @@ pub struct RepositoryDto {
     pub last_synced_at: Option<String>,
     pub created_at: String,
     pub updated_at: String,
+}
+
+/// One page of repositories, with the total number of rows the
+/// filter matches. The Repositories page loads pages of 100 and
+/// appends them ("Show more"); it never loads the whole table.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RepositoryPageDto {
+    pub items: Vec<RepositoryDto>,
+    pub total: i64,
 }
 
 impl RepositoryDto {
@@ -161,7 +171,9 @@ pub async fn list_repositories_command(
     archive_status: Option<String>,
     sync_enabled: Option<bool>,
     search: Option<String>,
-) -> CommandResult<Vec<RepositoryDto>> {
+    limit: Option<i64>,
+    offset: Option<i64>,
+) -> CommandResult<RepositoryPageDto> {
     let database = require_db(&db)?;
     let account_id = account_id
         .map(|id| parse_uuid(&id, "account"))
@@ -170,19 +182,52 @@ pub async fn list_repositories_command(
         .map(|value| parse_archive_status(&value))
         .transpose()?;
     let search = search.filter(|value| !value.trim().is_empty());
-    let repositories = list_repositories(
-        &database.pool,
-        RepositoryFilter {
-            account_id,
-            archive_status,
-            sync_enabled,
-            full_name_search: search,
-        },
-    )
-    .await?;
-    Ok(repositories
-        .iter()
-        .map(RepositoryDto::from_repository)
+    // Server-side paging: the page asks for 100 rows at a time and
+    // never loads the whole table, however many repositories the
+    // user has discovered.
+    let limit = limit.unwrap_or(100).clamp(1, 100);
+    let offset = offset.unwrap_or(0).max(0);
+    let filter = RepositoryFilter {
+        account_id,
+        archive_status,
+        sync_enabled,
+        full_name_search: search,
+        limit: Some(limit),
+        offset: Some(offset),
+    };
+    let total = count_repositories(&database.pool, filter.clone()).await?;
+    let repositories = list_repositories(&database.pool, filter).await?;
+    Ok(RepositoryPageDto {
+        items: repositories
+            .iter()
+            .map(RepositoryDto::from_repository)
+            .collect(),
+        total,
+    })
+}
+
+/// Full names for the repositories actually on screen. The
+/// Synchronization and Activity pages show rows from other tables
+/// (jobs, history) and only need the names of those rows'
+/// repositories — loading the whole repository table for a lookup
+/// is exactly the full-list load the performance pass removes.
+#[tauri::command]
+pub async fn get_repository_names_command(
+    db: State<'_, Option<Database>>,
+    ids: Vec<String>,
+) -> CommandResult<std::collections::HashMap<String, String>> {
+    let database = require_db(&db)?;
+    if ids.len() > 500 {
+        return Err(invalid_input("at most 500 repository ids"));
+    }
+    let mut uuids = Vec::with_capacity(ids.len());
+    for id in &ids {
+        uuids.push(parse_uuid(id, "repository")?);
+    }
+    let names = repository_names(&database.pool, &uuids).await?;
+    Ok(names
+        .into_iter()
+        .map(|(id, name)| (id.to_string(), name))
         .collect())
 }
 

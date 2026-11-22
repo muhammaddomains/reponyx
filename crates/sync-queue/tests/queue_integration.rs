@@ -127,6 +127,7 @@ async fn hundred_jobs_complete_with_bounded_concurrency() {
         JobFilter {
             repository_id: None,
             status: Some(JobStatus::Completed),
+            ..Default::default()
         },
     )
     .await
@@ -177,6 +178,7 @@ async fn transient_failure_retries_then_succeeds() {
             JobFilter {
                 repository_id: Some(repo_id),
                 status: Some(JobStatus::Completed),
+                ..Default::default()
             },
         )
         .await
@@ -198,6 +200,7 @@ async fn transient_failure_retries_then_succeeds() {
         JobFilter {
             repository_id: Some(repo_id),
             status: Some(JobStatus::Failed),
+            ..Default::default()
         },
     )
     .await
@@ -243,6 +246,7 @@ async fn permanent_auth_failure_does_not_retry() {
         JobFilter {
             repository_id: Some(repo_id),
             status: Some(JobStatus::Pending),
+            ..Default::default()
         },
     )
     .await
@@ -257,6 +261,7 @@ async fn permanent_auth_failure_does_not_retry() {
         JobFilter {
             repository_id: Some(repo_id),
             status: Some(JobStatus::Failed),
+            ..Default::default()
         },
     )
     .await
@@ -312,6 +317,7 @@ async fn recovery_requeues_abandoned_running_jobs() {
         JobFilter {
             repository_id: Some(repo_id),
             status: Some(JobStatus::Pending),
+            ..Default::default()
         },
     )
     .await
@@ -324,6 +330,7 @@ async fn recovery_requeues_abandoned_running_jobs() {
         JobFilter {
             repository_id: Some(repo_id),
             status: Some(JobStatus::Failed),
+            ..Default::default()
         },
     )
     .await
@@ -418,6 +425,7 @@ async fn retry_budget_binds_across_retries() {
         JobFilter {
             repository_id: Some(repo_id),
             status: Some(JobStatus::Failed),
+            ..Default::default()
         },
     )
     .await
@@ -436,6 +444,7 @@ async fn retry_budget_binds_across_retries() {
         JobFilter {
             repository_id: Some(repo_id),
             status: Some(JobStatus::Pending),
+            ..Default::default()
         },
     )
     .await
@@ -535,6 +544,7 @@ async fn rate_limiter_defers_job_starts() {
         JobFilter {
             repository_id: None,
             status: Some(JobStatus::Pending),
+            ..Default::default()
         },
     )
     .await
@@ -602,6 +612,7 @@ async fn lease_expiry_drives_recovery() {
         JobFilter {
             repository_id: Some(repo_a),
             status: Some(JobStatus::Running),
+            ..Default::default()
         },
     )
     .await
@@ -614,6 +625,7 @@ async fn lease_expiry_drives_recovery() {
         JobFilter {
             repository_id: Some(repo_b),
             status: Some(JobStatus::Failed),
+            ..Default::default()
         },
     )
     .await

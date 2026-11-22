@@ -7,7 +7,7 @@ import {
   cancelSyncJob,
   countSyncJobs,
   ensureAgentRunning,
-  listRepositories,
+  getRepositoryNames,
   listSyncJobs,
 } from "@reponyx/api-client";
 import type {
@@ -96,8 +96,8 @@ export default function Synchronization() {
       await Promise.allSettled([
         filter === "active"
           ? Promise.all([
-              listSyncJobs({ status: "pending" }),
-              listSyncJobs({ status: "running" }),
+              listSyncJobs({ status: "pending", limit: ROW_CAP }),
+              listSyncJobs({ status: "running", limit: ROW_CAP }),
             ]).then(([pending, running]) =>
               [...pending, ...running].sort(
                 (a, b) =>
@@ -107,6 +107,7 @@ export default function Synchronization() {
             )
           : listSyncJobs({
               status: filter === "all" ? null : filter,
+              limit: ROW_CAP,
             }),
         countSyncJobs(),
         agentHealth(),
@@ -123,18 +124,29 @@ export default function Synchronization() {
     setJobs(jobsResult.value);
   }, [filter]);
 
+  // Repository names only for the jobs actually on screen — the
+  // page used to load the whole repository table for this lookup.
   useEffect(() => {
+    const unknown = [...new Set(jobs.map((job) => job.repositoryId))].filter(
+      (id) => repoNames[id] === undefined,
+    );
+    if (unknown.length === 0) return;
     let cancelled = false;
-    listRepositories()
-      .then((repos) => {
+    getRepositoryNames(unknown)
+      .then((names) => {
         if (cancelled) return;
-        const names: Record<string, string> = {};
-        for (const repo of repos) names[repo.id] = repo.fullName;
-        setRepoNames(names);
+        setRepoNames((current) => ({ ...current, ...names }));
       })
       .catch(() => {
         // Names are a convenience; ids still identify the job.
       });
+    return () => {
+      cancelled = true;
+    };
+  }, [jobs, repoNames]);
+
+  useEffect(() => {
+    let cancelled = false;
     refresh()
       .catch((e: unknown) => {
         if (!cancelled) setError(commandMessage(e));

@@ -133,6 +133,7 @@ pub fn run() {
             schedules::materialize_due_command,
             schedules::effective_schedule_command,
             repositories::list_repositories_command,
+            repositories::get_repository_names_command,
             repositories::discover_repositories_command,
             repositories::update_repository_command,
             repositories::delete_repository_command,

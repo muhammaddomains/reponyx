@@ -148,6 +148,7 @@ async fn wait_for_job(
             JobFilter {
                 repository_id: Some(repo_id),
                 status: Some(status),
+                ..Default::default()
             },
         )
         .await
@@ -161,6 +162,7 @@ async fn wait_for_job(
                 JobFilter {
                     repository_id: Some(repo_id),
                     status: Some(JobStatus::Failed),
+                    ..Default::default()
                 },
             )
             .await
@@ -302,6 +304,7 @@ async fn mirror_only_both_repo_gets_working_clone_on_fetch() {
         JobFilter {
             repository_id: Some(repo.id),
             status: None,
+            ..Default::default()
         },
     )
     .await

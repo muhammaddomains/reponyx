@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useState } from "react";
 import {
+  getRepositoryNames,
   listHistoryForRepository,
   listRecentHistory,
-  listRepositories,
 } from "@reponyx/api-client";
 import type { SyncHistory, SyncResult } from "@reponyx/shared";
 import { Badge, Button, Card } from "@reponyx/ui";
@@ -90,18 +90,30 @@ export default function Activity() {
     setEntries(entries);
   }, [repositoryFilter]);
 
+  // Repository names only for the entries actually on screen —
+  // the page used to load the whole repository table for this
+  // lookup.
   useEffect(() => {
+    const unknown = [
+      ...new Set(entries.map((entry) => entry.repositoryId)),
+    ].filter((id) => repoNames[id] === undefined);
+    if (unknown.length === 0) return;
     let cancelled = false;
-    listRepositories()
-      .then((repos) => {
+    getRepositoryNames(unknown)
+      .then((names) => {
         if (cancelled) return;
-        const names: Record<string, string> = {};
-        for (const repo of repos) names[repo.id] = repo.fullName;
-        setRepoNames(names);
+        setRepoNames((current) => ({ ...current, ...names }));
       })
       .catch(() => {
         // Names are a convenience; ids still identify the entry.
       });
+    return () => {
+      cancelled = true;
+    };
+  }, [entries, repoNames]);
+
+  useEffect(() => {
+    let cancelled = false;
     refresh()
       .catch((e: unknown) => {
         if (!cancelled) setError(commandMessage(e));

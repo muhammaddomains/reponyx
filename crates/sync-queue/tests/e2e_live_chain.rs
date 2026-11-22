@@ -182,6 +182,7 @@ async fn scheduler_to_queue_to_real_mirror_clone() {
             JobFilter {
                 repository_id: Some(repo.id),
                 status: Some(JobStatus::Completed),
+                ..Default::default()
             },
         )
         .await
@@ -195,6 +196,7 @@ async fn scheduler_to_queue_to_real_mirror_clone() {
                 JobFilter {
                     repository_id: Some(repo.id),
                     status: Some(JobStatus::Failed),
+                    ..Default::default()
                 },
             )
             .await

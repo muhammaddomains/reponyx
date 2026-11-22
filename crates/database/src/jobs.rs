@@ -168,10 +168,16 @@ pub async fn get_job(pool: &SqlitePool, id: Uuid) -> Result<Option<SyncJob>, Rep
 }
 
 /// Filters for listing jobs.
+/// `limit` caps the rows at 1..=500 (a safety net — the Tauri
+/// command clamps tighter). `None` means no limit, for internal
+/// callers that need every row (recovery); the Tauri command
+/// always sets one, so the Synchronization page never loads the
+/// whole job table on its 5-second poll.
 #[derive(Debug, Clone, Default)]
 pub struct JobFilter {
     pub repository_id: Option<Uuid>,
     pub status: Option<JobStatus>,
+    pub limit: Option<i64>,
 }
 
 pub async fn list_jobs(pool: &SqlitePool, filter: JobFilter) -> Result<Vec<SyncJob>, RepoNyxError> {
@@ -192,6 +198,10 @@ pub async fn list_jobs(pool: &SqlitePool, filter: JobFilter) -> Result<Vec<SyncJ
         builder.push_bind(status.as_str());
     }
     builder.push(" ORDER BY priority DESC, created_at ASC");
+    if let Some(limit) = filter.limit {
+        builder.push(" LIMIT ");
+        builder.push_bind(limit.clamp(1, 500));
+    }
     let rows = builder.build().fetch_all(pool).await.map_err(map_error)?;
     rows.iter()
         .map(row_to_job)

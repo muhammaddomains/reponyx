@@ -98,6 +98,7 @@ async fn has_active_job(pool: &SqlitePool, repository_id: Uuid) -> Result<bool, 
             JobFilter {
                 repository_id: Some(repository_id),
                 status: Some(status),
+                ..Default::default()
             },
         )
         .await?;

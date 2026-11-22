@@ -44,6 +44,7 @@ pub async fn recover_interrupted_jobs(
         JobFilter {
             repository_id: None,
             status: Some(JobStatus::Running),
+            ..Default::default()
         },
     )
     .await?;

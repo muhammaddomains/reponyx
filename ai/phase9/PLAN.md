@@ -31,7 +31,7 @@ diagnostics, backup tools, import/export, performance improvements.
 - [x] Storage management UI + orphan detection
 - [x] Diagnostics export + DB backup tools
 - [x] Import/export
-- [ ] Performance pass with measurements
+- [x] Performance pass with measurements
 
 ## Dependencies
 
@@ -102,4 +102,7 @@ Settings page section, restore staged for the next startup;
 `cargo test` 395 passed / 0 failed).
 Import/export done 2026-11-22 (versioned JSON config file +
 native file dialogs + 7 tests; `cargo test` 402 passed /
-0 failed). Remaining: performance.
+0 failed). Performance pass done 2026-11-22 (server-side
+pagination for repositories + jobs, bounded name lookups,
+measured before/after at 1,000 repos / 10,000 jobs; `cargo
+test` 404 passed / 0 failed). Phase 9 complete.

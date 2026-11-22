@@ -1,7 +1,9 @@
 # RepoNyx — Project Status
 
-Last updated: 2026-11-22 (Phase 9 import/export built — see
-"Phase 9 — Import/export" below; CI on `170a0b5` fully green;
+Last updated: 2026-11-22 (Phase 9 performance pass built — see
+"Phase 9 — Performance pass" below; Phase 9 now complete;
+CI on `e58af64` fully green; Phase 9 import/export built — see
+"Phase 9 — Import/export" below;
 Phase 9 diagnostics export + DB backup built — see "Phase 9 —
 Diagnostics export + DB backup" below;
 storage management + orphan detection built the same day;
@@ -131,7 +133,57 @@ fixes section. Work is on `main` going forward.
   in this step — the Synchronization page already lists
   SubmoduleSync/WorkingClone jobs and the Activity page already
   shows `submodule_sync` operations.
-  Still open in Phase 9: performance pass.
+  Still open in Phase 9: performance pass (now done — see the
+  entry below).
+
+- **Phase 9 — Performance pass (actual, 2026-11-22, assistant,
+  uncommitted at the time of writing):** the seventh and last
+  Phase 9 task. Measured first, then fixed, at a stress scale of
+  1,000 repositories / 10,000 jobs / 5,000 history rows
+  (`crates/database/tests/performance.rs`, a new harness that
+  seeds with bound multi-row INSERTs and prints medians of three
+  runs — timings are printed, not asserted, because CI runners
+  are too noisy for hard thresholds). Before: a full repository
+  list took ~78 ms, pending jobs ~56 ms, completed jobs ~244 ms,
+  all jobs ~356 ms — and the Synchronization page paid the
+  pending+running variant on every 5-second poll, while the
+  Repositories page paid the full list on every search keystroke
+  (debounced) and filter change; both grew linearly with the
+  tables, which only grow. After: `RepositoryFilter` and
+  `JobFilter` take a `limit` (clamped 1..=500 in the database
+  layer) and repositories also an `offset`; the Tauri commands
+  page at 100 rows (jobs 1..=200) and `list_repositories_command`
+  returns `{ items, total }` so the page header shows the real
+  total. The Repositories page loads pages of 100 and appends
+  them on "Show more" (same UX, server-side now); the
+  Synchronization page passes limit 100 on every poll. Both pages
+  used to load the whole repository table just to resolve
+  repository names for job/history rows — a new bounded lookup,
+  `repository_names` (IN list, capped at 500 ids) behind a new
+  `get_repository_names_command`, fetches names only for the rows
+  actually on screen. After numbers on the same scale: a
+  repository page ~14 ms, pending jobs ~5 ms, completed jobs
+  ~10 ms — and a page stays that fast whatever the table size,
+  because it is always at most 100 rows. Already-bounded queries
+  were left alone (`list_recent_history(100)` ~21 ms,
+  `dashboard_counts` ~1 ms, `count_repositories` ~0.2 ms).
+  Pagination correctness is asserted (pages cover the table
+  exactly once, limit clamps 0 → 1 and 9,999 → 500, offset
+  without a limit is ignored, the names lookup returns only
+  asked-for ids). Internal callers that genuinely need every row
+  (config export, scheduler materialize, discovery, recovery)
+  keep `limit: None` and were only touched where the new field
+  broke their struct literals (`..Default::default()` added —
+  note the base must be last and takes no trailing comma, which
+  the first patch script got wrong in 25+ places and the
+  compiler caught). No new migration: the existing indexes
+  already cover the paged queries. Verified: fmt pass, clippy 0
+  warnings, `cargo test` 404 passed / 0 failed (was 402, +2),
+  typecheck + desktop build (2.16 s) + eslint pass. Desktop Rust
+  is fmt + review only (gdk blocker), as usual — the new
+  commands' signatures were checked against the real helpers by
+  review, and the windows-build job is their first real compile.
+  Phase 9 is now complete; remaining is Phase 10.
 
 - **Phase 9 — Import/export (actual, 2026-11-22, assistant,
   uncommitted at the time of writing):** the sixth Phase 9 task.

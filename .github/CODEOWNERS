@@ -1,4 +1,4 @@
-# CODEOWNERS — automatic review routing (audit finding A4-11).
+# CODEOWNERS — automatic review routing.
 #
 # GitHub requests a review from the listed owner when a pull
 # request touches a matched path. Only the highest-blast-radius

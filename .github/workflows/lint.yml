@@ -37,7 +37,7 @@ jobs:
     timeout-minutes: 10
     steps:
       - name: Check out repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       # The private-key script calls `cargo tree`, so Rust is needed
       # even though this job compiles nothing.

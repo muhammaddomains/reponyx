@@ -5,6 +5,19 @@ All notable changes to RepoNyx are documented here. Format follows
 
 ## [Unreleased]
 
+### Changed — GitHub Actions pins updated to latest majors (2026-11-21)
+
+- `actions/checkout` v4 → v7, `actions/setup-node` v4 → v7,
+  `pnpm/action-setup` v4 → v6 across all workflows (18 pins, 6
+  files). Correction: an earlier CHANGELOG entry claimed these
+  versions did not exist — that was wrong; all three were verified
+  to exist (setup-node v7.1.0, pnpm/action-setup v6.1.1, checkout
+  v7 via Dependabot PR #2). `codeql-action` stays at v3: v4 could
+  not be verified (GitHub API rate limit) and v3 works — Dependabot
+  will propose the bump if v4 exists. Note: Dependabot PR #2
+  (checkout 4 → 7) is now superseded by this change and can be
+  closed.
+
 ### Added — More GitHub workflows tailored to RepoNyx (2026-11-21)
 
 - **`lint.yml`** — Markdown trailing-whitespace check, workflow

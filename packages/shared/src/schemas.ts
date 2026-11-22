@@ -261,3 +261,16 @@ export const storageOverviewSchema = z.object({
   storedRepositoryCount: z.number().int().nonnegative(),
   repositories: z.array(storedRepositorySchema),
 });
+
+/** Phase 8 Settings DTO: camelCase, matching the Tauri
+ *  `settings.rs` DTO. */
+
+export const settingsSchema = z.object({
+  defaultSyncMode: z.string().nullable(),
+  concurrency: z.number().int().nullable(),
+  storageRoot: z.string().nullable(),
+  theme: z.string().nullable(),
+  deviceIdentifier: z.string().nullable(),
+  dataDir: z.string(),
+  appVersion: z.string(),
+});

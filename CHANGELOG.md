@@ -21,6 +21,34 @@ All notable changes to RepoNyx are documented here. Format follows
   list only the `rust` error — the `windows-build` job passed,
   so the run #32 desktop-compile fix is confirmed working in CI.
 
+### Added — Phase 8 Settings page (2026-11-21)
+
+- Settings page (`/settings`): General (theme — System/Light/
+  Dark, applied at startup via the class-based dark variant),
+  Sync (default sync mode for newly discovered repositories,
+  concurrent syncs 1–10), Storage (archive root, with a warning
+  that existing archives stay put and the change applies after
+  the agent restarts), and read-only Advanced info (app version,
+  data directory, paired device identifier). Two new Tauri
+  commands in `apps/desktop/src-tauri/src/settings.rs`
+  (`get_settings_command`, `set_setting_command` — only four
+  keys writable, each value validated before it is stored).
+  Two settings that nothing consumed are now real: discovery
+  reads `sync.default_mode` for new rows (existing rows keep
+  theirs; new test `discovery_new_rows_use_default_sync_mode_
+  setting`), and the frontend applies `ui.theme`.
+
+### Fixed — Paired device identifier never persisted (2026-11-21)
+
+- Pairing stored the per-machine id only under the
+  `device_identifier` key, but the agent's credential resolver
+  reads `device.identifier` — a key nothing ever wrote. GitHub
+  App accounts therefore failed every job in the agent with
+  "requires a paired device identifier" even after pairing
+  succeeded. `complete_pairing_command` now also persists
+  `device.identifier`. Desktop-only change, verified by `cargo
+  fmt` + review (gdk blocker).
+
 ### Added — Phase 8 Storage page (2026-11-21)
 
 - Storage page (`/storage`): storage root (setting or default

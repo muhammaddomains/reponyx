@@ -1,11 +1,11 @@
 # RepoNyx — Project Status
 
-Last updated: 2026-11-21 (Phase 8 Storage page built — see
-"Phase 8 — Storage page" below; Schedules + Repositories +
-Synchronization + Activity pages done the same day; Phase 6 /
-Phase 7 fixes verified + live end-to-end run on this VM — see
-"Phase 6 / Phase 7 fixes + re-verification" and "Live end-to-end
-run" below)
+Last updated: 2026-11-21 (Phase 8 Settings page built — all 6
+pages done; see "Phase 8 — Settings page" below; Schedules +
+Repositories + Synchronization + Activity + Storage pages done
+the same day; Phase 6 / Phase 7 fixes verified + live end-to-end
+run on this VM — see "Phase 6 / Phase 7 fixes + re-verification"
+and "Live end-to-end run" below)
 
 ## Current phase
 
@@ -20,17 +20,46 @@ writing — see "Phase 6 / Phase 7 fixes + re-verification" below).
 Phase 7 — Scheduler and Background Agent — scheduler crate verified
 2026-11-19; agent, IPC, tray, and Agent page code landed 2026-11-21
 and were fixed and verified the same day (same section).**
-**Phase 8 — Desktop UI — started 2026-11-21: the Schedules,
-Repositories, Synchronization, Activity, and Storage pages are
-built (see "Phase 8 — Schedules page", "Phase 8 — Repositories
-page", "Phase 8 — Synchronization page", "Phase 8 — Activity
-page", and "Phase 8 — Storage page" below); Settings is still a
-placeholder.** The desktop Rust wiring is verified by `cargo fmt`
-+ review only (the gdk blocker); the real desktop compile check
-is the user's Windows build. Remaining honest gaps are listed in
-the fixes section. Work is on `main` going forward.
+**Phase 8 — Desktop UI — started 2026-11-21: all six pages are
+built (Schedules, Repositories, Synchronization, Activity,
+Storage, and Settings — see the "Phase 8" sections below).**
+The desktop Rust wiring is verified by `cargo fmt` + review
+only (the gdk blocker); the real desktop compile check is the
+user's Windows build. Remaining honest gaps are listed in the
+fixes section. Work is on `main` going forward.
 
 ## Completed tasks
+
+- **Phase 8 — Settings page (actual, 2026-11-21, assistant,
+  uncommitted at the time of writing):** the sixth and last
+  Phase 8 page — all sections are now real. General: theme
+  (System/Light/Dark, `ui.theme`, applied at startup via the
+  class-based dark variant already in `styles/index.css`). Sync:
+  default sync mode for newly discovered repositories and
+  concurrent syncs 1–10. Storage: archive root, with a warning
+  that existing archives stay put and the change applies after
+  the agent restarts. Advanced is read-only (app version, data
+  directory, paired device identifier). Two new Tauri commands
+  in `apps/desktop/src-tauri/src/settings.rs`; only four keys
+  are writable and each value is validated before it is stored.
+  Two settings that nothing consumed are now real: discovery
+  reads `sync.default_mode` for new rows (existing rows keep
+  theirs — new test
+  `discovery_new_rows_use_default_sync_mode_setting`), and the
+  frontend applies `ui.theme` on startup. The page also exposed
+  a real bug (fixed in the same commit): pairing stored the
+  per-machine id only under `device_identifier`, but the agent's
+  credential resolver reads `device.identifier` — a key nothing
+  ever wrote — so GitHub App accounts failed every job in the
+  agent even after pairing succeeded. `complete_pairing_command`
+  now persists `device.identifier` too. Verified: fmt pass,
+  clippy 0 warnings, `cargo test` 338 passed / 0 failed (was
+  337, +1 discovery test; one earlier full run showed a single
+  transient failure that did not reproduce in 3 subsequent full
+  runs or 3 runs of the two known timing-sensitive git-engine
+  suites), typecheck + desktop build + eslint pass. The new
+  desktop Rust is verified by `cargo fmt` + review only (gdk
+  blocker) — the CI windows-build job is its first real compile.
 
 - **Phase 8 — Storage page (actual, 2026-11-21, assistant,
   uncommitted at the time of writing):** the fifth Phase 8 page.

@@ -1,6 +1,6 @@
 # Phase 8 — Desktop Interface
 
-- Status: Started 2026-11-21 — Schedules + Repositories + Synchronization + Activity + Storage pages done; Settings remains
+- Status: Started 2026-11-21 — all 6 pages done (Schedules, Repositories, Synchronization, Activity, Storage, Settings); notifications + frontend tests + virtualization remain
 - Depends on: Phases 2–7 (features land as their backends do)
 
 ## Objectives
@@ -57,6 +57,18 @@ Activity, Storage, Settings (+ notifications, system tray).
       (sizes on a blocking thread). Read-only in v1 — no delete
       action. Verified: fmt + clippy 0 warnings + 337 tests pass
       + typecheck + desktop build + eslint pass.
+- [x] Settings page (2026-11-21): General (theme, applied at
+      startup), Sync (default mode for newly discovered repos,
+      concurrent syncs 1–10), Storage (archive root, with the
+      no-move warning), read-only Advanced (version, data dir,
+      paired device). Two Tauri commands in `settings.rs` (only
+      4 keys writable, values validated). Discovery now reads
+      `sync.default_mode` for new rows (new test); the frontend
+      applies `ui.theme`. Also fixed in the same commit: pairing
+      never persisted `device.identifier`, so GitHub App accounts
+      failed in the agent even after pairing — it is now saved on
+      pairing. Verified: fmt + clippy 0 warnings + 338 tests pass
+      + typecheck + desktop build + eslint pass.
 - [ ] Wire each remaining section to real Tauri commands
 - [ ] Repository list virtualization + bulk selection (bulk
       selection done 2026-11-21; true virtualization deferred — the
@@ -65,6 +77,12 @@ Activity, Storage, Settings (+ notifications, system tray).
       the Synchronization page; live progress bars still need IPC
       progress forwarding)
 - [ ] Settings sections (General, Auth, Repos, Sync, Storage, Background, Advanced)
+      — General, Sync, Storage, and Advanced (read-only) done
+      2026-11-21 on the Settings page. Auth lives on the Accounts
+      page; Repos on the Repositories page; Background on the
+      Agent page. There is no single page with all seven sections
+      — the sections are distributed across the pages that own
+      them.
 - [ ] Notifications + tray menu
 
 ## Dependencies
@@ -94,13 +112,17 @@ All prior phases.
 - The Storage page is read-only in v1 — no delete action for local
   archives (destructive; needs its own confirm flow). Sizes are
   measured on demand, not polled.
-- The new storage commands are verified by `cargo fmt` + review
-  only on this VM (gdk blocker); the CI windows-build job is their
-  first real compile.
+- The new storage and settings commands are verified by `cargo fmt`
+  + review only on this VM (gdk blocker); the CI windows-build job
+  is their first real compile.
+- One full test run during the Settings build showed a single
+  transient failure that did not reproduce in 3 subsequent full
+  runs (338/0) or 3 runs of the two known timing-sensitive
+  git-engine suites — unidentified, treated as a flake.
 
 ## Completion status
 
-Started 2026-11-21. Schedules, Repositories, Synchronization,
-Activity, and Storage pages done and verified (fmt + clippy 0
-warnings + 337 tests pass + typecheck + desktop build + eslint
-pass). Settings still a placeholder.
+Started 2026-11-21. All six pages done and verified (fmt + clippy
+0 warnings + 338 tests pass + typecheck + desktop build + eslint
+pass). Remaining: notifications + tray menu, frontend tests, and
+true list virtualization for Repositories.

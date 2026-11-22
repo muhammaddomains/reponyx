@@ -333,3 +333,13 @@ export interface StorageOverview {
   storedRepositoryCount: number;
   repositories: StoredRepository[];
 }
+
+export interface Settings {
+  defaultSyncMode: string | null;
+  concurrency: number | null;
+  storageRoot: string | null;
+  theme: string | null;
+  deviceIdentifier: string | null;
+  dataDir: string;
+  appVersion: string;
+}

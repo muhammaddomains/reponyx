@@ -28,6 +28,7 @@ import {
   providerAccountInfoSchema,
   repositorySchema,
   scheduleWithNextRunSchema,
+  settingsSchema,
   storageOverviewSchema,
   syncHistorySchema,
   syncJobSchema,
@@ -52,6 +53,7 @@ import type {
   ProviderAccountInfo,
   Repository,
   ScheduleWithNextRun,
+  Settings,
   StorageOverview,
   SyncHistory,
   SyncJob,
@@ -408,6 +410,20 @@ export async function getStorageOverview(): Promise<StorageOverview> {
 
 export async function openStorageRoot(): Promise<void> {
   await invokeCommand("open_storage_root_command");
+}
+
+/** Phase 8 Settings commands (Tauri `settings.rs`). Only the four
+ *  keys the Settings page offers are writable; the backend
+ *  validates each value before storing it. */
+
+export async function getSettings(): Promise<Settings> {
+  return settingsSchema.parse(await invokeCommand("get_settings_command"));
+}
+
+export async function setSetting(key: string, value: string): Promise<string> {
+  return z
+    .string()
+    .parse(await invokeCommand("set_setting_command", { key, value }));
 }
 
 /** Phase 7 background-agent commands (Tauri `agent.rs`). The agent

@@ -4,9 +4,9 @@ import Accounts from "./routes/Accounts";
 import Activity from "./routes/Activity";
 import Agent from "./routes/Agent";
 import Overview from "./routes/Overview";
-import Placeholder from "./routes/Placeholder";
 import Repositories from "./routes/Repositories";
 import Schedules from "./routes/Schedules";
+import Settings from "./routes/Settings";
 import Storage from "./routes/Storage";
 import Synchronization from "./routes/Synchronization";
 
@@ -23,10 +23,7 @@ export default function App() {
           <Route path="schedules" element={<Schedules />} />
           <Route path="activity" element={<Activity />} />
           <Route path="storage" element={<Storage />} />
-          <Route
-            path="settings"
-            element={<Placeholder title="Settings" phase={8} />}
-          />
+          <Route path="settings" element={<Settings />} />
         </Route>
       </Routes>
     </HashRouter>

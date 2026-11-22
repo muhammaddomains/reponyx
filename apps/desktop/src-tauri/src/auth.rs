@@ -507,6 +507,12 @@ pub async fn complete_pairing_command(
             set_pairing_status(&database.pool, device.id, DevicePairingStatus::Paired).await?;
         }
     }
+    // Persist the device identifier under the key the agent's
+    // credential resolver reads (`device.identifier`). Without this,
+    // GitHub App accounts fail in the agent with "requires a paired
+    // device identifier" even though pairing succeeded — the resolver
+    // never sees the id generated here under `device_identifier`.
+    set_setting(&database.pool, "device.identifier", &device_id).await?;
     // Validate against GitHub with the freshly minted token and
     // create (or reconnect) the account row.
     let source = BrokerTokenSource::new(&auth.broker_base_url, &installation_id, &device_token)?;

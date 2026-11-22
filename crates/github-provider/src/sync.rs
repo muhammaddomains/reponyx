@@ -18,6 +18,7 @@ use reponyx_database::installations::{NewInstallation, upsert_installation};
 use reponyx_database::repositories::{
     RepositoryFilter, UpsertRepository, list_repositories, upsert_repository,
 };
+use reponyx_database::settings::get_setting;
 use reponyx_provider_abstractions::DiscoveredRepository;
 use sqlx::SqlitePool;
 use std::collections::HashSet;
@@ -40,8 +41,9 @@ pub struct SyncDiscoveryOutcome {
 /// Consume a discovery stream (see `GitHubProvider::discover_all_stream`)
 /// and upsert every repository into the `repositories` table for
 /// `account_id`, page by page. New rows get `sync_enabled = true` and
-/// `sync_mode = mirror` (the product defaults); existing rows keep
-/// their local state.
+/// the default sync mode (from the `sync.default_mode` setting —
+/// `mirror` when unset or unparsable); existing rows keep their
+/// local state.
 ///
 /// The stream is consumed until it closes; a stream error aborts the
 /// sync and is returned (rows already upserted stay — upserts are
@@ -53,11 +55,13 @@ pub async fn sync_discovered_repositories(
 ) -> Result<SyncDiscoveryOutcome, RepoNyxError> {
     let mut outcome = SyncDiscoveryOutcome::default();
     let mut seen: HashSet<String> = HashSet::new();
+    let default_mode = default_sync_mode(pool).await;
     while let Some(page) = stream.recv().await {
         let page = page?;
         for discovered in page {
             seen.insert(discovered.provider_repository_id.clone());
-            let (_, created) = upsert_repository(pool, to_upsert(account_id, &discovered)).await?;
+            let (_, created) =
+                upsert_repository(pool, to_upsert(account_id, &discovered, default_mode)).await?;
             if created {
                 outcome.created += 1;
             } else {
@@ -81,7 +85,11 @@ pub async fn sync_discovered_repositories(
     Ok(outcome)
 }
 
-fn to_upsert(account_id: Uuid, discovered: &DiscoveredRepository) -> UpsertRepository {
+fn to_upsert(
+    account_id: Uuid,
+    discovered: &DiscoveredRepository,
+    default_mode: SyncMode,
+) -> UpsertRepository {
     UpsertRepository {
         account_id,
         provider_repository_id: discovered.provider_repository_id.clone(),
@@ -93,9 +101,24 @@ fn to_upsert(account_id: Uuid, discovered: &DiscoveredRepository) -> UpsertRepos
         // Defaults for newly inserted rows only; the upsert leaves
         // these columns alone on existing rows.
         sync_enabled: true,
-        sync_mode: SyncMode::Mirror,
+        sync_mode: default_mode,
         local_path: None,
         remote_updated_at: discovered.remote_updated_at,
+    }
+}
+
+/// Default sync mode for newly discovered repositories, from the
+/// `sync.default_mode` setting. Missing or unparsable values fall
+/// back to `Mirror` (the product default) rather than failing
+/// discovery.
+async fn default_sync_mode(pool: &SqlitePool) -> SyncMode {
+    match get_setting(pool, "sync.default_mode").await {
+        Ok(Some(setting)) => match setting.value.trim() {
+            "working" => SyncMode::Working,
+            "both" => SyncMode::Both,
+            _ => SyncMode::Mirror,
+        },
+        _ => SyncMode::Mirror,
     }
 }
 

@@ -16,10 +16,9 @@ fixed + verified the same day — see `ai/memory/PROJECT_STATUS.md`,
 Scheduler and Background Agent (scheduler crate verified complete
 2026-11-19; agent, IPC, tray, and Agent page code landed 2026-11-21,
 fixed + verified the same day); Phase 8 — Desktop UI (started
-2026-11-21: Schedules, Repositories, Synchronization, and Activity
-pages built + pushed, see `ai/memory/PROJECT_STATUS.md`, "Phase 8 —
-Schedules page", "Phase 8 — Repositories page", "Phase 8 —
-Synchronization page", and "Phase 8 — Activity page"). See
+2026-11-21: all six pages built + pushed — Schedules, Repositories,
+Synchronization, Activity, Storage, Settings — see
+`ai/memory/PROJECT_STATUS.md`, "Phase 8 — Settings page"). See
 `ai/memory/PROJECT_STATUS.md` for the honest current state.
 
 ## Branch & safety

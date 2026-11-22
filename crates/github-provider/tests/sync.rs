@@ -15,6 +15,7 @@ use reponyx_database::installations::list_installations_for_account;
 use reponyx_database::repositories::{
     NewRepository, RepositoryFilter, create_repository, list_repositories,
 };
+use reponyx_database::settings::set_setting;
 use reponyx_github_provider::sync::{discover_and_sync, sync_installations};
 use serde_json::json;
 use sqlx::SqlitePool;
@@ -152,6 +153,41 @@ async fn discovery_upsert_preserves_local_state_and_reports_not_seen() {
     // The unseen row is untouched.
     let unseen = repos.iter().find(|r| r.id == unseen_id).unwrap();
     assert_eq!(unseen.full_name, "octocat/vanished");
+}
+
+#[tokio::test]
+async fn discovery_new_rows_use_default_sync_mode_setting() {
+    let (_dir, pool) = open_test_db().await;
+    let account_id = make_account(&pool, "octocat").await;
+    set_setting(&pool, "sync.default_mode", "working")
+        .await
+        .unwrap();
+
+    let server = MockServer::start().await;
+    let provider = provider_for(&server);
+    mount_sequence(
+        &server,
+        "/user/repos",
+        vec![ResponseTemplate::new(200).set_body_json(json!([repo_json(1, "octocat", "alpha")]))],
+    )
+    .await;
+
+    let outcome = discover_and_sync(&pool, account_id, provider.discover_all_stream())
+        .await
+        .unwrap();
+    assert_eq!(outcome.created, 1);
+
+    let repos = list_repositories(
+        &pool,
+        RepositoryFilter {
+            account_id: Some(account_id),
+            ..RepositoryFilter::default()
+        },
+    )
+    .await
+    .unwrap();
+    assert_eq!(repos.len(), 1);
+    assert_eq!(repos[0].sync_mode, SyncMode::Working);
 }
 
 #[tokio::test]

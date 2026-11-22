@@ -37,7 +37,15 @@ dialogs, 2 Tauri commands, Settings page section, `cargo test`
 server-side pagination for repositories + jobs, bounded
 repository-name lookups, measured before/after at 1,000 repos /
 10,000 jobs, `cargo test` 404 passed / 0 failed; Phase 9
-complete). See
+complete). Phase 10 — Security, QA and Release (started
+2026-11-22: security audit first pass — threat-model review
+with 3 findings recorded, dependency audits run for the first
+time, V1→V4 + V3→V4 migration upgrade tests, failure-recovery
+inventory, README rewritten — `cargo test` 406 passed /
+0 failed; Windows verification items, durable broker storage
+(F1), and the key-rotation runbook (F3) still open — see
+`ai/memory/PROJECT_STATUS.md`, "Phase 10 — Security audit,
+first pass"). See
 `ai/memory/PROJECT_STATUS.md` for the honest current state.
 
 ## Branch & safety

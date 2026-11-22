@@ -5,6 +5,48 @@ All notable changes to RepoNyx are documented here. Format follows
 
 ## [Unreleased]
 
+### Added — Phase 10 security audit, first pass (2026-11-22)
+
+- Database upgrade tests: a V1 database (built from the real
+  `0001_init.sql`, seeded with V1-shape rows) upgrades to the
+  latest schema with its data intact, and a V3 database upgrades
+  to V4 with the new dedupe index working on new rows
+  (`crates/database/tests/migrations.rs`).
+- Failure-recovery inventory (`docs/qa/failure-recovery.md`):
+  every planned failure scenario mapped to the test that proves
+  it, with the three honest gaps named (no real process-kill
+  test, no mid-transfer network loss, no Windows failure tests).
+- README rewritten: it still said "Phase 1" and listed the Auth
+  Broker, background agent, and most crates as "not yet created".
+  It now describes the app as built, with a first-run user guide,
+  data locations, and the security notes users must read
+  (BitLocker, hooks in working clones, broker restarts lose
+  pairing).
+
+### Security — Phase 10 threat-model review (2026-11-22)
+
+- `docs/security/threat-model.md` was re-checked mitigation by
+  mitigation against the code after Phase 9. Three findings are
+  recorded there: F1 — the Auth Broker keeps installations,
+  pairing codes, device tokens, and its audit log in memory only,
+  so a broker restart loses all of them and devices must re-pair
+  (durable broker storage is the open fix); F2 — the Windows named
+  pipe has no ACL configured, so the per-install IPC token check is
+  the only gate (impact bounded by the same-user boundary); F3 —
+  no key-rotation / incident runbook exists yet. Two overstatements
+  were corrected: IPC protection is the per-install shared secret,
+  and the IPC protocol has no delete operation, so destructive
+  actions are UI-only.
+- Dependency audits run for the first time: `pnpm audit` found no
+  known vulnerabilities; `cargo audit` (661 crates) found one
+  vulnerability — `url` 2.5.8, RUSTSEC-2026-0592 (stack overflow
+  in `Url::origin()` on nested `blob:` URLs) — fixed the same day
+  by bumping `url` to 2.5.9. Re-run: 0 vulnerabilities, 7 warnings
+  with no available fix (chrono + chrono-tz unmaintained,
+  proc-macro-error unmaintained, zbus_names / zvariant /
+  zvariant_derive unmaintained, glib 0.18.5 unsound — its fix needs
+  glib ≥ 0.20, blocked by Tauri's pinned gtk 0.18 chain).
+
 ### Added — Phase 9 performance pass (2026-11-22)
 
 - List queries are now paginated server-side, measured before

@@ -1,8 +1,9 @@
 # RepoNyx — Project Status
 
-Last updated: 2026-11-22 (Phase 9 performance pass built — see
-"Phase 9 — Performance pass" below; Phase 9 now complete;
-CI on `e58af64` fully green; Phase 9 import/export built — see
+Last updated: 2026-11-22 (Phase 10 started — see "Phase 10 —
+Security audit (first pass)" below; Phase 9 performance pass built
+— see "Phase 9 — Performance pass" below; Phase 9 now complete;
+CI on `0c1112f` fully green; Phase 9 import/export built — see
 "Phase 9 — Import/export" below;
 Phase 9 diagnostics export + DB backup built — see "Phase 9 —
 Diagnostics export + DB backup" below;
@@ -135,6 +136,78 @@ fixes section. Work is on `main` going forward.
   shows `submodule_sync` operations.
   Still open in Phase 9: performance pass (now done — see the
   entry below).
+
+- **Phase 10 — Security audit, first pass (actual, 2026-11-22,
+  assistant, uncommitted at the time of writing):** Phase 10
+  started. Survey first: much of the plan was already in place
+  and was verified rather than rebuilt. CI pipeline: `ci.yml`
+  (fmt, clippy, tests, typecheck, lint, windows-build), `lint.yml`
+  (private-key scan), `security-audit.yml` (Semgrep), `codeql.yml`,
+  and `scheduled-maintenance.yml` (weekly `cargo audit` + `pnpm
+  audit`, also runnable on demand) — all green on the last four
+  pushes. Release workflow: tag-triggered, Windows NSIS + MSI,
+  signed updater artifacts; it will fail at signing until
+  `TAURI_SIGNING_PRIVATE_KEY` (+ password) are set in repo
+  secrets (user-side, still unknown). Performance test + report:
+  done in Phase 9 (measured at 1,000 repos / 10,000 jobs).
+  Failure-recovery tests: the coverage already existed scattered
+  across crates (expired/revoked tokens, network loss, rate
+  limits, real disk-full via `RLIMIT_FSIZE`, lease crash recovery,
+  corrupt repos incl. LFS, renames, remote deletion, cancel
+  mid-flight, concurrent writes) — now inventoried in
+  `docs/qa/failure-recovery.md`, which also names the three gaps
+  honestly (no real process-kill test, no mid-transfer network
+  loss, no Windows failure tests). What this pass built:
+  (1) **Dependency audits, run for the first time** — `pnpm audit`:
+  no known vulnerabilities. `cargo audit` (v0.23.0, 661 crates)
+  found one real vulnerability — `url` 2.5.8, RUSTSEC-2026-0592
+  (stack overflow in `Url::origin()` on nested `blob:` URLs,
+  reachable via reqwest in the broker + GitHub provider) — fixed
+  the same day by bumping `url` to 2.5.9 (`form_urlencoded`
+  1.2.2 → 1.2.3 alongside; Cargo.lock diff is 5 lines). Re-run:
+  0 vulnerabilities, 7 warnings with no available fix (chrono +
+  chrono-tz unmaintained, proc-macro-error unmaintained,
+  zbus_names/zvariant/zvariant_derive unmaintained, glib 0.18.5
+  unsound — its fix needs glib ≥ 0.20, blocked by Tauri's pinned
+  gtk 0.18 chain, and the affected `VariantStrIter` API is not
+  used by RepoNyx code). Note: the yanked-status checks timed out
+  against the registry in both runs, so yanked status was not
+  verified — the advisory scan itself completed. The weekly CI
+  job has never run yet (first scheduled run is Monday
+  2026-11-23). (2) **Threat-model review** —
+  `docs/security/threat-model.md` re-checked mitigation by
+  mitigation against the real code; three findings recorded:
+  F1 broker state is in-memory only (a restart loses
+  installations, pairing codes, device tokens, and the audit log —
+  devices must re-pair; durable broker storage is the open fix),
+  F2 the Windows named pipe has no ACL (the token check, not the
+  pipe, is the gate; same-user boundary bounds the impact), F3 no
+  key-rotation / incident runbook exists yet. Two doc overstatements
+  corrected: the IPC protection is the per-install shared secret
+  (`crates/ipc/src/auth.rs`), not "named-pipe ACLs", and the
+  protocol has no delete operation at all, so deletes are UI-only.
+  (3) **Migration upgrade tests** —
+  `crates/database/tests/migrations.rs`: a V1 database (built from
+  the real 0001 file, seeded with V1-shape rows) upgrades to V4
+  with data intact, and a V3 database upgrades to V4 with the new
+  dedupe index working on new rows. One real behaviour documented
+  by the test: pre-upgrade rows carry a NULL `dedupe_key`, so the
+  index does not retroactively dedupe them — the scheduler's
+  status-based check is what prevents those duplicates.
+  (4) **README rewritten** — it still said "Phase 1" and listed the
+  broker/agent/crates as "not yet created"; now current, with a
+  user guide (first run, data locations, backup before upgrade)
+  and the security notes users must read (BitLocker, hooks in
+  working clones, broker restarts lose pairing). (5) **Secret
+  scan re-run locally**: `scripts/check-no-private-key.sh` passed;
+  the binary half is skipped on this VM (no built desktop binary)
+  and remains a Windows item. Verified: fmt pass, clippy 0
+  warnings, `cargo test` 406 passed / 0 failed (was 404, +2),
+  typecheck + desktop build (3.12 s) + `pnpm lint` pass. Phase 10
+  remaining: the Windows verification items (installer, Task
+  Scheduler, Credential Manager, binary secret scan, real
+  process-kill test), durable broker storage (F1), the key-rotation
+  runbook (F3), and the first release itself.
 
 - **Phase 9 — Performance pass (actual, 2026-11-22, assistant,
   uncommitted at the time of writing):** the seventh and last

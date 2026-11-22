@@ -1,9 +1,21 @@
 //! Integration tests: migrations apply cleanly and counts work on a
 //! fresh database. Uses a temp file (not in-memory) so WAL mode is real.
+//!
+//! The upgrade tests below are the Phase 10 migration coverage: a
+//! database created at V1 (or V3) must upgrade to the latest schema
+//! with its data intact, because users upgrade the app in place and
+//! never rebuild their database by hand.
 
+use reponyx_core::JobType;
+use reponyx_database::jobs::{NewJob, create_job};
 use reponyx_database::open_database;
+use reponyx_database::repositories::{RepositoryFilter, list_repositories};
 use sqlx::Row;
+use sqlx::migrate::Migrator;
+use sqlx::sqlite::SqlitePoolOptions;
+use std::path::Path;
 use tempfile::tempdir;
+use uuid::Uuid;
 
 #[tokio::test]
 async fn migrations_create_all_tables() {
@@ -85,4 +97,305 @@ async fn accounts_and_repositories_round_trip() {
     .execute(&db.pool)
     .await;
     assert!(bad.is_err(), "FK violation should be rejected");
+}
+
+/// Apply only the named migration files, via the runtime Migrator
+/// (the compile-time `migrate!` macro always applies everything).
+/// The repo migrations dir is resolved from the crate manifest so
+/// the test does not depend on the process working directory.
+async fn apply_migrations(pool: &sqlx::SqlitePool, files: &[&str]) {
+    let source = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../migrations/sqlite");
+    let dir = tempdir().unwrap();
+    for file in files {
+        std::fs::copy(source.join(file), dir.path().join(file)).unwrap();
+    }
+    Migrator::new(dir.path())
+        .await
+        .unwrap()
+        .run(pool)
+        .await
+        .unwrap();
+}
+
+/// Seed rows using only V1 columns, the way an early build wrote
+/// them: one account, two repositories, three jobs (pending,
+/// completed, failed with its error recorded), one global schedule,
+/// one history row. Ids are real UUIDs — the repository layer
+/// parses them — and are returned so the tests can address the rows.
+async fn seed_v1_rows(pool: &sqlx::SqlitePool) -> (Uuid, Uuid, Uuid) {
+    let account_id = Uuid::new_v4();
+    let repo_hello = Uuid::new_v4();
+    let repo_world = Uuid::new_v4();
+    sqlx::query(
+        "INSERT INTO accounts (id, provider, provider_account_id, username, authentication_method, created_at, updated_at)
+         VALUES (?, 'github', '123', 'octocat', 'fine_grained_pat', datetime('now'), datetime('now'))",
+    )
+    .bind(account_id.to_string())
+    .execute(pool)
+    .await
+    .unwrap();
+    for (id, provider_id, name) in [(repo_hello, "456", "hello"), (repo_world, "457", "world")] {
+        sqlx::query(
+            "INSERT INTO repositories (id, account_id, provider_repository_id, owner, name, full_name, clone_url, archive_status, sync_mode, created_at, updated_at)
+             VALUES (?, ?, ?, 'octocat', ?, ?, ?, 'synced', 'mirror', datetime('now'), datetime('now'))",
+        )
+        .bind(id.to_string())
+        .bind(account_id.to_string())
+        .bind(provider_id)
+        .bind(name)
+        .bind(format!("octocat/{name}"))
+        .bind(format!("https://github.com/octocat/{name}.git"))
+        .execute(pool)
+        .await
+        .unwrap();
+    }
+    for (repo, job_type, status, error_code) in [
+        (repo_hello, "fetch", "pending", None),
+        (repo_hello, "mirror_clone", "completed", None),
+        (repo_world, "fetch", "failed", Some("NetworkUnavailable")),
+    ] {
+        sqlx::query(
+            "INSERT INTO sync_jobs (id, repository_id, job_type, status, priority, attempt_count, error_code, created_at)
+             VALUES (?, ?, ?, ?, 1, 2, ?, datetime('now'))",
+        )
+        .bind(Uuid::new_v4().to_string())
+        .bind(repo.to_string())
+        .bind(job_type)
+        .bind(status)
+        .bind(error_code)
+        .execute(pool)
+        .await
+        .unwrap();
+    }
+    sqlx::query(
+        "INSERT INTO schedules (id, scope, interval_type, timezone, enabled, created_at, updated_at)
+         VALUES (?, 'global', 'interval_hours', 'UTC', 1, datetime('now'), datetime('now'))",
+    )
+    .bind(Uuid::new_v4().to_string())
+    .execute(pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO sync_history (id, repository_id, job_id, operation, result, started_at)
+         VALUES (?, ?, NULL, 'mirror_clone', 'success', datetime('now'))",
+    )
+    .bind(Uuid::new_v4().to_string())
+    .bind(repo_hello.to_string())
+    .execute(pool)
+    .await
+    .unwrap();
+    (account_id, repo_hello, repo_world)
+}
+
+async fn count(pool: &sqlx::SqlitePool, table: &str) -> i64 {
+    // Static queries per table: sqlx rejects dynamic SQL strings,
+    // and a table name cannot be a bound parameter.
+    let sql = match table {
+        "accounts" => "SELECT COUNT(*) AS n FROM accounts",
+        "repositories" => "SELECT COUNT(*) AS n FROM repositories",
+        "sync_jobs" => "SELECT COUNT(*) AS n FROM sync_jobs",
+        "schedules" => "SELECT COUNT(*) AS n FROM schedules",
+        "sync_history" => "SELECT COUNT(*) AS n FROM sync_history",
+        "settings" => "SELECT COUNT(*) AS n FROM settings",
+        _ => panic!("unknown table {table}"),
+    };
+    sqlx::query(sql)
+        .fetch_one(pool)
+        .await
+        .unwrap()
+        .get::<i64, _>("n")
+}
+
+/// A V1 database upgrades to the latest schema with its data
+/// intact — the in-place upgrade every existing install takes.
+#[tokio::test]
+async fn v1_database_upgrades_to_latest_with_data_intact() {
+    let dir = tempdir().unwrap();
+    let db_path = dir.path().join("reponyx.sqlite");
+    let pool = SqlitePoolOptions::new()
+        .connect(&format!("sqlite://{}?mode=rwc", db_path.display()))
+        .await
+        .unwrap();
+
+    apply_migrations(&pool, &["0001_init.sql"]).await;
+    let (account_id, repo_hello, _repo_world) = seed_v1_rows(&pool).await;
+
+    // The full migration set, exactly as the app runs it.
+    sqlx::migrate!("../../migrations/sqlite")
+        .run(&pool)
+        .await
+        .unwrap();
+
+    // All four migrations recorded, in order, by description.
+    let applied: Vec<String> =
+        sqlx::query("SELECT description FROM _sqlx_migrations ORDER BY version")
+            .fetch_all(&pool)
+            .await
+            .unwrap()
+            .into_iter()
+            .map(|r| r.get::<String, _>("description"))
+            .collect();
+    assert_eq!(
+        applied,
+        ["init", "unique full name", "pat expiry", "queue fields"]
+    );
+
+    // Data survived the jump.
+    assert_eq!(count(&pool, "accounts").await, 1);
+    assert_eq!(count(&pool, "repositories").await, 2);
+    assert_eq!(count(&pool, "sync_jobs").await, 3);
+    assert_eq!(count(&pool, "schedules").await, 1);
+    assert_eq!(count(&pool, "sync_history").await, 1);
+
+    // V4 columns exist, with the old rows' values preserved and
+    // the new columns at their defaults. The failed job is the one
+    // with error_code set (only job-3 in the seed carries one).
+    let job: (i64, Option<String>, Option<String>) = sqlx::query_as(
+        "SELECT attempt_count, available_at, dedupe_key FROM sync_jobs WHERE error_code = 'NetworkUnavailable'",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(job.0, 2, "attempt_count survives the upgrade");
+    assert!(job.1.is_none(), "available_at defaults to NULL");
+    assert!(job.2.is_none(), "dedupe_key defaults to NULL");
+
+    // V2's uniqueness now holds: a second row with the same
+    // full_name in the same account is rejected at the DB layer.
+    let dup = sqlx::query(
+        "INSERT INTO repositories (id, account_id, provider_repository_id, owner, name, full_name, clone_url, created_at, updated_at)
+         VALUES (?, ?, '999', 'octocat', 'hello', 'octocat/hello', 'https://github.com/octocat/hello.git', datetime('now'), datetime('now'))",
+    )
+    .bind(Uuid::new_v4().to_string())
+    .bind(account_id.to_string())
+    .execute(&pool)
+    .await;
+    assert!(
+        dup.is_err(),
+        "V2 unique full_name index must reject the duplicate"
+    );
+
+    // The V1 settings seed is still there.
+    assert_eq!(count(&pool, "settings").await, 4);
+
+    // The app's own functions work on the upgraded database:
+    // creating a job now writes a dedupe key, and listing works.
+    let repos = list_repositories(&pool, RepositoryFilter::default())
+        .await
+        .unwrap();
+    assert_eq!(repos.len(), 2);
+    let job = create_job(
+        &pool,
+        NewJob {
+            repository_id: repo_hello,
+            job_type: JobType::Fetch,
+            priority: 0,
+        },
+    )
+    .await
+    .unwrap();
+    let dedupe: Option<String> =
+        sqlx::query_scalar("SELECT dedupe_key FROM sync_jobs WHERE id = ?")
+            .bind(job.id.to_string())
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert!(
+        dedupe.as_deref() == Some(&format!("repo:{repo_hello}:fetch")),
+        "new jobs get a dedupe key after the upgrade"
+    );
+}
+
+/// A V3 database upgrades to V4, and the new partial unique index
+/// actually dedupes: two active jobs for the same repository and
+/// type cannot both exist afterwards.
+#[tokio::test]
+async fn v3_database_upgrades_to_v4_and_dedupes() {
+    let dir = tempdir().unwrap();
+    let db_path = dir.path().join("reponyx.sqlite");
+    let pool = SqlitePoolOptions::new()
+        .connect(&format!("sqlite://{}?mode=rwc", db_path.display()))
+        .await
+        .unwrap();
+
+    apply_migrations(
+        &pool,
+        &[
+            "0001_init.sql",
+            "0002_unique_full_name.sql",
+            "0003_pat_expiry.sql",
+        ],
+    )
+    .await;
+    let (account_id, _repo_hello, _repo_world) = seed_v1_rows(&pool).await;
+
+    sqlx::migrate!("../../migrations/sqlite")
+        .run(&pool)
+        .await
+        .unwrap();
+
+    // The V4 indexes exist.
+    let indexes: Vec<String> = sqlx::query(
+        "SELECT name FROM sqlite_master WHERE type='index' AND name LIKE 'idx_sync_jobs%'",
+    )
+    .fetch_all(&pool)
+    .await
+    .unwrap()
+    .into_iter()
+    .map(|r| r.get::<String, _>("name"))
+    .collect();
+    for expected in [
+        "idx_sync_jobs_dedupe_active",
+        "idx_sync_jobs_available_at",
+        "idx_sync_jobs_lease_running",
+    ] {
+        assert!(
+            indexes.contains(&expected.to_string()),
+            "missing index {expected}"
+        );
+    }
+
+    // V3 added pat_expires_at; the column exists and is NULL for
+    // the old row.
+    let expiry: Option<String> =
+        sqlx::query_scalar("SELECT pat_expires_at FROM accounts WHERE id = ?")
+            .bind(account_id.to_string())
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert!(expiry.is_none());
+
+    // Dedupe: after the upgrade, two NEW active jobs for the same
+    // repository and type cannot both exist. (Rows written before
+    // the upgrade carry a NULL dedupe key, so the index does not
+    // retroactively dedupe them — the scheduler's status-based
+    // `has_active_job` check is what keeps those from duplicating;
+    // the index is the second line of defence for new rows.)
+    let repos = list_repositories(&pool, RepositoryFilter::default())
+        .await
+        .unwrap();
+    let repo_1 = repos.iter().find(|r| r.name == "hello").unwrap();
+    let first = create_job(
+        &pool,
+        NewJob {
+            repository_id: repo_1.id,
+            job_type: JobType::Fetch,
+            priority: 0,
+        },
+    )
+    .await;
+    assert!(first.is_ok(), "first post-upgrade fetch must succeed");
+    let dup = create_job(
+        &pool,
+        NewJob {
+            repository_id: repo_1.id,
+            job_type: JobType::Fetch,
+            priority: 0,
+        },
+    )
+    .await;
+    assert!(
+        dup.is_err(),
+        "V4 dedupe index must reject the second active fetch"
+    );
 }

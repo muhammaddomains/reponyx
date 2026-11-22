@@ -28,6 +28,7 @@ import {
   providerAccountInfoSchema,
   repositorySchema,
   scheduleWithNextRunSchema,
+  storageOverviewSchema,
   syncHistorySchema,
   syncJobSchema,
 } from "@reponyx/shared";
@@ -51,6 +52,7 @@ import type {
   ProviderAccountInfo,
   Repository,
   ScheduleWithNextRun,
+  StorageOverview,
   SyncHistory,
   SyncJob,
 } from "@reponyx/shared";
@@ -392,6 +394,20 @@ export async function listHistoryForRepository(
         limit: limit ?? null,
       }),
     );
+}
+
+/** Phase 8 Storage commands (Tauri `storage.rs`). Sizes are
+ *  computed on demand by the backend, so a first load can take a
+ *  moment on a large archive. */
+
+export async function getStorageOverview(): Promise<StorageOverview> {
+  return storageOverviewSchema.parse(
+    await invokeCommand("get_storage_overview_command"),
+  );
+}
+
+export async function openStorageRoot(): Promise<void> {
+  await invokeCommand("open_storage_root_command");
 }
 
 /** Phase 7 background-agent commands (Tauri `agent.rs`). The agent

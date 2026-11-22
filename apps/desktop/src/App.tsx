@@ -7,6 +7,7 @@ import Overview from "./routes/Overview";
 import Placeholder from "./routes/Placeholder";
 import Repositories from "./routes/Repositories";
 import Schedules from "./routes/Schedules";
+import Storage from "./routes/Storage";
 import Synchronization from "./routes/Synchronization";
 
 export default function App() {
@@ -21,10 +22,7 @@ export default function App() {
           <Route path="synchronization" element={<Synchronization />} />
           <Route path="schedules" element={<Schedules />} />
           <Route path="activity" element={<Activity />} />
-          <Route
-            path="storage"
-            element={<Placeholder title="Storage" phase={9} />}
-          />
+          <Route path="storage" element={<Storage />} />
           <Route
             path="settings"
             element={<Placeholder title="Settings" phase={8} />}

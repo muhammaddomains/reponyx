@@ -237,3 +237,27 @@ export const agentHealthSchema = z.object({
   status: agentStatusSchema.nullable().optional(),
   message: z.string(),
 });
+
+/** Phase 8 Storage DTOs: camelCase, matching the Tauri
+ *  `storage.rs` DTOs. */
+
+export const storedRepositorySchema = z.object({
+  repositoryId: z.string().uuid(),
+  accountId: z.string().uuid(),
+  fullName: z.string(),
+  localPath: z.string(),
+  bytes: z.number().int().nonnegative(),
+  lastSyncedAt: z.string().nullable(),
+});
+
+export const storageOverviewSchema = z.object({
+  root: z.string(),
+  rootConfigured: z.boolean(),
+  totalBytes: z.number().int().nonnegative().nullable(),
+  availableBytes: z.number().int().nonnegative().nullable(),
+  mirrorsBytes: z.number().int().nonnegative(),
+  databaseBytes: z.number().int().nonnegative(),
+  logsBytes: z.number().int().nonnegative(),
+  storedRepositoryCount: z.number().int().nonnegative(),
+  repositories: z.array(storedRepositorySchema),
+});

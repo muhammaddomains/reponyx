@@ -312,3 +312,24 @@ export interface AppInfo {
   version: string;
   description: string;
 }
+
+export interface StoredRepository {
+  repositoryId: string;
+  accountId: string;
+  fullName: string;
+  localPath: string;
+  bytes: number;
+  lastSyncedAt: string | null;
+}
+
+export interface StorageOverview {
+  root: string;
+  rootConfigured: boolean;
+  totalBytes: number | null;
+  availableBytes: number | null;
+  mirrorsBytes: number;
+  databaseBytes: number;
+  logsBytes: number;
+  storedRepositoryCount: number;
+  repositories: StoredRepository[];
+}

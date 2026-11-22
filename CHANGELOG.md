@@ -21,6 +21,22 @@ All notable changes to RepoNyx are documented here. Format follows
   list only the `rust` error — the `windows-build` job passed,
   so the run #32 desktop-compile fix is confirmed working in CI.
 
+### Added — Phase 8 Storage page (2026-11-21)
+
+- Storage page (`/storage`): storage root (setting or default
+  data dir) with an Open folder button, volume usage bar
+  (used/total/free via `fs2`), breakdown cards (mirrors, database
+  file, logs, stored total), and a per-repository list sorted by
+  size with account name, last synced, local path, and Open folder.
+  Sizes are measured on demand (Refresh button, no polling — a
+  large archive takes a moment to walk). New `storage` module in
+  `reponyx-git-engine` (`dir_size`: recursive, never follows
+  symlinks, missing paths are 0; `disk_usage` via `fs2`) with 5
+  unit tests, and two new Tauri commands in
+  `apps/desktop/src-tauri/src/storage.rs`. Read-only in v1: no
+  delete action — deleting a local archive is destructive and
+  needs its own confirm flow.
+
 ### Fixed — CI run #32 failures (2026-11-21)
 
 - `rust` job: `cancel_mirror_clone_leaves_diagnosable_destination`

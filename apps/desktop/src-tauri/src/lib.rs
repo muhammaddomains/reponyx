@@ -10,6 +10,7 @@ mod agent;
 mod auth;
 mod repositories;
 mod schedules;
+mod storage;
 mod synchronization;
 mod tray;
 mod commands {
@@ -133,6 +134,8 @@ pub fn run() {
             synchronization::cancel_sync_job_command,
             synchronization::list_recent_history_command,
             synchronization::list_history_for_repository_command,
+            storage::get_storage_overview_command,
+            storage::open_storage_root_command,
         ])
         .run(tauri::generate_context!())
         .expect("error while running RepoNyx");

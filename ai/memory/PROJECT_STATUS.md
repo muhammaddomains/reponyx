@@ -1,10 +1,11 @@
 # RepoNyx — Project Status
 
-Last updated: 2026-11-21 (Phase 8 Activity page built — see
-"Phase 8 — Activity page" below; Schedules + Repositories +
-Synchronization pages done the same day; Phase 6 / Phase 7 fixes
-verified + live end-to-end run on this VM — see "Phase 6 / Phase 7
-fixes + re-verification" and "Live end-to-end run" below)
+Last updated: 2026-11-21 (Phase 8 Storage page built — see
+"Phase 8 — Storage page" below; Schedules + Repositories +
+Synchronization + Activity pages done the same day; Phase 6 /
+Phase 7 fixes verified + live end-to-end run on this VM — see
+"Phase 6 / Phase 7 fixes + re-verification" and "Live end-to-end
+run" below)
 
 ## Current phase
 
@@ -20,16 +21,44 @@ Phase 7 — Scheduler and Background Agent — scheduler crate verified
 2026-11-19; agent, IPC, tray, and Agent page code landed 2026-11-21
 and were fixed and verified the same day (same section).**
 **Phase 8 — Desktop UI — started 2026-11-21: the Schedules,
-Repositories, Synchronization, and Activity pages are built (see
-"Phase 8 — Schedules page", "Phase 8 — Repositories page", "Phase 8
-— Synchronization page", and "Phase 8 — Activity page" below); the
-other pages (Storage, Settings) are still placeholders.** The
-desktop Rust wiring is verified by `cargo fmt` + review only (the
-gdk blocker); the real desktop compile check is the user's Windows
-build. Remaining honest gaps are listed in the fixes section.
-Work is on `main` going forward.
+Repositories, Synchronization, Activity, and Storage pages are
+built (see "Phase 8 — Schedules page", "Phase 8 — Repositories
+page", "Phase 8 — Synchronization page", "Phase 8 — Activity
+page", and "Phase 8 — Storage page" below); Settings is still a
+placeholder.** The desktop Rust wiring is verified by `cargo fmt`
++ review only (the gdk blocker); the real desktop compile check
+is the user's Windows build. Remaining honest gaps are listed in
+the fixes section. Work is on `main` going forward.
 
 ## Completed tasks
+
+- **Phase 8 — Storage page (actual, 2026-11-21, assistant,
+  uncommitted at the time of writing):** the fifth Phase 8 page.
+  It needed a backend first — no disk-usage code existed
+  anywhere. New `storage` module in `reponyx-git-engine`
+  (`dir_size`: recursive, never follows symlinks, missing paths
+  are 0; `disk_usage` via `fs2`) with 5 unit tests, and two new
+  Tauri commands in `apps/desktop/src-tauri/src/storage.rs`
+  (`get_storage_overview_command`, `open_storage_root_command`;
+  sizes computed on a blocking thread, off the async runtime).
+  The page shows the storage root (setting or default data dir)
+  with an Open folder button, a volume usage bar (used/total/
+  free), breakdown cards (mirrors, database file, logs, stored
+  total), and a per-repository list sorted by size with account
+  name, last synced, local path, and Open folder. Sizes are
+  measured on demand (Refresh button, no polling). Read-only in
+  v1: no delete action — deleting a local archive is destructive
+  and needs its own confirm flow. Two real bugs were caught by
+  review before committing (the desktop crate cannot compile on
+  this VM, so review is the check): `sqlx` is not a direct
+  desktop dependency (helper now takes `&Database`), and the
+  storage root was moved into the `spawn_blocking` closure and
+  then used again (now cloned for the scan). Verified: fmt pass,
+  clippy 0 warnings, `cargo test` 337 passed / 0 failed (was
+  332, +5 storage tests), typecheck + desktop build + eslint
+  pass. The new Rust commands are verified by `cargo fmt` +
+  review only (gdk blocker) — the CI windows-build job is their
+  first real compile.
 
 - **CI run #34 failure fixed (actual, 2026-11-21, assistant,
   uncommitted at the time of writing):** run #34 on commit

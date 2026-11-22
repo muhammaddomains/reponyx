@@ -119,7 +119,7 @@ fn parse_sync_mode(value: &str) -> CommandResult<SyncMode> {
 /// application. The target is passed as a single argument — never
 /// through a shell — so it cannot inject a command. Callers only
 /// ever pass values read from the database, never free user input.
-fn open_with_os_app(target: &str) -> CommandResult<()> {
+pub(crate) fn open_with_os_app(target: &str) -> CommandResult<()> {
     #[cfg(target_os = "windows")]
     let opener = "explorer";
     #[cfg(target_os = "macos")]

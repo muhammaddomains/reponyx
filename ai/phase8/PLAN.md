@@ -1,6 +1,6 @@
 # Phase 8 — Desktop Interface
 
-- Status: Started 2026-11-21 — Schedules + Repositories + Synchronization + Activity pages done; Storage + Settings remain
+- Status: Started 2026-11-21 — Schedules + Repositories + Synchronization + Activity + Storage pages done; Settings remains
 - Depends on: Phases 2–7 (features land as their backends do)
 
 ## Objectives
@@ -48,6 +48,15 @@ Activity, Storage, Settings (+ notifications, system tray).
       `synchronization.rs`. History is append-only; the page never
       edits it. Verified: fmt + clippy 0 warnings + 332 tests pass
       + typecheck + desktop build + eslint pass.
+- [x] Storage page (2026-11-21): storage root + Open folder,
+      volume usage bar (used/total/free), breakdown cards
+      (mirrors, database, logs, stored total), per-repository
+      list sorted by size. New `storage` module in
+      `reponyx-git-engine` (`dir_size`, `disk_usage` via `fs2`)
+      with 5 unit tests, and two Tauri commands in `storage.rs`
+      (sizes on a blocking thread). Read-only in v1 — no delete
+      action. Verified: fmt + clippy 0 warnings + 337 tests pass
+      + typecheck + desktop build + eslint pass.
 - [ ] Wire each remaining section to real Tauri commands
 - [ ] Repository list virtualization + bulk selection (bulk
       selection done 2026-11-21; true virtualization deferred — the
@@ -82,10 +91,16 @@ All prior phases.
 - Discovery has no progress indicator yet (full paged scan).
 - No frontend tests yet (the plan asks for them); pages are verified
   by typecheck + build + eslint only.
+- The Storage page is read-only in v1 — no delete action for local
+  archives (destructive; needs its own confirm flow). Sizes are
+  measured on demand, not polled.
+- The new storage commands are verified by `cargo fmt` + review
+  only on this VM (gdk blocker); the CI windows-build job is their
+  first real compile.
 
 ## Completion status
 
-Started 2026-11-21. Schedules, Repositories, Synchronization, and
-Activity pages done and verified (fmt + clippy 0 warnings + 332
-tests pass + typecheck + desktop build + eslint pass). Storage,
-Settings still placeholders.
+Started 2026-11-21. Schedules, Repositories, Synchronization,
+Activity, and Storage pages done and verified (fmt + clippy 0
+warnings + 337 tests pass + typecheck + desktop build + eslint
+pass). Settings still a placeholder.

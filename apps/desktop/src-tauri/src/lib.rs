@@ -8,6 +8,7 @@
 
 mod agent;
 mod auth;
+mod config;
 mod diagnostics;
 mod repositories;
 mod schedules;
@@ -87,6 +88,7 @@ pub fn run() {
     };
 
     tauri::Builder::default()
+        .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .manage(db_state)
         .manage(auth::AuthState::new())
@@ -152,6 +154,8 @@ pub fn run() {
             diagnostics::delete_database_backup_command,
             diagnostics::restore_database_backup_command,
             diagnostics::open_support_folder_command,
+            config::export_config_command,
+            config::import_config_command,
             settings::get_settings_command,
             settings::set_setting_command,
         ])

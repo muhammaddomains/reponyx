@@ -22,7 +22,6 @@ use crate::auth::{CommandResult, invalid_input, require_db};
 use reponyx_database::Database;
 use reponyx_database::settings::{get_setting, set_setting};
 use serde::Serialize;
-use std::path::Path;
 use tauri::State;
 
 // -- DTO (camelCase, matching the TypeScript type in
@@ -48,40 +47,13 @@ async fn setting_value(database: &Database, key: &str) -> CommandResult<Option<S
 
 /// Validate one writable setting before it is stored. Unknown keys
 /// are refused — callers can only write the four keys the Settings
-/// page offers.
+/// page offers. The rules live in `reponyx-database` (`config`)
+/// so the config import validates values the same way; this just
+/// maps the error into a command error.
 fn validate_setting(key: &str, value: &str) -> CommandResult<()> {
-    match key {
-        "sync.default_mode" => match value {
-            "mirror" | "working" | "both" => Ok(()),
-            _ => Err(invalid_input(format!(
-                "sync.default_mode must be mirror, working, or both (got {value})"
-            ))),
-        },
-        "sync.concurrency" => {
-            let parsed: i64 = value.parse().map_err(|_| {
-                invalid_input("sync.concurrency must be a whole number between 1 and 10")
-            })?;
-            if (1..=10).contains(&parsed) {
-                Ok(())
-            } else {
-                Err(invalid_input("sync.concurrency must be between 1 and 10"))
-            }
-        }
-        "storage.root" => {
-            if Path::new(value).is_absolute() {
-                Ok(())
-            } else {
-                Err(invalid_input("storage.root must be an absolute path"))
-            }
-        }
-        "ui.theme" => match value {
-            "system" | "light" | "dark" => Ok(()),
-            _ => Err(invalid_input(format!(
-                "ui.theme must be system, light, or dark (got {value})"
-            ))),
-        },
-        _ => Err(invalid_input(format!("unknown setting: {key}"))),
-    }
+    reponyx_database::config::validate_setting_value(key, value)
+        .map_err(|e| invalid_input(e.message.clone()))?;
+    Ok(())
 }
 
 // -- Commands ---------------------------------------------------------

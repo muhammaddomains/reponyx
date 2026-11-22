@@ -11,6 +11,7 @@
 
 pub mod accounts;
 pub mod audit;
+pub mod config;
 pub mod counts;
 pub mod devices;
 pub mod diagnostics;
@@ -24,6 +25,10 @@ pub mod settings;
 
 mod common;
 
+pub use config::{
+    ConfigFile, ConfigRepository, ConfigSchedule, ConfigSetting, ImportReport, SkippedRef,
+    apply_config_import, build_config_export, parse_config_file, validate_setting_value,
+};
 pub use counts::dashboard_counts;
 pub use diagnostics::{
     DiagnosticsCounts, backup_database, diagnostics_counts, is_safe_for_diagnostics,

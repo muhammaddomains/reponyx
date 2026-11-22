@@ -16,12 +16,14 @@ import {
   appInfoSchema,
   brokerInstallationSchema,
   brokerStatusSchema,
+  configExportSchema,
   dashboardCountsSchema,
   databaseBackupSchema,
   diagnosticsExportSchema,
   discoveryOutcomeSchema,
   effectiveScheduleSchema,
   gitStatusSchema,
+  importReportSchema,
   jobStatusCountSchema,
   materializeReportSchema,
   missingArchiveSchema,
@@ -46,12 +48,14 @@ import type {
   AppInfo,
   BrokerInstallation,
   BrokerStatus,
+  ConfigExport,
   DashboardCounts,
   DatabaseBackup,
   DiagnosticsExport,
   DiscoveryOutcome,
   EffectiveSchedule,
   GitStatus,
+  ImportReport,
   JobStatus,
   JobStatusCount,
   MaterializeReport,
@@ -510,6 +514,22 @@ export async function openSupportFolder(
   folder: "diagnostics" | "backups",
 ): Promise<void> {
   await invokeCommand("open_support_folder_command", { folder });
+}
+
+/** Phase 9 config export. Opens a Save dialog; `null` when the
+ *  user cancels it. */
+export async function exportConfig(): Promise<ConfigExport | null> {
+  return configExportSchema
+    .nullable()
+    .parse(await invokeCommand("export_config_command"));
+}
+
+/** Phase 9 config import. Opens an Open dialog; `null` when the
+ *  user cancels it. */
+export async function importConfig(): Promise<ImportReport | null> {
+  return importReportSchema
+    .nullable()
+    .parse(await invokeCommand("import_config_command"));
 }
 
 /** Phase 7 background-agent commands (Tauri `agent.rs`). The agent

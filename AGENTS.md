@@ -30,8 +30,10 @@ the same day — engine scan + safe delete, DB `set_local_path`,
 378 passed / 0 failed; diagnostics/backup built the same day —
 secret scan + log tail, `VACUUM INTO` backup + validation, 6
 Tauri commands, Settings page section, restore staged for the
-next startup, `cargo test` 395 passed / 0 failed; import/export,
-performance still open). See
+next startup, `cargo test` 395 passed / 0 failed; import/export
+built 2026-11-22 — versioned JSON config file, native file
+dialogs, 2 Tauri commands, Settings page section, `cargo test`
+402 passed / 0 failed; performance still open). See
 `ai/memory/PROJECT_STATUS.md` for the honest current state.
 
 ## Branch & safety

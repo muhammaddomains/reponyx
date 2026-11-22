@@ -30,7 +30,7 @@ diagnostics, backup tools, import/export, performance improvements.
 - [x] Both-mode completion (mirror + working clone)
 - [x] Storage management UI + orphan detection
 - [x] Diagnostics export + DB backup tools
-- [ ] Import/export
+- [x] Import/export
 - [ ] Performance pass with measurements
 
 ## Dependencies
@@ -100,4 +100,6 @@ Diagnostics export + DB backup done the same day (secret scan
 + validation in `reponyx-database`, 6 new Tauri commands,
 Settings page section, restore staged for the next startup;
 `cargo test` 395 passed / 0 failed).
-Remaining: import/export, performance.
+Import/export done 2026-11-22 (versioned JSON config file +
+native file dialogs + 7 tests; `cargo test` 402 passed /
+0 failed). Remaining: performance.

@@ -5,6 +5,23 @@ All notable changes to RepoNyx are documented here. Format follows
 
 ## [Unreleased]
 
+### Added — Phase 9 import/export (2026-11-22)
+
+- The Settings page has an Import & export section. Export writes
+  a versioned JSON config file (`reponyx-config`, version 1) with
+  the four non-secret settings, each repository's sync selection
+  (mode + enabled), and the schedules — never credentials, tokens,
+  local paths, or archive state. Both commands open a native file
+  dialog (Save for export, Open for import; `tauri-plugin-dialog`
+  v2). Import validates the whole file before writing anything, so
+  a malformed file changes nothing; entries for a repository or
+  account this machine does not have yet are skipped and listed in
+  the report. Identity across machines uses provider-stable ids
+  (`provider_repository_id`, `provider_account_id`), never local
+  UUIDs. The settings value validator is now the single source of
+  truth in `reponyx-database` (`config.rs`); the desktop Settings
+  validator delegates to it.
+
 ### Fixed — CI windows-build on the storage push (2026-11-22)
 
 - CI run 44976745886 (`eab7e23`) failed `cargo check -p

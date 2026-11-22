@@ -47,6 +47,7 @@ sha2 = "0.11"
 sqlx = { version = "0.9", features = ["sqlite", "runtime-tokio", "migrate", "chrono"] }
 tauri = { version = "2", features = ["tray-icon"] }
 tauri-build = "2"
+tauri-plugin-dialog = "2"
 tauri-plugin-updater = "2"
 tempfile = "3"
 thiserror = "2"

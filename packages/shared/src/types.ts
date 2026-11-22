@@ -405,3 +405,25 @@ export interface RestoreStaged {
   pendingPath: string;
   agentWasRunning: boolean;
 }
+
+/** The result of a config export (Phase 9). */
+export interface ConfigExport {
+  path: string;
+  bytes: number;
+}
+
+/** One entry a config import skipped (Phase 9). */
+export interface SkippedRef {
+  kind: string;
+  label: string;
+  reason: string;
+}
+
+/** What a config import did (Phase 9). */
+export interface ImportReport {
+  settingsApplied: number;
+  repositoriesApplied: number;
+  schedulesCreated: number;
+  schedulesUpdated: number;
+  skipped: SkippedRef[];
+}

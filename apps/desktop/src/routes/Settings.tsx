@@ -2,16 +2,20 @@ import { useCallback, useEffect, useState } from "react";
 import {
   createDatabaseBackup,
   deleteDatabaseBackup,
+  exportConfig,
   exportDiagnostics,
   getSettings,
+  importConfig,
   listDatabaseBackups,
   openSupportFolder,
   restoreDatabaseBackup,
   setSetting,
 } from "@reponyx/api-client";
 import type {
+  ConfigExport,
   DatabaseBackup,
   DiagnosticsExport,
+  ImportReport,
   Settings,
 } from "@reponyx/shared";
 import { Button, Card } from "@reponyx/ui";
@@ -60,7 +64,9 @@ const inputClass =
  *  the agent next starts). Storage: the archive root
  *  (`storage.root`). Advanced is read-only information.
  *  Diagnostics & backup (Phase 9) exports a redacted support file
- *  and manages consistent database snapshots. */
+ *  and manages consistent database snapshots. Import & export
+ *  (Phase 9) moves settings, repository sync choices, and
+ *  schedules to another machine in a versioned JSON file. */
 export default function Settings() {
   const [settings, setSettings] = useState<Settings | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -71,6 +77,9 @@ export default function Settings() {
   const [lastExport, setLastExport] = useState<DiagnosticsExport | null>(
     null,
   );
+  const [lastConfigExport, setLastConfigExport] =
+    useState<ConfigExport | null>(null);
+  const [lastImport, setLastImport] = useState<ImportReport | null>(null);
   const [diagBusy, setDiagBusy] = useState(false);
 
   const [theme, setTheme] = useState("system");
@@ -85,6 +94,7 @@ export default function Settings() {
     setMode(loaded.defaultSyncMode ?? "mirror");
     setConcurrency(String(loaded.concurrency ?? 5));
     setStorageRoot(loaded.storageRoot ?? "");
+    return loaded;
   }, []);
 
   const refreshBackups = useCallback(async () => {
@@ -212,6 +222,48 @@ export default function Settings() {
         `Restore staged. Quit RepoNyx completely and relaunch it to apply the backup. The current database is kept as a fallback.${staged.agentWasRunning ? " The background agent was stopped; it restarts when needed." : ""}`,
       );
       await refreshBackups();
+    } catch (e: unknown) {
+      setError(commandMessage(e));
+    } finally {
+      setDiagBusy(false);
+    }
+  }
+
+  async function handleExportConfig() {
+    setError(null);
+    setNotice(null);
+    setDiagBusy(true);
+    try {
+      const exported = await exportConfig();
+      if (exported) {
+        setLastConfigExport(exported);
+        setNotice(
+          `Config exported (${formatBytes(exported.bytes)}). It holds settings, repository sync choices, and schedules — no credentials and no archives.`,
+        );
+      }
+    } catch (e: unknown) {
+      setError(commandMessage(e));
+    } finally {
+      setDiagBusy(false);
+    }
+  }
+
+  async function handleImportConfig() {
+    setError(null);
+    setNotice(null);
+    setDiagBusy(true);
+    try {
+      const report = await importConfig();
+      if (report) {
+        setLastImport(report);
+        // Settings may have changed (including the theme), so
+        // reload the form and apply the theme right away.
+        const loaded = await refresh();
+        applyTheme(parseTheme(loaded.theme));
+        setNotice(
+          `Config imported: ${report.settingsApplied} settings, ${report.repositoriesApplied} repositories, ${report.schedulesCreated} schedules created, ${report.schedulesUpdated} updated.${report.skipped.length > 0 ? ` ${report.skipped.length} entries were skipped — see below.` : ""}`,
+        );
+      }
     } catch (e: unknown) {
       setError(commandMessage(e));
     } finally {
@@ -504,6 +556,64 @@ export default function Settings() {
                 </ul>
               )}
             </div>
+          </Card>
+
+          <Card className="space-y-4 p-4">
+            <h2 className="text-lg font-semibold">Import & export</h2>
+            <div className="space-y-2">
+              <p className="text-sm text-zinc-500">
+                A config file holds settings, each repository&apos;s
+                sync choice, and schedules — so a setup can move to
+                another machine. It never holds credentials, tokens,
+                or archives. Import checks the whole file first; a
+                bad file changes nothing. Entries for a repository or
+                account this machine does not have yet are skipped —
+                discover it or connect it, then import again.
+              </p>
+              <div className="flex flex-wrap items-center gap-3">
+                <Button
+                  variant="secondary"
+                  disabled={diagBusy}
+                  onClick={() => void handleExportConfig()}
+                >
+                  Export config
+                </Button>
+                <Button
+                  variant="secondary"
+                  disabled={diagBusy}
+                  onClick={() => void handleImportConfig()}
+                >
+                  Import config
+                </Button>
+              </div>
+              {lastConfigExport && (
+                <p className="truncate font-mono text-sm text-zinc-600 dark:text-zinc-400">
+                  {lastConfigExport.path}
+                </p>
+              )}
+            </div>
+            {lastImport && (
+              <div className="space-y-2">
+                <p className="text-sm">
+                  Imported: {lastImport.settingsApplied} settings,{" "}
+                  {lastImport.repositoriesApplied} repositories,{" "}
+                  {lastImport.schedulesCreated} schedules created,{" "}
+                  {lastImport.schedulesUpdated} updated.
+                </p>
+                {lastImport.skipped.length > 0 && (
+                  <ul className="space-y-1">
+                    {lastImport.skipped.map((entry) => (
+                      <li
+                        key={`${entry.kind}:${entry.label}`}
+                        className="text-sm text-zinc-500"
+                      >
+                        Skipped {entry.label} — {entry.reason}
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </div>
+            )}
           </Card>
         </>
       )}

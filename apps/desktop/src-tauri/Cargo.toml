@@ -25,6 +25,7 @@ reponyx-sync-queue.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 tauri.workspace = true
+tauri-plugin-dialog.workspace = true
 tauri-plugin-updater.workspace = true
 tokio.workspace = true
 tracing.workspace = true

@@ -328,3 +328,22 @@ export const restoreStagedSchema = z.object({
   pendingPath: z.string(),
   agentWasRunning: z.boolean(),
 });
+
+export const configExportSchema = z.object({
+  path: z.string(),
+  bytes: z.number().int().nonnegative(),
+});
+
+export const skippedRefSchema = z.object({
+  kind: z.string(),
+  label: z.string(),
+  reason: z.string(),
+});
+
+export const importReportSchema = z.object({
+  settingsApplied: z.number().int().nonnegative(),
+  repositoriesApplied: z.number().int().nonnegative(),
+  schedulesCreated: z.number().int().nonnegative(),
+  schedulesUpdated: z.number().int().nonnegative(),
+  skipped: z.array(skippedRefSchema),
+});

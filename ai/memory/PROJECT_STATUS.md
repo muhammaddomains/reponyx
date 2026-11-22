@@ -1,7 +1,9 @@
 # RepoNyx — Project Status
 
-Last updated: 2026-11-21 (Phase 9 diagnostics export + DB backup
-built — see "Phase 9 — Diagnostics export + DB backup" below;
+Last updated: 2026-11-22 (Phase 9 import/export built — see
+"Phase 9 — Import/export" below; CI on `170a0b5` fully green;
+Phase 9 diagnostics export + DB backup built — see "Phase 9 —
+Diagnostics export + DB backup" below;
 storage management + orphan detection built the same day;
 submodules + Both-mode completion built the same day; LFS sync
 built the same day; Phase 8 Settings page built — all 6 pages
@@ -129,7 +131,47 @@ fixes section. Work is on `main` going forward.
   in this step — the Synchronization page already lists
   SubmoduleSync/WorkingClone jobs and the Activity page already
   shows `submodule_sync` operations.
-  Still open in Phase 9: import/export, performance pass.
+  Still open in Phase 9: performance pass.
+
+- **Phase 9 — Import/export (actual, 2026-11-22, assistant,
+  uncommitted at the time of writing):** the sixth Phase 9 task.
+  A versioned JSON config file (`reponyx-config`, version 1)
+  moves a setup to another machine: the four non-secret settings,
+  each repository's sync selection (mode + enabled), and the
+  schedules. It never holds credentials, tokens, local paths, or
+  archive state. Identity across machines uses provider-stable
+  ids, never local UUIDs — repositories match by
+  `provider_repository_id`, accounts by (`provider`,
+  `provider_account_id`); `next_run_at` is never stored, it is
+  recomputed from the cadence on import the same way creating a
+  schedule computes it. Import is validated before anything is
+  written (format marker, version, settings values, schedule
+  shapes, every schedule's cadence/timezone), so a malformed file
+  refuses the whole import; entries whose repository or account
+  does not exist on this machine are skipped and reported, not
+  errors. Both commands open a native file dialog
+  (`tauri-plugin-dialog` v2, `dialog:default` capability — Save
+  for export, Open for import; cancelling returns nothing). The
+  format, export, parse, and apply logic lives in a new
+  `reponyx-database` module (`config.rs`, 7 new tests incl. a
+  fresh-DB round-trip, skip reporting, and an atomicity test
+  proving a bad cadence writes nothing). The settings value
+  validator moved there too, as the single source of truth, and
+  the desktop `validate_setting` now delegates to it. The
+  `next_run` computation lives in `reponyx-scheduler`, which the
+  database crate cannot depend on, so apply takes it as a
+  callback — the desktop passes the real `next_run`, tests pass a
+  stub. The Settings page has a new Import & export section with
+  the report (applied counts + skipped entries); after an import
+  the form reloads and the theme applies right away. Verified:
+  fmt pass, clippy 0 warnings, `cargo test` 402 passed / 0
+  failed (was 395, +7), typecheck + desktop build (2.79 s) +
+  eslint pass. Desktop Rust is fmt + review only (gdk blocker),
+  as usual; the dialog plugin's Rust API
+  (`blocking_pick_file` / `blocking_save_file`, `FilePath`
+  variants) was checked against the published docs before
+  writing, and the capability + plugin wiring follows the
+  updater's pattern exactly.
 
 - **Phase 9 — Diagnostics export + DB backup (actual,
   2026-11-21, assistant, uncommitted at the time of writing):**

@@ -27,6 +27,7 @@ pub mod process;
 pub mod progress;
 pub mod refs;
 pub mod storage;
+pub mod submodule;
 pub mod working;
 
 pub use commands::{GitCommand, build_clone_mirror, build_fetch, build_ls_remote};

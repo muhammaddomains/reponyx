@@ -1,6 +1,7 @@
 # Phase 9 — Advanced Features
 
-- Status: In progress — LFS sync + verification done 2026-11-21
+- Status: In progress — LFS sync + verification, submodule sync,
+  and Both-mode completion done 2026-11-21
 - Depends on: Phases 3, 6, 7, 8
 
 ## Objectives
@@ -25,7 +26,8 @@ diagnostics, backup tools, import/export, performance improvements.
 ## Implementation tasks
 
 - [x] LFS sync + verification
-- [ ] Submodule sync
+- [x] Submodule sync
+- [x] Both-mode completion (mirror + working clone)
 - [ ] Storage management UI + orphan detection
 - [ ] Diagnostics export + DB backup tools
 - [ ] Import/export
@@ -47,12 +49,15 @@ Phases 3, 6–8.
 
 ## Known issues
 
-- Submodule sync is still rejected (`SubmoduleSync` jobs fail
-  with `InvalidInput`, "not supported yet").
-- Both-mode repos never get a working clone: the scheduler only
-  creates `MirrorClone` jobs for them, and `run_mirror_clone`
-  builds the mirror only. `run_fetch` already fetches both sides
-  when both exist.
+- Relative submodule URLs are resolved against the mirror's
+  origin URL with git's own rule (the full origin URL is the
+  base: `../x` consumes the superproject's last segment, `./x`
+  does not); a raw `git fetch <relative-url>` would resolve
+  against the process cwd instead, so the engine resolves it
+  first (see `submodule.rs`, `resolve_submodule_url`).
+- The working-clone layout is
+  `<root>/working-clones/<account>/<owner>/<name>` — no `github`
+  segment, unlike the mirror path.
 - `git lfs fetch` silently skips an object file that merely
   exists, even when corrupt — the engine deletes provably-corrupt
   objects before fetching so they re-download (see `lfs.rs`).
@@ -64,5 +69,7 @@ Phases 3, 6–8.
 
 LFS sync + verification done 2026-11-21 (engine module +
 runner wiring + 5 fixture tests; `cargo test` 352 passed /
-0 failed). Remaining: submodules, Both modes, storage
+0 failed). Submodule sync + Both-mode completion done the same
+day (engine `submodule` module + runner wiring + 9 fixture
+tests; `cargo test` 373 passed / 0 failed). Remaining: storage
 management, diagnostics/backup, import/export, performance.

@@ -10,7 +10,9 @@
 //! LFS fetch is implemented (Phase 9): after a successful clone or
 //! fetch, a separate `LfsFetch` job is enqueued when the repository
 //! has LFS pointers, so the mirror archives the objects too.
-//! Submodule job types are still rejected until later in Phase 9.
+//! Submodule sync is implemented the same way: a separate
+//! `SubmoduleSync` job fetches submodule commits into the mirror
+//! and checks out submodules in a working clone.
 
 use async_trait::async_trait;
 use chrono::Utc;
@@ -23,6 +25,9 @@ use reponyx_git_engine::credentials::reject_embedded_credentials;
 use reponyx_git_engine::lfs::{has_lfs_pointers, lfs_fetch};
 use reponyx_git_engine::paths::RepositoryLayout;
 use reponyx_git_engine::process::{map_git_failure, run_git_command};
+use reponyx_git_engine::submodule::{
+    SubmoduleFailure, has_submodules, sync_submodules_mirror, sync_submodules_working,
+};
 use reponyx_git_engine::{
     Credential, CredentialHelper, ProgressEvent, RepoLockManager, SyncOptions, detect_git,
     mirror_clone, mirror_fetch, working_fetch,
@@ -93,13 +98,6 @@ impl GitJobRunner {
 impl JobRunner for GitJobRunner {
     async fn run(&self, ctx: JobContext) -> Result<JobRunResult, RepoNyxError> {
         let started = std::time::Instant::now();
-
-        if matches!(ctx.job.job_type, JobType::SubmoduleSync) {
-            return Err(RepoNyxError::new(
-                ErrorCode::InvalidInput,
-                "job type submodule_sync is not supported yet (later in Phase 9)",
-            ));
-        }
 
         let repo = get_repository(&ctx.pool, ctx.job.repository_id)
             .await?
@@ -213,7 +211,10 @@ impl JobRunner for GitJobRunner {
             JobType::LfsFetch => {
                 self.run_lfs_fetch(&ctx, &git, &repo, &layout, opts).await?;
             }
-            JobType::SubmoduleSync => unreachable!(),
+            JobType::SubmoduleSync => {
+                self.run_submodule_sync(&ctx, &git, &repo, &layout, opts)
+                    .await?;
+            }
         }
         emit_stage(
             &ctx.progress,
@@ -224,13 +225,16 @@ impl JobRunner for GitJobRunner {
 
         mark_synced(&ctx.pool, repo.id, Utc::now()).await?;
 
-        // Phase 9: the LFS step is separate from the mirror sync. After
-        // any successful clone/fetch (but not after an LFS job itself),
-        // check for LFS pointers and enqueue an LfsFetch job so the
-        // mirror archives the objects too. Best-effort: a failure here
-        // never fails the job that just succeeded.
-        if !matches!(ctx.job.job_type, JobType::LfsFetch) {
+        // Phase 9: the LFS and submodule steps are separate from the
+        // mirror sync. After any successful clone/fetch (but not
+        // after an LFS/submodule job itself), check for LFS pointers
+        // and submodules and enqueue the follow-up jobs so the
+        // mirror archives the objects too. Best-effort: a failure
+        // here never fails the job that just succeeded.
+        if !matches!(ctx.job.job_type, JobType::LfsFetch | JobType::SubmoduleSync) {
             self.maybe_enqueue_lfs_step(&ctx, &repo, &layout, &git)
+                .await;
+            self.maybe_enqueue_submodule_step(&ctx, &repo, &layout, &git)
                 .await;
         }
 
@@ -269,6 +273,14 @@ impl GitJobRunner {
             tags = info.tags,
             "mirror_clone ok"
         );
+        // Phase 9 (Both-mode completion): a Both repo is not done
+        // with just the mirror — enqueue the working clone as its
+        // own job (independent failure, visible in the queue).
+        // The dedupe key makes a second enqueue a no-op.
+        if repo.sync_mode == SyncMode::Both && !layout.working_path.is_dir() {
+            self.enqueue_followup_job(ctx, repo, JobType::WorkingClone, "working-clone")
+                .await;
+        }
         Ok(())
     }
 
@@ -351,18 +363,29 @@ impl GitJobRunner {
                 working_fetch(git, &path, &self.locks, opts).await?;
             }
             SyncMode::Both => {
-                // Prefer the mirror path when both exist; fall back to working.
-                if layout.mirror_path.is_dir() {
-                    mirror_fetch(git, &layout.mirror_path, &self.locks, opts.clone()).await?;
-                }
-                if layout.working_path.is_dir() {
-                    working_fetch(git, &layout.working_path, &self.locks, opts).await?;
-                }
-                if !layout.mirror_path.is_dir() && !layout.working_path.is_dir() {
+                // Fetch every side that exists; a missing side is
+                // not a fetch failure — its clone is enqueued as a
+                // follow-up job (covers mirrors deleted externally
+                // and Both repos created before this existed).
+                let mirror_exists = layout.mirror_path.is_dir();
+                let working_exists = layout.working_path.is_dir();
+                if !mirror_exists && !working_exists {
                     return Err(RepoNyxError::new(
                         ErrorCode::RepositoryNotFound,
                         "neither mirror nor working clone exists for fetch",
                     ));
+                }
+                if mirror_exists {
+                    mirror_fetch(git, &layout.mirror_path, &self.locks, opts.clone()).await?;
+                } else {
+                    self.enqueue_followup_job(ctx, repo, JobType::MirrorClone, "mirror-clone")
+                        .await;
+                }
+                if working_exists {
+                    working_fetch(git, &layout.working_path, &self.locks, opts).await?;
+                } else {
+                    self.enqueue_followup_job(ctx, repo, JobType::WorkingClone, "working-clone")
+                        .await;
                 }
             }
         }
@@ -382,7 +405,15 @@ impl GitJobRunner {
         layout: &RepositoryLayout,
         opts: SyncOptions,
     ) -> Result<(), RepoNyxError> {
-        let path = resolve_existing_path(repo, layout)?;
+        // The mirror is the archive: for Mirror/Both repos the LFS
+        // objects belong there first, even when local_path currently
+        // points at the working clone (a Both repo's last clone).
+        let path = match repo.sync_mode {
+            SyncMode::Mirror | SyncMode::Both if layout.mirror_path.is_dir() => {
+                layout.mirror_path.clone()
+            }
+            _ => resolve_existing_path(repo, layout)?,
+        };
         debug!(path = %path.display(), "lfs_fetch");
         let summary = lfs_fetch(git, &path, &self.locks, opts).await?;
         info!(
@@ -393,11 +424,40 @@ impl GitJobRunner {
         Ok(())
     }
 
+    /// Enqueue one follow-up job (LFS, submodule, …). Best-effort by
+    /// design: an already-queued job (same repo + type) is a no-op
+    /// via the dedupe key, and any other failure is logged and
+    /// swallowed — it must never fail the job that just succeeded.
+    async fn enqueue_followup_job(
+        &self,
+        ctx: &JobContext,
+        repo: &Repository,
+        job_type: JobType,
+        label: &str,
+    ) {
+        match create_job(
+            &ctx.pool,
+            NewJob {
+                repository_id: repo.id,
+                job_type,
+                priority: ctx.job.priority,
+            },
+        )
+        .await
+        {
+            Ok(job) => info!(job_id = %job.id, repo = %repo.full_name, "{label} step enqueued"),
+            Err(e) if is_unique_violation(&e) => {
+                debug!(repo = %repo.full_name, "{label} step already queued");
+            }
+            Err(e) => {
+                tracing::warn!(repo = %repo.full_name, error = %e, "{label} step enqueue failed");
+            }
+        }
+    }
+
     /// Enqueue a separate `LfsFetch` job when the repository has LFS
     /// pointers. Best-effort by design: git-lfs missing, no pointers,
     /// or an already-queued LFS job all mean "no step", not an error.
-    /// A failure to check or enqueue is logged and swallowed — it
-    /// must never fail the clone/fetch job that just succeeded.
     async fn maybe_enqueue_lfs_step(
         &self,
         ctx: &JobContext,
@@ -422,24 +482,88 @@ impl GitJobRunner {
         if !has_pointers {
             return;
         }
-        match create_job(
-            &ctx.pool,
-            NewJob {
-                repository_id: repo.id,
-                job_type: JobType::LfsFetch,
-                priority: ctx.job.priority,
-            },
-        )
-        .await
-        {
-            Ok(job) => info!(job_id = %job.id, repo = %repo.full_name, "LFS step enqueued"),
-            Err(e) if is_unique_violation(&e) => {
-                debug!(repo = %repo.full_name, "LFS step already queued");
-            }
-            Err(e) => {
-                tracing::warn!(repo = %repo.full_name, error = %e, "LFS step enqueue failed");
-            }
+        self.enqueue_followup_job(ctx, repo, JobType::LfsFetch, "LFS")
+            .await;
+    }
+
+    /// Enqueue a separate `SubmoduleSync` job when either local
+    /// clone has submodules at HEAD. Best-effort, same as the LFS
+    /// step.
+    async fn maybe_enqueue_submodule_step(
+        &self,
+        ctx: &JobContext,
+        repo: &Repository,
+        layout: &RepositoryLayout,
+        git: &Path,
+    ) {
+        let mirror_has =
+            layout.mirror_path.is_dir() && has_submodules(git, &layout.mirror_path).await;
+        let working_has = !mirror_has
+            && layout.working_path.is_dir()
+            && has_submodules(git, &layout.working_path).await;
+        if !mirror_has && !working_has {
+            return;
         }
+        self.enqueue_followup_job(ctx, repo, JobType::SubmoduleSync, "submodule")
+            .await;
+    }
+
+    async fn run_submodule_sync(
+        &self,
+        _ctx: &JobContext,
+        git: &Path,
+        repo: &Repository,
+        layout: &RepositoryLayout,
+        opts: SyncOptions,
+    ) -> Result<(), RepoNyxError> {
+        let mirror_exists = layout.mirror_path.is_dir();
+        let working_exists = layout.working_path.is_dir();
+        if !mirror_exists && !working_exists {
+            return Err(RepoNyxError::new(
+                ErrorCode::RepositoryNotFound,
+                "no local clone for submodule sync; run a clone job first",
+            )
+            .with_details(format!("repo={}", repo.full_name)));
+        }
+        let mut total = 0;
+        let mut synced = 0;
+        let mut failures: Vec<SubmoduleFailure> = Vec::new();
+        if mirror_exists {
+            let summary =
+                sync_submodules_mirror(git, &layout.mirror_path, &self.locks, opts.clone()).await?;
+            total += summary.total;
+            synced += summary.synced;
+            failures.extend(summary.failed);
+        }
+        if working_exists {
+            let summary =
+                sync_submodules_working(git, &layout.working_path, &self.locks, opts).await?;
+            total += summary.total;
+            synced += summary.synced;
+            failures.extend(summary.failed);
+        }
+        if total == 0 {
+            info!(repo = %repo.full_name, "submodule sync: no submodules at HEAD");
+            return Ok(());
+        }
+        info!(
+            repo = %repo.full_name,
+            total,
+            synced,
+            failed = failures.len(),
+            "submodule sync done"
+        );
+        if synced == 0 {
+            // Nothing at all synced: fail with the first real error
+            // so the job is visible (and retried per policy — auth
+            // failures are permanent and fail fast).
+            let first = failures.into_iter().next().unwrap();
+            return Err(first.error);
+        }
+        for f in &failures {
+            tracing::warn!(repo = %repo.full_name, path = %f.path, error = %f.error, "submodule failed; others synced");
+        }
+        Ok(())
     }
 }
 

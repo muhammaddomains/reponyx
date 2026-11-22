@@ -21,8 +21,11 @@ Synchronization, Activity, Storage, Settings — see
 `ai/memory/PROJECT_STATUS.md`, "Phase 8 — Settings page"). Phase 9
 — Advanced Features (started 2026-11-21: LFS sync + verification
 built — engine `lfs` module + runner auto-enqueue + real git-lfs
-fixture tests, `cargo test` 352 passed / 0 failed; submodules and
-Both-modes completion still open). See
+fixture tests, `cargo test` 352 passed / 0 failed; submodule sync
++ Both-mode completion built the same day — engine `submodule`
+module + runner auto-enqueue + 9 fixture tests, `cargo test` 373
+passed / 0 failed; storage management, diagnostics/backup,
+import/export, performance still open). See
 `ai/memory/PROJECT_STATUS.md` for the honest current state.
 
 ## Branch & safety

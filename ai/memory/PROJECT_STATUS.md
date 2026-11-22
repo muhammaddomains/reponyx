@@ -1,8 +1,9 @@
 # RepoNyx — Project Status
 
-Last updated: 2026-11-21 (Phase 9 LFS sync built — see "Phase 9 —
-LFS sync" below; Phase 8 Settings page built — all 6 pages done;
-Schedules + Repositories + Synchronization + Activity + Storage
+Last updated: 2026-11-21 (Phase 9 submodules + Both-mode completion
+built — see "Phase 9 — Submodule sync + Both-mode completion" below;
+LFS sync built the same day; Phase 8 Settings page built — all 6 pages
+done; Schedules + Repositories + Synchronization + Activity + Storage
 pages done the same day; Phase 6 / Phase 7 fixes verified + live
 end-to-end run on this VM — see "Phase 6 / Phase 7 fixes +
 re-verification" and "Live end-to-end run" below)
@@ -24,7 +25,8 @@ and were fixed and verified the same day (same section).**
 built (Schedules, Repositories, Synchronization, Activity,
 Storage, and Settings — see the "Phase 8" sections below).**
 **Phase 9 — Advanced Features — started 2026-11-21: LFS sync +
-verification built (see "Phase 9 — LFS sync" below).**
+verification built, then submodule sync + Both-mode completion
+(see the "Phase 9" sections below).**
 The desktop Rust wiring is verified by `cargo fmt` + review
 only (the gdk blocker); the real desktop compile check is the
 user's Windows build. Remaining honest gaps are listed in the
@@ -72,6 +74,58 @@ fixes section. Work is on `main` going forward.
   typecheck + desktop build (1.87 s) + eslint pass. No UI change
   in this step — the Synchronization page already lists LfsFetch
   jobs and the Activity page already shows `lfs_fetch` operations.
+- **Phase 9 — Submodule sync + Both-mode completion (actual,
+  2026-11-21, assistant, uncommitted at the time of writing):**
+  the second and third Phase 9 tasks, in one commit. A mirror of
+  a superproject holds gitlinks but not submodule content, so the
+  submodule step is separate from the mirror sync, like LFS. New
+  `submodule` module in `reponyx-git-engine`
+  (`crates/git-engine/src/submodule.rs`): `list_submodules`
+  reads gitlinks (`ls-tree -r HEAD`, mode 160000) joined with the
+  `.gitmodules` blob at HEAD; `sync_submodules_mirror` fetches
+  each gitlink commit into the mirror's object database (`git
+  fetch --no-tags <url> <sha>`, verified with `cat-file -e`,
+  objects already present are skipped) and `sync_submodules_working`
+  runs `git submodule update --init --recursive` per submodule —
+  one at a time so an inaccessible (e.g. private) submodule never
+  blocks the others. Failures are per-submodule and reported in
+  the summary; the runner fails the job only when nothing at all
+  synced, and logs a warning for partial success. Relative
+  submodule URLs (`../sub.git`, the common GitHub layout) are
+  resolved against the mirror's origin URL with git's own rule
+  (the full origin URL is the base: `../x` consumes the
+  superproject's last segment, `./x` does not — verified against
+  real git behaviour, unit-tested for https/ssh/plain paths).
+  The runner now runs `SubmoduleSync` jobs (both sides when they
+  exist) and, after any successful clone/fetch, auto-enqueues one
+  when either local clone has submodules (dedupe-guarded,
+  best-effort). **Both-mode completion:** the scheduler still
+  creates one job per due repo, but the runner now completes the
+  mode — after a `MirrorClone` of a Both repo it enqueues a
+  `WorkingClone` job, and a `Fetch` for a Both repo fetches each
+  side that exists and enqueues the clone job for any missing
+  side (so a mirror-only Both repo, or one whose working clone
+  was deleted, heals on the next fetch). The LFS step now prefers
+  the mirror for Mirror/Both repos, so LFS objects land in the
+  archive even when `local_path` currently points at the working
+  clone. New tests, all real local fixtures: 4 engine tests
+  (mirror fetch + idempotence, isolation of an inaccessible
+  submodule, working checkout, no-submodule no-op), 3 runner
+  tests (mirror + working auto-enqueue end to end, no job for a
+  repo without submodules), 2 Both-mode runner tests (fresh Both
+  repo gets both clones; mirror-only Both repo gets its working
+  clone on fetch, and a second fetch creates no second clone
+  job). Two real behaviours found by the tests and fixed:
+  relative submodule URLs must be resolved against the origin
+  (a raw `git fetch ../sub.git` resolves against the process cwd
+  instead), and the working-clone layout is
+  `<root>/working-clones/<account>/<owner>/<name>` — no `github`
+  segment, unlike the mirror path. Verified: fmt pass, clippy 0
+  warnings, `cargo test` 373 passed / 0 failed (was 352, +21),
+  typecheck + desktop build (1.68 s) + eslint pass. No UI change
+  in this step — the Synchronization page already lists
+  SubmoduleSync/WorkingClone jobs and the Activity page already
+  shows `submodule_sync` operations.
   Still open in Phase 9: submodule sync, Both-modes completion
   (a Both repo never gets its working clone today — the scheduler
   only creates MirrorClone jobs for it), storage management +

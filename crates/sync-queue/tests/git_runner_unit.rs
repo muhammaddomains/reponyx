@@ -110,7 +110,7 @@ async fn git_runner_fails_cleanly_when_storage_root_missing() {
 }
 
 #[tokio::test]
-async fn git_runner_rejects_submodule_job_type() {
+async fn git_runner_submodule_job_without_local_clone_fails_not_found() {
     let (_dir, db) = open_db().await;
     let p = pool(&db);
 
@@ -184,8 +184,8 @@ async fn git_runner_rejects_submodule_job_type() {
         .await
         .unwrap_err();
 
-    assert_eq!(err.code, ErrorCode::InvalidInput);
-    assert!(err.message.contains("not supported yet"));
+    assert_eq!(err.code, ErrorCode::RepositoryNotFound);
+    assert!(err.message.contains("no local clone"));
 }
 
 /// Phase 9: LFS jobs are no longer rejected — but an LFS job for a

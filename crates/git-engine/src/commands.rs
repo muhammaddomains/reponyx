@@ -299,6 +299,122 @@ pub fn build_rev_parse_git_dir(git: &Path, repo_path: &Path) -> GitCommand {
     )
 }
 
+/// `git --git-dir=<path> remote get-url origin` — the URL the
+/// repository was cloned from. Relative submodule URLs are
+/// resolved against this URL (git resolves them the same way for
+/// submodule operations).
+pub fn build_remote_get_url(git: &Path, git_dir: &Path) -> GitCommand {
+    GitCommand::new(
+        git,
+        vec![
+            format!("--git-dir={}", git_dir.to_string_lossy()),
+            "remote".into(),
+            "get-url".into(),
+            "origin".into(),
+        ],
+    )
+}
+
+/// `git --git-dir=<path> ls-tree -r HEAD` — recursive tree
+/// listing. Submodules (gitlinks) appear as
+/// `160000 commit <sha>\t<path>`.
+pub fn build_ls_tree(git: &Path, git_dir: &Path) -> GitCommand {
+    GitCommand::new(
+        git,
+        vec![
+            format!("--git-dir={}", git_dir.to_string_lossy()),
+            "ls-tree".into(),
+            "-r".into(),
+            "HEAD".into(),
+        ],
+    )
+}
+
+/// `git --git-dir=<path> show HEAD:.gitmodules` — the submodule
+/// declarations at HEAD (ini text). Exits non-zero when the repo
+/// has no `.gitmodules` file at HEAD.
+pub fn build_show_gitmodules(git: &Path, git_dir: &Path) -> GitCommand {
+    GitCommand::new(
+        git,
+        vec![
+            format!("--git-dir={}", git_dir.to_string_lossy()),
+            "show".into(),
+            "HEAD:.gitmodules".into(),
+        ],
+    )
+}
+
+/// `git -C <dir> submodule status --recursive` — one line per
+/// submodule: `<marker><sha> <path> (<describe>)`. The marker is
+/// ` ` (checked out), `-` (not initialized), `+` (different sha
+/// checked out), or `U` (merge conflict).
+pub fn build_submodule_status(git: &Path, repo_path: &Path) -> GitCommand {
+    GitCommand::new(
+        git,
+        vec![
+            "-C".into(),
+            repo_path.to_string_lossy().into_owned(),
+            "submodule".into(),
+            "status".into(),
+            "--recursive".into(),
+        ],
+    )
+}
+
+/// `git -C <dir> submodule update --init --recursive -- <path>` —
+/// check out one submodule (and its nested submodules). Local-path
+/// submodule URLs need the file protocol allowed; the URL is an
+/// argv element, never shell-interpreted.
+pub fn build_submodule_update(git: &Path, repo_path: &Path, submodule_path: &str) -> GitCommand {
+    GitCommand::new(
+        git,
+        vec![
+            "-C".into(),
+            repo_path.to_string_lossy().into_owned(),
+            "-c".into(),
+            "protocol.file.allow=always".into(),
+            "submodule".into(),
+            "update".into(),
+            "--init".into(),
+            "--recursive".into(),
+            "--".into(),
+            submodule_path.to_string(),
+        ],
+    )
+}
+
+/// `git --git-dir=<dir> fetch --no-tags <url> <sha>` — fetch one
+/// submodule commit into a mirror's object database. Same file
+/// protocol note as `build_submodule_update`.
+pub fn build_fetch_sha(git: &Path, git_dir: &Path, url: &str, sha: &str) -> GitCommand {
+    GitCommand::new(
+        git,
+        vec![
+            format!("--git-dir={}", git_dir.to_string_lossy()),
+            "-c".into(),
+            "protocol.file.allow=always".into(),
+            "fetch".into(),
+            "--no-tags".into(),
+            url.to_string(),
+            sha.to_string(),
+        ],
+    )
+}
+
+/// `git --git-dir=<dir> cat-file -e <sha>` — exit 0 iff the object
+/// exists in the repository.
+pub fn build_cat_file_exists(git: &Path, git_dir: &Path, sha: &str) -> GitCommand {
+    GitCommand::new(
+        git,
+        vec![
+            format!("--git-dir={}", git_dir.to_string_lossy()),
+            "cat-file".into(),
+            "-e".into(),
+            sha.to_string(),
+        ],
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -529,6 +645,113 @@ mod tests {
         assert_eq!(
             cmd.argv(),
             ["git", "-C", "/data/repo.git", "rev-parse", "--git-dir"]
+        );
+    }
+
+    #[test]
+    fn remote_get_url_argv() {
+        let cmd = build_remote_get_url(&git_path(), Path::new("/data/repo.git"));
+        assert_eq!(
+            cmd.argv(),
+            [
+                "git",
+                "--git-dir=/data/repo.git",
+                "remote",
+                "get-url",
+                "origin"
+            ]
+        );
+    }
+
+    #[test]
+    fn ls_tree_argv() {
+        let cmd = build_ls_tree(&git_path(), Path::new("/data/repo.git"));
+        assert_eq!(
+            cmd.argv(),
+            ["git", "--git-dir=/data/repo.git", "ls-tree", "-r", "HEAD"]
+        );
+    }
+
+    #[test]
+    fn show_gitmodules_argv() {
+        let cmd = build_show_gitmodules(&git_path(), Path::new("/data/repo.git"));
+        assert_eq!(
+            cmd.argv(),
+            [
+                "git",
+                "--git-dir=/data/repo.git",
+                "show",
+                "HEAD:.gitmodules"
+            ]
+        );
+    }
+
+    #[test]
+    fn submodule_status_argv() {
+        let cmd = build_submodule_status(&git_path(), Path::new("/data/work"));
+        assert_eq!(
+            cmd.argv(),
+            [
+                "git",
+                "-C",
+                "/data/work",
+                "submodule",
+                "status",
+                "--recursive"
+            ]
+        );
+    }
+
+    #[test]
+    fn submodule_update_argv() {
+        let cmd = build_submodule_update(&git_path(), Path::new("/data/work"), "vendor/lib");
+        assert_eq!(
+            cmd.argv(),
+            [
+                "git",
+                "-C",
+                "/data/work",
+                "-c",
+                "protocol.file.allow=always",
+                "submodule",
+                "update",
+                "--init",
+                "--recursive",
+                "--",
+                "vendor/lib"
+            ]
+        );
+    }
+
+    #[test]
+    fn fetch_sha_argv() {
+        let cmd = build_fetch_sha(
+            &git_path(),
+            Path::new("/data/repo.git"),
+            "https://github.com/o/r.git",
+            "ab12",
+        );
+        assert_eq!(
+            cmd.argv(),
+            [
+                "git",
+                "--git-dir=/data/repo.git",
+                "-c",
+                "protocol.file.allow=always",
+                "fetch",
+                "--no-tags",
+                "https://github.com/o/r.git",
+                "ab12"
+            ]
+        );
+    }
+
+    #[test]
+    fn cat_file_exists_argv() {
+        let cmd = build_cat_file_exists(&git_path(), Path::new("/data/repo.git"), "ab12");
+        assert_eq!(
+            cmd.argv(),
+            ["git", "--git-dir=/data/repo.git", "cat-file", "-e", "ab12"]
         );
     }
 }

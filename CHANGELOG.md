@@ -5,6 +5,24 @@ All notable changes to RepoNyx are documented here. Format follows
 
 ## [Unreleased]
 
+### Added — Phase 9 submodule sync + Both-mode completion (2026-11-21)
+
+- Submodules are now synced as a separate step after a clone/fetch:
+  the mirror fetches each submodule commit into its object database
+  (`git fetch --no-tags <url> <sha>`, verified with `cat-file -e`;
+  relative URLs resolved against the mirror's origin the way git
+  does), and a working clone gets `git submodule update --init
+  --recursive` per submodule, so one inaccessible (e.g. private)
+  submodule never blocks the others. The runner auto-enqueues a
+  `SubmoduleSync` job when either local clone has submodules, and
+  fails the job only when nothing at all synced. Both-mode repos
+  now actually get both clones: after a `MirrorClone` the runner
+  enqueues a `WorkingClone` job, and a `Fetch` enqueues the clone
+  job for any missing side. The LFS step now prefers the mirror
+  for Mirror/Both repos. Verified with real local fixtures: 4
+  engine tests + 3 runner tests + 2 Both-mode tests. `cargo test`
+  373 passed / 0 failed.
+
 ### Added — Phase 9 LFS sync (2026-11-21)
 
 - LFS objects are now archived and verified as a separate step

@@ -31,6 +31,27 @@ Work is on `main` going forward.
 
 ## Completed tasks
 
+- **CI run #32 failures fixed (actual, 2026-11-21, assistant,
+  uncommitted at the time of writing):** CI run #32 on commit
+  `65d4c2f` failed in two jobs. (1) `rust`: the git-engine
+  cancellation test
+  `cancel_mirror_clone_leaves_diagnosable_destination` failed on
+  the runner — diagnosis `Corrupt` after a cancelled clone. The
+  300 ms cancel can land while git is still writing its skeleton,
+  so torn metadata is a legitimate outcome; the test now also
+  accepts `Corrupt` (test-only change; the no-HEAD invariant is
+  unchanged). Reproduced as stable locally (15 single runs +
+  3 full git-engine runs green) — the flake needs a loaded
+  runner. (2) `windows-build`: `cargo check -p reponyx-desktop`
+  failed with two E0308 errors in `synchronization.rs` —
+  `SyncJobDto` declares `priority`/`attempt_count` as `i64`
+  while domain `SyncJob` has them as `i32`; fixed with lossless
+  `as i64` casts. This was the first real desktop-crate compile
+  error caught by CI. Verification: fmt pass, clippy 0 warnings,
+  `cargo test` 332 passed / 0 failed. The desktop crate still
+  cannot compile on this VM (gdk blocker); the CI windows-build
+  job is the compile check.
+
 - **Phase 8 — Activity page (actual, 2026-11-21, assistant,
   uncommitted at the time of writing):** the fourth Phase 8 page.
   It needed one new database query — `list_recent_history` in

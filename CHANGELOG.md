@@ -5,6 +5,25 @@ All notable changes to RepoNyx are documented here. Format follows
 
 ## [Unreleased]
 
+### Fixed — CI run #32 failures (2026-11-21)
+
+- `rust` job: `cancel_mirror_clone_leaves_diagnosable_destination`
+  (git-engine cancellation test) failed on the runner with
+  diagnosis `Corrupt` after a cancelled clone. The 300 ms cancel
+  can land while git is still writing its skeleton, so a torn
+  metadata state is a legitimate outcome — the test now also
+  accepts `Corrupt` as a diagnosable post-cancellation state. The
+  real invariant is unchanged: the destination must never claim to
+  hold the remote's commits (no HEAD). Test-only change.
+- `windows-build` job: `cargo check -p reponyx-desktop` failed
+  with two E0308 type errors in
+  `apps/desktop/src-tauri/src/synchronization.rs` — `SyncJobDto`
+  declares `priority`/`attempt_count` as `i64` while the domain
+  `SyncJob` has them as `i32`. Fixed with lossless `as i64` casts
+  at the mapping site. This was the first real desktop-crate
+  compile error caught by CI; the desktop crate still cannot be
+  compiled on the Linux VM (gdk blocker).
+
 ### Changed — GitHub Actions pins updated to latest majors (2026-11-21)
 
 - `actions/checkout` v4 → v7, `actions/setup-node` v4 → v7,

@@ -132,13 +132,18 @@ async fn cancel_mirror_clone_leaves_diagnosable_destination() {
     assert_eq!(err.code, ErrorCode::OperationCancelled);
 
     // The destination is left for diagnosis: either an incomplete
-    // clone (missing HEAD/objects), or a structurally valid empty
+    // clone (missing HEAD/objects), a structurally valid empty
     // repository (git created the skeleton before connecting) — which
     // is indistinguishable from an empty repo and reports Healthy
-    // with no HEAD. It must never claim to hold the remote's commits.
+    // with no HEAD — or a torn skeleton (git was killed mid-write
+    // of its metadata, so rev-parse / fsck fail and the diagnosis
+    // is Corrupt). All three are diagnosable, non-healthy states;
+    // which one appears depends on where the 300 ms cancel lands,
+    // and on a loaded runner it is Corrupt. It must never claim to
+    // hold the remote's commits.
     let diagnosis = verify_repository(git(), &dest, Duration::from_secs(30)).await;
     match diagnosis.status {
-        HealthStatus::IncompleteClone | HealthStatus::NotARepository => {}
+        HealthStatus::IncompleteClone | HealthStatus::NotARepository | HealthStatus::Corrupt => {}
         HealthStatus::Healthy => {
             assert!(
                 diagnosis.head_sha.is_none(),

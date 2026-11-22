@@ -1,11 +1,11 @@
 # RepoNyx — Project Status
 
-Last updated: 2026-11-21 (Phase 8 Settings page built — all 6
-pages done; see "Phase 8 — Settings page" below; Schedules +
-Repositories + Synchronization + Activity + Storage pages done
-the same day; Phase 6 / Phase 7 fixes verified + live end-to-end
-run on this VM — see "Phase 6 / Phase 7 fixes + re-verification"
-and "Live end-to-end run" below)
+Last updated: 2026-11-21 (Phase 9 LFS sync built — see "Phase 9 —
+LFS sync" below; Phase 8 Settings page built — all 6 pages done;
+Schedules + Repositories + Synchronization + Activity + Storage
+pages done the same day; Phase 6 / Phase 7 fixes verified + live
+end-to-end run on this VM — see "Phase 6 / Phase 7 fixes +
+re-verification" and "Live end-to-end run" below)
 
 ## Current phase
 
@@ -23,12 +23,60 @@ and were fixed and verified the same day (same section).**
 **Phase 8 — Desktop UI — started 2026-11-21: all six pages are
 built (Schedules, Repositories, Synchronization, Activity,
 Storage, and Settings — see the "Phase 8" sections below).**
+**Phase 9 — Advanced Features — started 2026-11-21: LFS sync +
+verification built (see "Phase 9 — LFS sync" below).**
 The desktop Rust wiring is verified by `cargo fmt` + review
 only (the gdk blocker); the real desktop compile check is the
 user's Windows build. Remaining honest gaps are listed in the
 fixes section. Work is on `main` going forward.
 
 ## Completed tasks
+
+- **Phase 9 — LFS sync (actual, 2026-11-21, assistant,
+  uncommitted at the time of writing):** the first Phase 9 task.
+  A mirror holds LFS pointers, never objects, so the LFS step is
+  separate from the mirror sync. New `lfs` module in
+  `reponyx-git-engine` (`crates/git-engine/src/lfs.rs`):
+  `lfs_fetch` runs `git lfs fetch --all` under the same
+  per-repository lock as mirror clone/fetch, with the credential
+  helper installed so HTTP remotes authenticate like a normal
+  fetch, then verifies every object; `verify_lfs_objects` checks
+  each pointer oid against the object file under
+  `<git-dir>/lfs/objects/` and its SHA-256 (the LFS oid *is* the
+  content hash, streamed so large objects are never fully in
+  memory). A corrupt object is deleted and re-downloaded —
+  `git lfs fetch` silently skips a file that merely exists, so
+  without that the corruption would never heal. `has_lfs_pointers`
+  gates the step. The runner (`crates/sync-queue/src/git_runner.rs`)
+  now runs `LfsFetch` jobs and, after any successful clone/fetch,
+  enqueues a separate `LfsFetch` job when the repo has pointers
+  (dedupe key prevents duplicates; best-effort — it never fails
+  the job that just succeeded). Fetch failures are re-coded to
+  `GitLfsFailed` (retryable) unless the underlying error is more
+  specific (auth, not-found, network). New tests, all real
+  git-lfs 3.8.1 fixtures (installed on this VM from the official
+  release tarball — `apt-get install git-lfs` found no package,
+  and `apt-get update` hung): 3 engine tests (fetch + verify,
+  missing/corrupt reporting with self-heal, failure when the
+  remote lacks the object) and 2 runner tests (auto-enqueue +
+  verify end to end, no LFS job for a repo without pointers). The
+  old `git_runner_rejects_lfs_job_type` test is now a submodule
+  rejection test plus an LFS-without-local-clone test
+  (`RepositoryNotFound`). Two real behaviours found by the tests
+  and fixed: `git lfs ls-files` prints a 10-character abbreviated
+  oid by default — the builder now passes `--long`; local-path
+  remotes hardlink LFS objects, so the corruption test writes a
+  new file instead of editing in place (an in-place rewrite
+  corrupted the remote's copy too). Verified: fmt pass, clippy 0
+  warnings, `cargo test` 352 passed / 0 failed (was 338, +14),
+  typecheck + desktop build (1.87 s) + eslint pass. No UI change
+  in this step — the Synchronization page already lists LfsFetch
+  jobs and the Activity page already shows `lfs_fetch` operations.
+  Still open in Phase 9: submodule sync, Both-modes completion
+  (a Both repo never gets its working clone today — the scheduler
+  only creates MirrorClone jobs for it), storage management +
+  orphan detection, diagnostics export + DB backup, import/export,
+  performance pass.
 
 - **Phase 8 — Settings page (actual, 2026-11-21, assistant,
   uncommitted at the time of writing):** the sixth and last

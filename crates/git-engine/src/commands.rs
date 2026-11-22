@@ -249,6 +249,56 @@ pub fn build_status_porcelain(git: &Path, work_dir: &Path) -> GitCommand {
     )
 }
 
+/// `git -C <dir> lfs fetch --all` — download every LFS object for
+/// every ref. Used by the Phase 9 LFS step, which runs after a
+/// mirror sync (a mirror holds LFS pointers, never objects).
+pub fn build_lfs_fetch(git: &Path, repo_path: &Path) -> GitCommand {
+    GitCommand::new(
+        git,
+        vec![
+            "-C".into(),
+            repo_path.to_string_lossy().into_owned(),
+            "lfs".into(),
+            "fetch".into(),
+            "--all".into(),
+        ],
+    )
+}
+
+/// `git -C <dir> lfs ls-files --all --long` — list every LFS
+/// pointer in the repository (all refs). `--long` shows the full
+/// 64-character oid (the default is an abbreviated 10 characters,
+/// which cannot address the object file). The first column of each
+/// line is the object oid (sha256); an empty output means no LFS
+/// content.
+pub fn build_lfs_ls_files(git: &Path, repo_path: &Path) -> GitCommand {
+    GitCommand::new(
+        git,
+        vec![
+            "-C".into(),
+            repo_path.to_string_lossy().into_owned(),
+            "lfs".into(),
+            "ls-files".into(),
+            "--all".into(),
+            "--long".into(),
+        ],
+    )
+}
+
+/// `git -C <dir> rev-parse --git-dir` — resolve the git directory
+/// for a bare or non-bare repository, relative to the repo path.
+pub fn build_rev_parse_git_dir(git: &Path, repo_path: &Path) -> GitCommand {
+    GitCommand::new(
+        git,
+        vec![
+            "-C".into(),
+            repo_path.to_string_lossy().into_owned(),
+            "rev-parse".into(),
+            "--git-dir".into(),
+        ],
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -444,6 +494,41 @@ mod tests {
                 "REPONYX_GIT_CREDENTIAL_PASSWORD".to_string(),
                 "s3cr3t".to_string()
             )]
+        );
+    }
+
+    #[test]
+    fn lfs_fetch_argv() {
+        let cmd = build_lfs_fetch(&git_path(), Path::new("/data/repo.git"));
+        assert_eq!(
+            cmd.argv(),
+            ["git", "-C", "/data/repo.git", "lfs", "fetch", "--all"]
+        );
+    }
+
+    #[test]
+    fn lfs_ls_files_argv() {
+        let cmd = build_lfs_ls_files(&git_path(), Path::new("/data/repo.git"));
+        assert_eq!(
+            cmd.argv(),
+            [
+                "git",
+                "-C",
+                "/data/repo.git",
+                "lfs",
+                "ls-files",
+                "--all",
+                "--long"
+            ]
+        );
+    }
+
+    #[test]
+    fn rev_parse_git_dir_argv() {
+        let cmd = build_rev_parse_git_dir(&git_path(), Path::new("/data/repo.git"));
+        assert_eq!(
+            cmd.argv(),
+            ["git", "-C", "/data/repo.git", "rev-parse", "--git-dir"]
         );
     }
 }

@@ -1,6 +1,6 @@
 # Phase 9 — Advanced Features
 
-- Status: Not started
+- Status: In progress — LFS sync + verification done 2026-11-21
 - Depends on: Phases 3, 6, 7, 8
 
 ## Objectives
@@ -24,7 +24,7 @@ diagnostics, backup tools, import/export, performance improvements.
 
 ## Implementation tasks
 
-- [ ] LFS sync + verification
+- [x] LFS sync + verification
 - [ ] Submodule sync
 - [ ] Storage management UI + orphan detection
 - [ ] Diagnostics export + DB backup tools
@@ -47,8 +47,22 @@ Phases 3, 6–8.
 
 ## Known issues
 
-None yet.
+- Submodule sync is still rejected (`SubmoduleSync` jobs fail
+  with `InvalidInput`, "not supported yet").
+- Both-mode repos never get a working clone: the scheduler only
+  creates `MirrorClone` jobs for them, and `run_mirror_clone`
+  builds the mirror only. `run_fetch` already fetches both sides
+  when both exist.
+- `git lfs fetch` silently skips an object file that merely
+  exists, even when corrupt — the engine deletes provably-corrupt
+  objects before fetching so they re-download (see `lfs.rs`).
+- Local-path remotes hardlink LFS objects; see the LFS tests for
+  why corruption fixtures write a new file instead of editing in
+  place.
 
 ## Completion status
 
-Not started.
+LFS sync + verification done 2026-11-21 (engine module +
+runner wiring + 5 fixture tests; `cargo test` 352 passed /
+0 failed). Remaining: submodules, Both modes, storage
+management, diagnostics/backup, import/export, performance.

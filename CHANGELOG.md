@@ -5,6 +5,19 @@ All notable changes to RepoNyx are documented here. Format follows
 
 ## [Unreleased]
 
+### Added — Phase 9 LFS sync (2026-11-21)
+
+- LFS objects are now archived and verified as a separate step
+  after a mirror sync: `git lfs fetch --all` (new
+  `reponyx-git-engine` `lfs` module) followed by verification of
+  every object file against its pointer oid (SHA-256). After a
+  successful clone/fetch the runner auto-enqueues an `LfsFetch`
+  job when the repository has LFS pointers; the job fails (with
+  the missing/corrupt oids named) instead of reporting an archive
+  that is not complete, and a corrupt object is re-downloaded.
+  Verified with real git-lfs 3.8.1 fixtures: 3 engine tests + 2
+  runner end-to-end tests. `cargo test` 352 passed / 0 failed.
+
 ### Fixed — CI run #34 failure (2026-11-21)
 
 - `rust` job: `corrupt_object_is_caught_by_fsck` (git-engine

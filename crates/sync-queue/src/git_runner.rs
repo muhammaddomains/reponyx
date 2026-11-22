@@ -7,15 +7,20 @@
 //! 4. Run `mirror_clone` / `mirror_fetch` / `working_fetch` / working clone
 //! 5. Update `local_path` + `last_synced_at` on success
 //!
-//! LFS / submodule job types are rejected until Phase 9.
+//! LFS fetch is implemented (Phase 9): after a successful clone or
+//! fetch, a separate `LfsFetch` job is enqueued when the repository
+//! has LFS pointers, so the mirror archives the objects too.
+//! Submodule job types are still rejected until later in Phase 9.
 
 use async_trait::async_trait;
 use chrono::Utc;
 use reponyx_core::{ErrorCode, JobType, RepoNyxError, Repository, SyncMode};
 use reponyx_database::accounts::get_account;
+use reponyx_database::jobs::{NewJob, create_job, is_unique_violation};
 use reponyx_database::repositories::{get_repository, mark_synced};
 use reponyx_git_engine::commands::build_clone_working;
 use reponyx_git_engine::credentials::reject_embedded_credentials;
+use reponyx_git_engine::lfs::{has_lfs_pointers, lfs_fetch};
 use reponyx_git_engine::paths::RepositoryLayout;
 use reponyx_git_engine::process::{map_git_failure, run_git_command};
 use reponyx_git_engine::{
@@ -89,13 +94,10 @@ impl JobRunner for GitJobRunner {
     async fn run(&self, ctx: JobContext) -> Result<JobRunResult, RepoNyxError> {
         let started = std::time::Instant::now();
 
-        if matches!(ctx.job.job_type, JobType::LfsFetch | JobType::SubmoduleSync) {
+        if matches!(ctx.job.job_type, JobType::SubmoduleSync) {
             return Err(RepoNyxError::new(
                 ErrorCode::InvalidInput,
-                format!(
-                    "job type {} is not supported until Phase 9",
-                    ctx.job.job_type.as_str()
-                ),
+                "job type submodule_sync is not supported yet (later in Phase 9)",
             ));
         }
 
@@ -208,7 +210,10 @@ impl JobRunner for GitJobRunner {
             JobType::Fetch => {
                 self.run_fetch(&ctx, &git, &repo, &layout, opts).await?;
             }
-            JobType::LfsFetch | JobType::SubmoduleSync => unreachable!(),
+            JobType::LfsFetch => {
+                self.run_lfs_fetch(&ctx, &git, &repo, &layout, opts).await?;
+            }
+            JobType::SubmoduleSync => unreachable!(),
         }
         emit_stage(
             &ctx.progress,
@@ -218,6 +223,16 @@ impl JobRunner for GitJobRunner {
         );
 
         mark_synced(&ctx.pool, repo.id, Utc::now()).await?;
+
+        // Phase 9: the LFS step is separate from the mirror sync. After
+        // any successful clone/fetch (but not after an LFS job itself),
+        // check for LFS pointers and enqueue an LfsFetch job so the
+        // mirror archives the objects too. Best-effort: a failure here
+        // never fails the job that just succeeded.
+        if !matches!(ctx.job.job_type, JobType::LfsFetch) {
+            self.maybe_enqueue_lfs_step(&ctx, &repo, &layout, &git)
+                .await;
+        }
 
         let duration_ms = started.elapsed().as_millis() as i64;
         info!(
@@ -357,6 +372,74 @@ impl GitJobRunner {
             set_local_path(&ctx.pool, repo.id, &path).await?;
         }
         Ok(())
+    }
+
+    async fn run_lfs_fetch(
+        &self,
+        _ctx: &JobContext,
+        git: &Path,
+        repo: &Repository,
+        layout: &RepositoryLayout,
+        opts: SyncOptions,
+    ) -> Result<(), RepoNyxError> {
+        let path = resolve_existing_path(repo, layout)?;
+        debug!(path = %path.display(), "lfs_fetch");
+        let summary = lfs_fetch(git, &path, &self.locks, opts).await?;
+        info!(
+            pointers = summary.pointers,
+            fetched = summary.fetched,
+            "lfs_fetch ok"
+        );
+        Ok(())
+    }
+
+    /// Enqueue a separate `LfsFetch` job when the repository has LFS
+    /// pointers. Best-effort by design: git-lfs missing, no pointers,
+    /// or an already-queued LFS job all mean "no step", not an error.
+    /// A failure to check or enqueue is logged and swallowed — it
+    /// must never fail the clone/fetch job that just succeeded.
+    async fn maybe_enqueue_lfs_step(
+        &self,
+        ctx: &JobContext,
+        repo: &Repository,
+        layout: &RepositoryLayout,
+        git: &Path,
+    ) {
+        let path = match resolve_existing_path(repo, layout) {
+            Ok(p) => p,
+            Err(e) => {
+                debug!(repo = %repo.full_name, error = %e, "LFS step skipped: no local clone");
+                return;
+            }
+        };
+        let has_pointers = match has_lfs_pointers(git, &path).await {
+            Ok(has) => has,
+            Err(e) => {
+                debug!(repo = %repo.full_name, error = %e, "LFS step skipped: pointer check failed");
+                return;
+            }
+        };
+        if !has_pointers {
+            return;
+        }
+        match create_job(
+            &ctx.pool,
+            NewJob {
+                repository_id: repo.id,
+                job_type: JobType::LfsFetch,
+                priority: ctx.job.priority,
+            },
+        )
+        .await
+        {
+            Ok(job) => info!(job_id = %job.id, repo = %repo.full_name, "LFS step enqueued"),
+            Err(e) if is_unique_violation(&e) => {
+                debug!(repo = %repo.full_name, "LFS step already queued");
+            }
+            Err(e) => {
+                tracing::warn!(repo = %repo.full_name, error = %e, "LFS step enqueue failed");
+            }
+        }
     }
 }
 

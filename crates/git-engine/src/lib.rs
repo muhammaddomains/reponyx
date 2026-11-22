@@ -18,6 +18,7 @@ pub mod commands;
 pub mod credentials;
 pub mod detect;
 pub mod health;
+pub mod lfs;
 pub mod locks;
 pub mod mirror;
 pub mod options;

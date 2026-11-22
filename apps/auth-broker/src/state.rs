@@ -1,23 +1,37 @@
 //! Broker state: installations, pairing codes, `state` tokens,
 //! device tokens, and the installation-token cache.
 //!
-//! Phase 5 keeps state in memory (the broker is a local dev
-//! service); durable broker storage is a hardening item for the
-//! deployment phase. Only SHA-256 hashes of pairing codes, `state`
+//! Phase 10 (F1): state is durable. The working state lives in
+//! memory maps (fast reads, the same behaviour as the in-memory-only
+//! Phase 5 broker) and every mutation writes through to the SQLite
+//! [`BrokerStore`] FIRST, then updates the map — so a failed
+//! persist leaves the map untouched, and a restart reloads the maps
+//! from the store. Only SHA-256 hashes of pairing codes, `state`
 //! tokens, and device tokens are stored — never the raw values — so
 //! a dump of broker state yields nothing an attacker can present.
 //! Minted GitHub tokens are cached in memory only, until 5 minutes
-//! before expiry.
+//! before expiry (they are re-minted on demand after a restart);
+//! the rate-limiter buckets are likewise in-memory only.
+//!
+//! The maps use `tokio::sync::RwLock` (not `std::sync`): mutations
+//! hold a map's write lock across the single store write (one
+//! SQLite statement, ~1 ms on a local file), which keeps the
+//! decide-and-persist step atomic against concurrent requests for
+//! the same code — and `std` guards are not `Send` across an await,
+//! so they would make every handler's future non-`Send`. The store
+//! never touches these locks, so there is no lock-ordering hazard.
 
 use crate::audit::{AuditEvent, AuditLog};
 use crate::auth::{normalize_pairing_code, pairing_code, random_token, sha256_hex};
 use crate::config::BrokerConfig;
 use crate::rate_limit::RateLimiter;
+use crate::store::BrokerStore;
 use crate::tokens::{InstallationTokenResponse, mint_installation_token};
 use chrono::{DateTime, Utc};
 use reponyx_core::{ErrorCode, RepoNyxError};
 use std::collections::HashMap;
-use std::sync::{Arc, RwLock};
+use std::sync::Arc;
+use tokio::sync::RwLock;
 
 /// A recorded GitHub App installation (from the install callback).
 #[derive(Debug, Clone)]
@@ -113,6 +127,10 @@ pub struct PairingStatusInfo {
 pub struct BrokerState {
     pub config: BrokerConfig,
     pub http: reqwest::Client,
+    /// Durable backing store. `None` means pure in-memory mode
+    /// (tests, and `BrokerState::new`); production uses
+    /// [`BrokerState::open`].
+    store: Option<Arc<BrokerStore>>,
     installations: RwLock<HashMap<String, InstallationRecord>>,
     pairing_codes: RwLock<HashMap<String, PairingCodeRecord>>,
     setup_states: RwLock<HashMap<String, SetupStateRecord>>,
@@ -122,16 +140,24 @@ pub struct BrokerState {
     pub rate_limiter: RateLimiter,
 }
 
+fn store_error(err: sqlx::Error) -> RepoNyxError {
+    RepoNyxError::new(
+        ErrorCode::InternalError,
+        format!("broker store unavailable: {err}"),
+    )
+}
+
 impl BrokerState {
-    pub fn new(config: BrokerConfig) -> Arc<Self> {
+    fn new_inner(config: BrokerConfig, store: Option<Arc<BrokerStore>>) -> Self {
         let http = reqwest::Client::builder()
             .timeout(std::time::Duration::from_secs(30))
             .user_agent("RepoNyx-Auth-Broker/0.1.0")
             .build()
             .expect("reqwest client builds with a static config");
-        Arc::new(Self {
+        Self {
             config,
             http,
+            store,
             installations: RwLock::new(HashMap::new()),
             pairing_codes: RwLock::new(HashMap::new()),
             setup_states: RwLock::new(HashMap::new()),
@@ -139,19 +165,76 @@ impl BrokerState {
             token_cache: RwLock::new(HashMap::new()),
             audit: AuditLog::new(),
             rate_limiter: RateLimiter::new(),
-        })
+        }
+    }
+
+    pub fn new(config: BrokerConfig) -> Arc<Self> {
+        Arc::new(Self::new_inner(config, None))
+    }
+
+    /// Open broker state backed by `store`: prune expired rows and
+    /// stale audit events, then load every record into the memory
+    /// maps so a restart resumes where the broker left off.
+    pub async fn open(
+        config: BrokerConfig,
+        store: Arc<BrokerStore>,
+    ) -> Result<Arc<Self>, sqlx::Error> {
+        store.prune_expired_pairing_codes().await?;
+        store.prune_setup_states().await?;
+        store.prune_audit_events().await?;
+        let installations = store.load_installations().await?;
+        let pairing_codes = store.load_pairing_codes().await?;
+        let setup_states = store.load_setup_states().await?;
+        let device_tokens = store.load_device_tokens().await?;
+        let audit_events = store.load_audit_events().await?;
+        let state = Arc::new(Self::new_inner(config, Some(Arc::clone(&store))));
+        {
+            let mut installations_map = state.installations.write().await;
+            for record in installations {
+                installations_map.insert(record.installation_id.clone(), record);
+            }
+        }
+        {
+            let mut codes = state.pairing_codes.write().await;
+            for record in pairing_codes {
+                codes.insert(record.code_hash.clone(), record);
+            }
+        }
+        {
+            let mut states = state.setup_states.write().await;
+            for record in setup_states {
+                states.insert(record.state_hash.clone(), record);
+            }
+        }
+        {
+            let mut tokens = state.device_tokens.write().await;
+            for record in device_tokens {
+                tokens.insert(record.token_hash.clone(), record);
+            }
+        }
+        state.audit.load(audit_events);
+        Ok(state)
     }
 
     // -- audit -------------------------------------------------------
 
-    pub fn audit(
+    /// Record an audit event: persist it first (best-effort — a
+    /// store failure is logged, not fatal, because auditing must
+    /// never break the request it describes), then append it to the
+    /// in-memory log.
+    pub async fn audit(
         &self,
         actor: impl Into<String>,
         action: &str,
         outcome: &str,
         detail: impl Into<String>,
     ) {
-        self.audit.record(actor, action, outcome, detail);
+        let event = self.audit.record(actor, action, outcome, detail);
+        if let Some(store) = &self.store
+            && let Err(err) = store.insert_audit_event(&event).await
+        {
+            tracing::warn!(error = %err, "broker audit event could not be persisted");
+        }
     }
 
     pub fn audit_events(&self) -> Vec<AuditEvent> {
@@ -160,77 +243,94 @@ impl BrokerState {
 
     // -- installations ----------------------------------------------
 
-    pub fn record_installation(
+    pub async fn record_installation(
         &self,
         installation_id: &str,
         setup_action: &str,
         account_login: Option<String>,
-    ) {
-        if let Ok(mut installations) = self.installations.write() {
-            installations.insert(
-                installation_id.to_string(),
-                InstallationRecord {
-                    installation_id: installation_id.to_string(),
-                    setup_action: setup_action.to_string(),
-                    account_login,
-                    installed_at: Utc::now(),
-                    paired_device: None,
-                },
-            );
+    ) -> Result<(), RepoNyxError> {
+        let record = InstallationRecord {
+            installation_id: installation_id.to_string(),
+            setup_action: setup_action.to_string(),
+            account_login,
+            installed_at: Utc::now(),
+            paired_device: None,
+        };
+        if let Some(store) = &self.store {
+            store
+                .upsert_installation(&record)
+                .await
+                .map_err(store_error)?;
         }
+        self.installations
+            .write()
+            .await
+            .insert(installation_id.to_string(), record);
+        Ok(())
     }
 
-    pub fn installation(&self, installation_id: &str) -> Option<InstallationRecord> {
+    pub async fn installation(&self, installation_id: &str) -> Option<InstallationRecord> {
         self.installations
             .read()
-            .ok()?
+            .await
             .get(installation_id)
             .cloned()
     }
 
-    pub fn list_installations(&self) -> Vec<InstallationRecord> {
-        self.installations
-            .read()
-            .map(|installations| installations.values().cloned().collect())
-            .unwrap_or_default()
+    pub async fn list_installations(&self) -> Vec<InstallationRecord> {
+        self.installations.read().await.values().cloned().collect()
     }
 
     // -- CSRF state --------------------------------------------------
 
     /// Issue a one-time `state` value for the GitHub App install
     /// flow. Returns the raw value (sent to GitHub) and its expiry.
-    pub fn issue_setup_state(&self) -> (String, DateTime<Utc>) {
+    pub async fn issue_setup_state(&self) -> Result<(String, DateTime<Utc>), RepoNyxError> {
         let state = random_token();
         let expires_at = Utc::now() + self.config.state_ttl;
-        if let Ok(mut states) = self.setup_states.write() {
-            states.insert(
-                sha256_hex(&state),
-                SetupStateRecord {
-                    state_hash: sha256_hex(&state),
-                    created_at: Utc::now(),
-                    expires_at,
-                    used: false,
-                },
-            );
+        let record = SetupStateRecord {
+            state_hash: sha256_hex(&state),
+            created_at: Utc::now(),
+            expires_at,
+            used: false,
+        };
+        if let Some(store) = &self.store {
+            store.prune_setup_states().await.map_err(store_error)?;
+            store
+                .insert_setup_state(&record)
+                .await
+                .map_err(store_error)?;
         }
-        (state, expires_at)
+        self.setup_states
+            .write()
+            .await
+            .insert(record.state_hash.clone(), record);
+        Ok((state, expires_at))
     }
 
     /// Consume a `state` value: true only when it exists, is unused,
-    /// and has not expired. Consumption is single-use.
-    pub fn consume_setup_state(&self, state: &str) -> bool {
+    /// and has not expired. Consumption is single-use, and the
+    /// consumption survives a restart (the store is updated before
+    /// the in-memory flag).
+    pub async fn consume_setup_state(&self, state: &str) -> Result<bool, RepoNyxError> {
         let hash = sha256_hex(state);
-        let Ok(mut states) = self.setup_states.write() else {
-            return false;
-        };
+        let mut states = self.setup_states.write().await;
         let Some(record) = states.get_mut(&hash) else {
-            return false;
+            return Ok(false);
         };
         if record.used || Utc::now() > record.expires_at {
-            return false;
+            return Ok(false);
+        }
+        if let Some(store) = &self.store {
+            let mut updated = record.clone();
+            updated.used = true;
+            store
+                .update_setup_state(&updated)
+                .await
+                .map_err(store_error)?;
         }
         record.used = true;
-        true
+        Ok(true)
     }
 
     // -- pairing -----------------------------------------------------
@@ -238,13 +338,13 @@ impl BrokerState {
     /// Request a pairing code for an installation. The installation
     /// must already be recorded (via the install callback).
     /// Returns the raw code (shown to the user) and its expiry.
-    pub fn request_pairing(
+    pub async fn request_pairing(
         &self,
         installation_id: &str,
         device_name: &str,
         device_identifier: &str,
     ) -> Result<(String, DateTime<Utc>), RepoNyxError> {
-        if self.installation(installation_id).is_none() {
+        if self.installation(installation_id).await.is_none() {
             return Err(RepoNyxError::new(
                 ErrorCode::InvalidInput,
                 "installation not recorded; install the GitHub App first",
@@ -253,21 +353,27 @@ impl BrokerState {
         let code = pairing_code();
         let expires_at = Utc::now() + self.config.pairing_ttl;
         let hash = sha256_hex(&normalize_pairing_code(&code));
-        if let Ok(mut codes) = self.pairing_codes.write() {
-            codes.insert(
-                hash.clone(),
-                PairingCodeRecord {
-                    code_hash: hash,
-                    installation_id: installation_id.to_string(),
-                    device_name: device_name.to_string(),
-                    device_identifier: device_identifier.to_string(),
-                    created_at: Utc::now(),
-                    expires_at,
-                    attempts: 0,
-                    status: PairingStatus::Pending,
-                },
-            );
+        let record = PairingCodeRecord {
+            code_hash: hash.clone(),
+            installation_id: installation_id.to_string(),
+            device_name: device_name.to_string(),
+            device_identifier: device_identifier.to_string(),
+            created_at: Utc::now(),
+            expires_at,
+            attempts: 0,
+            status: PairingStatus::Pending,
+        };
+        if let Some(store) = &self.store {
+            store
+                .prune_expired_pairing_codes()
+                .await
+                .map_err(store_error)?;
+            store
+                .insert_pairing_code(&record)
+                .await
+                .map_err(store_error)?;
         }
+        self.pairing_codes.write().await.insert(hash, record);
         Ok((code, expires_at))
     }
 
@@ -275,74 +381,99 @@ impl BrokerState {
     /// (shown to the user once; only its hash is stored) and the
     /// installation id. Wrong device, expired, reused, or revoked
     /// codes are rejected, and wrong-device attempts count toward
-    /// the per-code limit.
-    pub fn confirm_pairing(
+    /// the per-code limit. Every mutation is persisted before the
+    /// in-memory map changes; if a multi-step persist fails
+    /// partway, the caller gets an error and a retry converges,
+    /// because every step is idempotent (and a restart loads the
+    /// persisted state).
+    pub async fn confirm_pairing(
         &self,
         code: &str,
         device_identifier: &str,
     ) -> Result<(String, String), RepoNyxError> {
         let hash = sha256_hex(&normalize_pairing_code(code));
-        let mut codes = self.pairing_codes.write().map_err(|_| {
-            RepoNyxError::new(ErrorCode::InternalError, "pairing store unavailable")
-        })?;
+        let mut codes = self.pairing_codes.write().await;
         let Some(record) = codes.get_mut(&hash) else {
+            drop(codes);
             self.audit(
                 device_identifier,
                 "pairing.failed",
                 "failure",
                 "unknown pairing code",
-            );
+            )
+            .await;
             return Err(RepoNyxError::new(
                 ErrorCode::InvalidInput,
                 "invalid pairing code",
             ));
         };
         if record.status == PairingStatus::Revoked {
+            drop(codes);
             self.audit(
                 device_identifier,
                 "pairing.failed",
                 "failure",
                 "revoked pairing code",
-            );
+            )
+            .await;
             return Err(RepoNyxError::new(
                 ErrorCode::InvalidInput,
                 "pairing code was revoked",
             ));
         }
         if record.status == PairingStatus::Confirmed {
+            drop(codes);
             self.audit(
                 device_identifier,
                 "pairing.failed",
                 "failure",
                 "pairing code already used",
-            );
+            )
+            .await;
             return Err(RepoNyxError::new(
                 ErrorCode::InvalidInput,
                 "pairing code already used",
             ));
         }
         if Utc::now() > record.expires_at {
+            drop(codes);
             self.audit(
                 device_identifier,
                 "pairing.failed",
                 "failure",
                 "expired pairing code",
-            );
+            )
+            .await;
             return Err(RepoNyxError::new(
                 ErrorCode::InvalidInput,
                 "pairing code expired",
             ));
         }
         if record.device_identifier != device_identifier {
-            record.attempts += 1;
-            if record.attempts >= self.config.max_pairing_attempts {
-                record.status = PairingStatus::Revoked;
+            // Persist first, then apply to the map: a failed store
+            // write must not consume an attempt.
+            let mut updated = record.clone();
+            updated.attempts += 1;
+            let revoked = updated.attempts >= self.config.max_pairing_attempts;
+            if revoked {
+                updated.status = PairingStatus::Revoked;
+            }
+            if let Some(store) = &self.store {
+                store
+                    .update_pairing_code(&updated)
+                    .await
+                    .map_err(store_error)?;
+            }
+            *record = updated;
+            drop(codes);
+            if revoked {
                 self.audit(
                     device_identifier,
                     "pairing.failed",
                     "failure",
                     "pairing code invalidated after too many wrong-device attempts",
-                );
+                )
+                .await;
                 return Err(RepoNyxError::new(
                     ErrorCode::InvalidInput,
                     "pairing code invalidated after too many attempts",
@@ -353,34 +484,56 @@ impl BrokerState {
                 "pairing.failed",
                 "failure",
                 "pairing code bound to a different device",
-            );
+            )
+            .await;
             return Err(RepoNyxError::new(
                 ErrorCode::InvalidInput,
                 "pairing code is bound to a different device",
             ));
         }
-        record.status = PairingStatus::Confirmed;
+        // Success: confirm the code, mint a device token, and mark
+        // the installation paired — persisted before the maps change.
         let installation_id = record.installation_id.clone();
         let device_name = record.device_name.clone();
-        drop(codes);
-
+        let mut confirmed = record.clone();
+        confirmed.status = PairingStatus::Confirmed;
         let device_token = random_token();
-        if let Ok(mut tokens) = self.device_tokens.write() {
-            tokens.insert(
-                sha256_hex(&device_token),
-                DeviceTokenRecord {
-                    token_hash: sha256_hex(&device_token),
-                    device_identifier: device_identifier.to_string(),
-                    device_name,
-                    installation_id: installation_id.clone(),
-                    created_at: Utc::now(),
-                    revoked: false,
-                },
-            );
+        let token_record = DeviceTokenRecord {
+            token_hash: sha256_hex(&device_token),
+            device_identifier: device_identifier.to_string(),
+            device_name,
+            installation_id: installation_id.clone(),
+            created_at: Utc::now(),
+            revoked: false,
+        };
+        if let Some(store) = &self.store {
+            store
+                .update_pairing_code(&confirmed)
+                .await
+                .map_err(store_error)?;
+            store
+                .insert_device_token(&token_record)
+                .await
+                .map_err(store_error)?;
+            let mut installation = self.installation(&installation_id).await.ok_or_else(|| {
+                RepoNyxError::new(
+                    ErrorCode::InternalError,
+                    "installation vanished during pairing",
+                )
+            })?;
+            installation.paired_device = Some(device_identifier.to_string());
+            store
+                .upsert_installation(&installation)
+                .await
+                .map_err(store_error)?;
         }
-        if let Ok(mut installations) = self.installations.write()
-            && let Some(installation) = installations.get_mut(&installation_id)
-        {
+        *record = confirmed;
+        drop(codes);
+        self.device_tokens
+            .write()
+            .await
+            .insert(token_record.token_hash.clone(), token_record);
+        if let Some(installation) = self.installations.write().await.get_mut(&installation_id) {
             installation.paired_device = Some(device_identifier.to_string());
         }
         self.audit(
@@ -388,52 +541,87 @@ impl BrokerState {
             "pairing.confirmed",
             "success",
             format!("installation {installation_id}"),
-        );
+        )
+        .await;
         Ok((device_token, installation_id))
     }
 
     /// Revoke every device token and pending pairing code bound to a
-    /// device. Returns true when anything was revoked.
-    pub fn revoke_device(&self, device_identifier: &str) -> bool {
-        let mut revoked_any = false;
-        if let Ok(mut tokens) = self.device_tokens.write() {
-            for token in tokens.values_mut() {
+    /// device. Returns true when anything was revoked. Persisted
+    /// before the maps change; a retry after a partial store failure
+    /// converges because revocation is idempotent.
+    pub async fn revoke_device(&self, device_identifier: &str) -> Result<bool, RepoNyxError> {
+        // Collect first (read-only), persist, then apply to the
+        // maps — a failed store write must not revoke anything in
+        // memory.
+        let mut tokens_to_revoke: Vec<DeviceTokenRecord> = Vec::new();
+        let mut codes_to_revoke: Vec<PairingCodeRecord> = Vec::new();
+        {
+            let tokens = self.device_tokens.read().await;
+            for token in tokens.values() {
                 if token.device_identifier == device_identifier && !token.revoked {
-                    token.revoked = true;
-                    revoked_any = true;
+                    let mut updated = token.clone();
+                    updated.revoked = true;
+                    tokens_to_revoke.push(updated);
                 }
             }
         }
-        if let Ok(mut codes) = self.pairing_codes.write() {
-            for code in codes.values_mut() {
+        {
+            let codes = self.pairing_codes.read().await;
+            for code in codes.values() {
                 if code.device_identifier == device_identifier
                     && code.status == PairingStatus::Pending
                 {
-                    code.status = PairingStatus::Revoked;
-                    revoked_any = true;
+                    let mut updated = code.clone();
+                    updated.status = PairingStatus::Revoked;
+                    codes_to_revoke.push(updated);
                 }
             }
         }
-        if revoked_any {
-            self.audit(
-                device_identifier,
-                "pairing.revoked",
-                "success",
-                format!("device {device_identifier}"),
-            );
+        if tokens_to_revoke.is_empty() && codes_to_revoke.is_empty() {
+            return Ok(false);
         }
-        revoked_any
+        if let Some(store) = &self.store {
+            for token in &tokens_to_revoke {
+                store
+                    .update_device_token(token)
+                    .await
+                    .map_err(store_error)?;
+            }
+            for code in &codes_to_revoke {
+                store.update_pairing_code(code).await.map_err(store_error)?;
+            }
+        }
+        {
+            let mut tokens = self.device_tokens.write().await;
+            for updated in &tokens_to_revoke {
+                if let Some(token) = tokens.get_mut(&updated.token_hash) {
+                    token.revoked = true;
+                }
+            }
+        }
+        {
+            let mut codes = self.pairing_codes.write().await;
+            for updated in &codes_to_revoke {
+                if let Some(code) = codes.get_mut(&updated.code_hash) {
+                    code.status = PairingStatus::Revoked;
+                }
+            }
+        }
+        self.audit(
+            device_identifier,
+            "pairing.revoked",
+            "success",
+            format!("device {device_identifier}"),
+        )
+        .await;
+        Ok(true)
     }
 
     /// Status of a pairing code (for the desktop polling flow).
-    pub fn pairing_status(&self, code: &str) -> PairingStatusInfo {
+    pub async fn pairing_status(&self, code: &str) -> PairingStatusInfo {
         let hash = sha256_hex(&normalize_pairing_code(code));
-        let Some(record) = self
-            .pairing_codes
-            .read()
-            .ok()
-            .and_then(|codes| codes.get(&hash).cloned())
-        else {
+        let Some(record) = self.pairing_codes.read().await.get(&hash).cloned() else {
             return PairingStatusInfo {
                 status: "unknown".to_string(),
                 installation_id: None,
@@ -454,11 +642,11 @@ impl BrokerState {
 
     /// Resolve a presented device token to its record (hash match,
     /// not revoked). Returns `None` for unknown or revoked tokens.
-    pub fn device_for_token(&self, token: &str) -> Option<DeviceTokenRecord> {
+    pub async fn device_for_token(&self, token: &str) -> Option<DeviceTokenRecord> {
         let hash = sha256_hex(token);
         self.device_tokens
             .read()
-            .ok()?
+            .await
             .get(&hash)
             .filter(|record| !record.revoked)
             .cloned()
@@ -475,28 +663,27 @@ impl BrokerState {
         installation_id: &str,
         force_refresh: bool,
     ) -> Result<InstallationTokenResponse, RepoNyxError> {
-        if !force_refresh
-            && let Ok(cache) = self.token_cache.read()
-            && let Some(cached) = cache.get(installation_id)
-            && Utc::now() + chrono::Duration::minutes(5) < cached.expires_at
-        {
-            return Ok(InstallationTokenResponse {
-                token: cached.token.clone(),
-                expires_at: cached.expires_at,
-                permissions: serde_json::Value::Object(Default::default()),
-                repository_selection: None,
-            });
+        if !force_refresh {
+            let cache = self.token_cache.read().await;
+            if let Some(cached) = cache.get(installation_id)
+                && Utc::now() + chrono::Duration::minutes(5) < cached.expires_at
+            {
+                return Ok(InstallationTokenResponse {
+                    token: cached.token.clone(),
+                    expires_at: cached.expires_at,
+                    permissions: serde_json::Value::Object(Default::default()),
+                    repository_selection: None,
+                });
+            }
         }
         let minted = mint_installation_token(&self.http, &self.config, installation_id).await?;
-        if let Ok(mut cache) = self.token_cache.write() {
-            cache.insert(
-                installation_id.to_string(),
-                CachedInstallationToken {
-                    token: minted.token.clone(),
-                    expires_at: minted.expires_at,
-                },
-            );
-        }
+        self.token_cache.write().await.insert(
+            installation_id.to_string(),
+            CachedInstallationToken {
+                token: minted.token.clone(),
+                expires_at: minted.expires_at,
+            },
+        );
         Ok(minted)
     }
 }

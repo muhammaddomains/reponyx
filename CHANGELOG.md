@@ -5,6 +5,24 @@ All notable changes to RepoNyx are documented here. Format follows
 
 ## [Unreleased]
 
+### Added — Phase 10 durable broker storage (F1, 2026-11-22)
+
+- The Auth Broker now persists installations, pairing codes, setup
+  `state` values, device tokens, and the audit log in SQLite
+  (`broker.sqlite` under `REPONYX_BROKER_DATA_DIR`, default
+  `broker-data`); a restart resumes where the broker left off, so
+  devices no longer need to re-pair. Only hashes of codes/tokens
+  are stored, never the raw values and never the private key. The
+  minted-token cache and rate-limiter buckets remain in-memory;
+  audit events older than 90 days are pruned at startup. Proven
+  by `apps/auth-broker/tests/store_persistence.rs` (6 tests) and a
+  live stop/restart smoke run of the real binary.
+- The broker's state maps moved from `std::sync::RwLock` to
+  `tokio::sync::RwLock`: a `std` guard held across an await makes
+  the handler future non-`Send` (axum refused the routes), so the
+  async lock is required now that mutations persist inside the
+  critical section.
+
 ### Added — Phase 10 security audit, first pass (2026-11-22)
 
 - Database upgrade tests: a V1 database (built from the real

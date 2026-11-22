@@ -204,10 +204,43 @@ fixes section. Work is on `main` going forward.
   and remains a Windows item. Verified: fmt pass, clippy 0
   warnings, `cargo test` 406 passed / 0 failed (was 404, +2),
   typecheck + desktop build (3.12 s) + `pnpm lint` pass. Phase 10
-  remaining: the Windows verification items (installer, Task
-  Scheduler, Credential Manager, binary secret scan, real
-  process-kill test), durable broker storage (F1), the key-rotation
-  runbook (F3), and the first release itself.
+  remaining at that point: the Windows verification items
+  (installer, Task Scheduler, Credential Manager, binary secret
+  scan, real process-kill test), durable broker storage (F1), the
+  key-rotation runbook (F3), and the first release itself.
+
+- **Phase 10 — Durable broker storage, F1 (actual, 2026-11-22,
+  assistant):** the broker no longer loses everything on restart.
+  New `apps/auth-broker/src/store.rs` (`BrokerStore`, sqlx SQLite,
+  WAL, own migration `apps/auth-broker/migrations/
+  0001_broker_store.sql` — 5 tables: installations, pairing codes,
+  setup states, device tokens, audit events) plus `REPONYX_BROKER_
+  DATA_DIR` (default `broker-data`, `broker.sqlite` inside).
+  `BrokerState::open` prunes expired codes/states + audit events
+  older than 90 days, then loads every record into the memory maps;
+  every mutation writes through to the store first, then updates
+  the map (a failed persist leaves the map untouched; a retry after
+  a partial multi-step persist converges because every step is
+  idempotent). Only hashes are stored — never raw codes/tokens and
+  never the private key. The minted-token cache and the
+  rate-limiter buckets stay in-memory (a restart re-mints tokens
+  and resets the buckets). Real bug found while building: a
+  `std::sync::RwLock` guard held across an `.await` makes the
+  handler future non-`Send`, so axum refused the two routes that
+  await the new state methods — the maps moved to
+  `tokio::sync::RwLock` and the reader methods (`installation`,
+  `list_installations`, `pairing_status`, `device_for_token`)
+  became async. `BrokerState::new` (pure in-memory) is unchanged
+  for tests. New `apps/auth-broker/tests/store_persistence.rs`
+  (6 tests: pairing flow, revocation, single-use state,
+  wrong-device attempts, expiry pruning, store round-trip — each
+  drops the state and re-opens it on the same file). Also verified
+  live: the real binary started, created `broker.sqlite`, served
+  `/health`, was killed and restarted on the same store. Verified:
+  fmt pass, clippy 0 warnings, `cargo test` 412 passed / 0 failed
+  (was 406, +6), typecheck + desktop build (1.65 s) + `pnpm lint`
+  pass. Phase 10 remaining: the Windows verification items, the
+  key-rotation runbook (F3), and the first release itself.
 
 - **Phase 9 — Performance pass (actual, 2026-11-22, assistant,
   uncommitted at the time of writing):** the seventh and last

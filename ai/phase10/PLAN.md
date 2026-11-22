@@ -78,8 +78,9 @@ All prior phases.
 - Windows installer / Task Scheduler / Credential Manager cannot be
   fully verified on this Linux dev VM; they are explicit Phase 10
   Windows-verification items.
-- Broker state is in-memory only (F1): a broker restart loses
-  installations, pairing codes, device tokens, and the audit log.
+- Broker state is durable (F1, fixed 2026-11-22): SQLite store
+  survives restarts; token cache and rate-limiter buckets remain
+  in-memory.
 - No key-rotation / incident runbook (F3).
 - The `cargo audit` / `pnpm audit` weekly CI job has never run yet
   (first scheduled run Monday 2026-11-23); the audits were run
@@ -88,5 +89,5 @@ All prior phases.
 ## Completion status
 
 First pass done 2026-11-22 (audit, threat-model review, migration
-tests, docs, secret scan re-run). Not complete: Windows items, F1,
-F3, first release.
+tests, docs, secret scan re-run). F1 (durable broker storage) done
+2026-11-22. Not complete: Windows items, F3, first release.

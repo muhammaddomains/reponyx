@@ -11,10 +11,16 @@
 //! - `REPONYX_BROKER_BIND` — bind address (default `127.0.0.1:8765`)
 //! - `REPONYX_BROKER_GITHUB_API_URL` — GitHub API base (default
 //!   `https://api.github.com`)
+//! - `REPONYX_BROKER_DATA_DIR` — durable state directory (default
+//!   `broker-data`); holds `broker.sqlite`, the installations,
+//!   pairing codes, setup states, device tokens, and audit log.
+//!   Only hashes of codes/tokens are stored — never the raw values,
+//!   and never the private key.
 //!
 //! The broker logs method/path/status only — never tokens, codes,
 //! keys, or request bodies.
 
+use reponyx_auth_broker::BrokerStore;
 use reponyx_auth_broker::config::BrokerConfig;
 use reponyx_auth_broker::{BrokerState, app};
 use std::net::SocketAddr;
@@ -36,7 +42,24 @@ async fn main() {
         }
     };
     let bind_addr: SocketAddr = config.bind_addr;
-    let state = BrokerState::new(config);
+    let db_path = config.data_dir.join("broker.sqlite");
+    let store = match BrokerStore::open(&db_path).await {
+        Ok(store) => std::sync::Arc::new(store),
+        Err(err) => {
+            eprintln!(
+                "auth-broker: cannot open broker store at {}: {err}",
+                db_path.display()
+            );
+            std::process::exit(2);
+        }
+    };
+    let state = match BrokerState::open(config, store).await {
+        Ok(state) => state,
+        Err(err) => {
+            eprintln!("auth-broker: cannot load broker state: {err}");
+            std::process::exit(2);
+        }
+    };
     info!(bind_addr = %bind_addr, "auth-broker listening");
     let listener = match tokio::net::TcpListener::bind(bind_addr).await {
         Ok(listener) => listener,

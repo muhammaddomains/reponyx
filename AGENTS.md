@@ -42,9 +42,11 @@ complete). Phase 10 — Security, QA and Release (started
 with 3 findings recorded, dependency audits run for the first
 time, V1→V4 + V3→V4 migration upgrade tests, failure-recovery
 inventory, README rewritten — `cargo test` 406 passed /
-0 failed; Windows verification items, durable broker storage
-(F1), and the key-rotation runbook (F3) still open — see
-`ai/memory/PROJECT_STATUS.md`, "Phase 10 — Security audit,
+0 failed; durable broker storage (F1) built 2026-11-22 —
+SQLite store under `REPONYX_BROKER_DATA_DIR`, restart-safe
+pairing + audit — `cargo test` 412 passed / 0 failed; Windows
+verification items and the key-rotation runbook (F3) still open
+— see `ai/memory/PROJECT_STATUS.md`, "Phase 10 — Security audit,
 first pass"). See
 `ai/memory/PROJECT_STATUS.md` for the honest current state.
 

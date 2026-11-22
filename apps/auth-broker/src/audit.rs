@@ -45,14 +45,15 @@ impl AuditLog {
     }
 
     /// Append an event. Callers must ensure `detail` contains no
-    /// secret (ids and statuses only).
+    /// secret (ids and statuses only). Returns the recorded event
+    /// so the caller can persist it (the store is the durable copy).
     pub fn record(
         &self,
         actor: impl Into<String>,
         action: &str,
         outcome: &str,
         detail: impl Into<String>,
-    ) {
+    ) -> AuditEvent {
         let event = AuditEvent {
             id: Uuid::new_v4().to_string(),
             timestamp: Utc::now(),
@@ -62,7 +63,16 @@ impl AuditLog {
             detail: detail.into(),
         };
         if let Ok(mut events) = self.events.lock() {
-            events.push(event);
+            events.push(event.clone());
+        }
+        event
+    }
+
+    /// Replace the in-memory log with events loaded from durable
+    /// storage (startup). Used once, before serving requests.
+    pub fn load(&self, events: Vec<AuditEvent>) {
+        if let Ok(mut current) = self.events.lock() {
+            *current = events;
         }
     }
 

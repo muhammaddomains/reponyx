@@ -64,8 +64,8 @@ below names the boundary, the mitigation, and the residual risk.
   browser flow; revocation + audit history.
 - **Residual:** If an attacker also controls the victim's GitHub
   session, pairing cannot distinguish them; GitHub session security
-  is the boundary. Note: the audit history is in-memory only (see
-  finding F1) — it does not survive a broker restart.
+  is the boundary. The audit history is durable (SQLite, F1 fixed
+  2026-11-22) with a 90-day retention prune at startup.
 
 ## 5. Compromised Auth Broker
 
@@ -77,9 +77,8 @@ below names the boundary, the mitigation, and the residual risk.
   access to local archives (it never sees repository contents).
 - **Residual:** Read access to all installed repositories for the
   token lifetime; revocation requires uninstalling the app per account.
-  Note: broker state — installations, pairing codes, device tokens,
-  audit log — is held in memory only (see finding F1), so a broker
-  restart ends every pairing and erases the audit history.
+  Broker state is durable (SQLite, F1 fixed 2026-11-22), so a broker
+  restart no longer ends pairings or erases the audit history.
 
 ## 6. Repository path manipulation
 
@@ -149,13 +148,21 @@ below names the boundary, the mitigation, and the residual risk.
 Findings from the 2026-11-22 review. Each is either fixed, or
 documented here with its consequence — nothing is silently dropped.
 
-- **F1 — Broker state is in-memory only (open).** Installations,
-  pairing codes, device tokens, and the audit log live in
-  `HashMap`s in `apps/auth-broker/src/state.rs`; a broker restart
-  loses all of them. Consequence: every device must re-pair after
-  a restart, and audit history is erased. Fix: durable broker
-  storage (SQLite, same migration discipline as the desktop DB).
-  Until then, do not promise broker persistence.
+- **F1 — Broker state is in-memory only (fixed 2026-11-22).**
+  Installations, pairing codes, setup `state` values, device
+  tokens, and the audit log are now persisted in SQLite
+  (`broker.sqlite` under `REPONYX_BROKER_DATA_DIR`, default
+  `broker-data`; `apps/auth-broker/src/store.rs`, migration
+  `0001_broker_store.sql`). `BrokerState` loads the store at
+  startup and writes every mutation through to it first, so a
+  restart resumes where the broker left off — proven by
+  `apps/auth-broker/tests/store_persistence.rs` (6 tests: pairing
+  flow, revocation, single-use state, wrong-device attempts, and
+  expiry pruning across a restart). Only hashes are stored, never
+  raw codes/tokens and never the private key. Residuals: the
+  minted-token cache and the rate-limiter buckets are still
+  in-memory (a restart re-mints tokens and resets the buckets);
+  audit events older than 90 days are pruned at startup.
 - **F2 — Windows named pipe has no ACL (documented).** The agent's
   pipe (`\\.\pipe\reponyx-agent`) is created without a security
   descriptor; any same-user process can connect, and the token

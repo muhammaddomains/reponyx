@@ -151,7 +151,7 @@ impl SetupToken {
 struct DeviceAuth(DeviceTokenRecord);
 
 impl DeviceAuth {
-    fn from_headers(state: &BrokerState, headers: &HeaderMap) -> Result<Self, ApiError> {
+    async fn from_headers(state: &BrokerState, headers: &HeaderMap) -> Result<Self, ApiError> {
         let presented = headers
             .get(axum::http::header::AUTHORIZATION)
             .and_then(|value| value.to_str().ok())
@@ -165,7 +165,7 @@ impl DeviceAuth {
                 "missing device token",
             )));
         }
-        match state.device_for_token(presented) {
+        match state.device_for_token(presented).await {
             Some(record) => Ok(Self(record)),
             None => Err(ApiError::new(RepoNyxError::new(
                 ErrorCode::AuthenticationExpired,
@@ -220,17 +220,19 @@ async fn setup_state(
     headers: HeaderMap,
 ) -> Result<Json<SetupStateResponse>, ApiError> {
     SetupToken::from_headers(&state, &headers)?;
-    let (state_value, expires_at) = state.issue_setup_state();
+    let (state_value, expires_at) = state.issue_setup_state().await.map_err(ApiError::new)?;
     let install_url = format!(
         "https://github.com/apps/{}/installations/new?state={}",
         state.config.app_slug, state_value
     );
-    state.audit(
-        "setup",
-        "setup.state_issued",
-        "success",
-        "install state issued",
-    );
+    state
+        .audit(
+            "setup",
+            "setup.state_issued",
+            "success",
+            "install state issued",
+        )
+        .await;
     Ok(Json(SetupStateResponse {
         state: state_value,
         install_url,
@@ -263,36 +265,49 @@ async fn github_callback(
     let setup_action = query.setup_action.unwrap_or_else(|| "install".to_string());
     let state_value = query.state.unwrap_or_default();
     if installation_id.is_empty() || state_value.is_empty() {
-        state.audit(
-            &ip,
-            "callback.failed",
-            "failure",
-            "missing installation_id or state",
-        );
+        state
+            .audit(
+                &ip,
+                "callback.failed",
+                "failure",
+                "missing installation_id or state",
+            )
+            .await;
         return Err(ApiError::new(RepoNyxError::new(
             ErrorCode::InvalidInput,
             "installation_id and state are required",
         )));
     }
-    if !state.consume_setup_state(&state_value) {
-        state.audit(
-            &ip,
-            "callback.failed",
-            "failure",
-            "invalid, reused, or expired state",
-        );
-        return Err(ApiError::new(RepoNyxError::new(
-            ErrorCode::InvalidInput,
-            "invalid, reused, or expired state",
-        )));
+    match state.consume_setup_state(&state_value).await {
+        Ok(true) => {}
+        Ok(false) => {
+            state
+                .audit(
+                    &ip,
+                    "callback.failed",
+                    "failure",
+                    "invalid, reused, or expired state",
+                )
+                .await;
+            return Err(ApiError::new(RepoNyxError::new(
+                ErrorCode::InvalidInput,
+                "invalid, reused, or expired state",
+            )));
+        }
+        Err(err) => return Err(ApiError::new(err)),
     }
-    state.record_installation(&installation_id, &setup_action, query.account_login);
-    state.audit(
-        &ip,
-        "callback.received",
-        "success",
-        format!("installation {installation_id} ({setup_action})"),
-    );
+    state
+        .record_installation(&installation_id, &setup_action, query.account_login)
+        .await
+        .map_err(ApiError::new)?;
+    state
+        .audit(
+            &ip,
+            "callback.received",
+            "success",
+            format!("installation {installation_id} ({setup_action})"),
+        )
+        .await;
     Ok(Json(CallbackResponse {
         status: "installed",
         installation_id,
@@ -327,17 +342,21 @@ async fn pairing_request(
         state.config.pairing_per_minute_per_ip,
         state.config.pairing_per_minute_per_ip / 60.0,
     )?;
-    let (code, expires_at) = state.request_pairing(
-        &body.installation_id,
-        &body.device_name,
-        &body.device_identifier,
-    )?;
-    state.audit(
-        &body.device_identifier,
-        "pairing.requested",
-        "success",
-        format!("installation {}", body.installation_id),
-    );
+    let (code, expires_at) = state
+        .request_pairing(
+            &body.installation_id,
+            &body.device_name,
+            &body.device_identifier,
+        )
+        .await?;
+    state
+        .audit(
+            &body.device_identifier,
+            "pairing.requested",
+            "success",
+            format!("installation {}", body.installation_id),
+        )
+        .await;
     Ok(Json(PairingRequestResponse {
         pairing_code: code,
         expires_at,
@@ -370,8 +389,9 @@ async fn pairing_confirm(
         20.0,
         20.0 / 60.0,
     )?;
-    let (device_token, installation_id) =
-        state.confirm_pairing(&body.pairing_code, &body.device_identifier)?;
+    let (device_token, installation_id) = state
+        .confirm_pairing(&body.pairing_code, &body.device_identifier)
+        .await?;
     // Safe by construction: ids only, never the code or the token.
     tracing::info!(
         device = %body.device_identifier,
@@ -402,7 +422,7 @@ async fn pairing_status(
     Query(query): Query<PairingStatusQuery>,
 ) -> Result<Json<PairingStatusResponse>, ApiError> {
     SetupToken::from_headers(&state, &headers)?;
-    let info: PairingStatusInfo = state.pairing_status(&query.code);
+    let info: PairingStatusInfo = state.pairing_status(&query.code).await;
     Ok(Json(PairingStatusResponse {
         status: info.status,
         installation_id: info.installation_id,
@@ -426,7 +446,10 @@ async fn pairing_revoke(
     Json(body): Json<PairingRevokeBody>,
 ) -> Result<Json<PairingRevokeResponse>, ApiError> {
     SetupToken::from_headers(&state, &headers)?;
-    let revoked = state.revoke_device(&body.device_identifier);
+    let revoked = state
+        .revoke_device(&body.device_identifier)
+        .await
+        .map_err(ApiError::new)?;
     Ok(Json(PairingRevokeResponse { revoked }))
 }
 
@@ -448,14 +471,16 @@ async fn mint_token(
     Path(installation_id): Path<String>,
     Json(body): Json<MintTokenBody>,
 ) -> Result<Json<MintTokenResponse>, ApiError> {
-    let device = DeviceAuth::from_headers(&state, &headers)?;
+    let device = DeviceAuth::from_headers(&state, &headers).await?;
     if device.0.installation_id != installation_id {
-        state.audit(
-            &device.0.device_identifier,
-            "token.mint_failed",
-            "failure",
-            format!("device not paired to installation {installation_id}"),
-        );
+        state
+            .audit(
+                &device.0.device_identifier,
+                "token.mint_failed",
+                "failure",
+                format!("device not paired to installation {installation_id}"),
+            )
+            .await;
         return Err(ApiError::new(RepoNyxError::new(
             ErrorCode::InsufficientPermissions,
             "device is not paired to this installation",
@@ -476,24 +501,28 @@ async fn mint_token(
                 device = %device.0.device_identifier,
                 "installation token minted"
             );
-            state.audit(
-                &device.0.device_identifier,
-                "token.minted",
-                "success",
-                format!("installation {installation_id}"),
-            );
+            state
+                .audit(
+                    &device.0.device_identifier,
+                    "token.minted",
+                    "success",
+                    format!("installation {installation_id}"),
+                )
+                .await;
             Ok(Json(MintTokenResponse {
                 token: token.token,
                 expires_at: token.expires_at,
             }))
         }
         Err(err) => {
-            state.audit(
-                &device.0.device_identifier,
-                "token.mint_failed",
-                "failure",
-                format!("installation {installation_id}: {}", err.code),
-            );
+            state
+                .audit(
+                    &device.0.device_identifier,
+                    "token.mint_failed",
+                    "failure",
+                    format!("installation {installation_id}: {}", err.code),
+                )
+                .await;
             Err(ApiError::new(err))
         }
     }
@@ -516,6 +545,7 @@ async fn list_installations(
     Ok(Json(
         state
             .list_installations()
+            .await
             .into_iter()
             .map(|record| InstallationResponse {
                 installation_id: record.installation_id,

@@ -13,6 +13,7 @@
 //! [`BrokerConfig`] redacts the key and the setup token.
 
 use std::net::SocketAddr;
+use std::path::PathBuf;
 use std::time::Duration;
 
 /// Default bind address (loopback only — the broker is a local
@@ -50,6 +51,10 @@ pub struct BrokerConfig {
     pub mint_per_minute_per_device: f64,
     /// Pairing-request rate limit: requests per minute per IP.
     pub pairing_per_minute_per_ip: f64,
+    /// Directory holding the durable broker state
+    /// (`broker.sqlite`). Default `broker-data` under the working
+    /// directory; override with `REPONYX_BROKER_DATA_DIR`.
+    pub data_dir: PathBuf,
 }
 
 impl std::fmt::Debug for BrokerConfig {
@@ -64,6 +69,7 @@ impl std::fmt::Debug for BrokerConfig {
             .field("pairing_ttl", &self.pairing_ttl)
             .field("state_ttl", &self.state_ttl)
             .field("max_pairing_attempts", &self.max_pairing_attempts)
+            .field("data_dir", &self.data_dir)
             .finish_non_exhaustive()
     }
 }
@@ -107,6 +113,9 @@ impl BrokerConfig {
             .unwrap_or_else(|_| DEFAULT_BIND_ADDR.to_string())
             .parse()
             .map_err(|e| format!("REPONYX_BROKER_BIND is not a valid socket address: {e}"))?;
+        let data_dir = std::env::var("REPONYX_BROKER_DATA_DIR")
+            .map(PathBuf::from)
+            .unwrap_or_else(|_| PathBuf::from("broker-data"));
         Ok(Self {
             app_id,
             app_slug,
@@ -119,6 +128,7 @@ impl BrokerConfig {
             max_pairing_attempts: DEFAULT_MAX_PAIRING_ATTEMPTS,
             mint_per_minute_per_device: 30.0,
             pairing_per_minute_per_ip: 10.0,
+            data_dir,
         })
     }
 
@@ -142,6 +152,7 @@ impl BrokerConfig {
             max_pairing_attempts: DEFAULT_MAX_PAIRING_ATTEMPTS,
             mint_per_minute_per_device: 30.0,
             pairing_per_minute_per_ip: 10.0,
+            data_dir: std::env::temp_dir().join("reponyx-broker-test"),
         }
     }
 }
@@ -166,6 +177,7 @@ mod tests {
             max_pairing_attempts: DEFAULT_MAX_PAIRING_ATTEMPTS,
             mint_per_minute_per_device: 30.0,
             pairing_per_minute_per_ip: 10.0,
+            data_dir: PathBuf::from("broker-data"),
         };
         let debug = format!("{config:?}");
         assert!(!debug.contains("test-key-material"));

@@ -12,7 +12,9 @@ pub mod config;
 pub mod rate_limit;
 pub mod routes;
 pub mod state;
+pub mod store;
 pub mod tokens;
 
 pub use routes::app;
 pub use state::BrokerState;
+pub use store::BrokerStore;

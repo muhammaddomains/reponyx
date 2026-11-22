@@ -68,10 +68,12 @@ the live database is kept as a `pre-restore-<timestamp>` fallback.
   never auto-executed), but opening a working clone in another tool
   may run its hooks. Inspect unfamiliar repositories before opening
   them elsewhere.
-- **Broker restarts lose pairing.** The Auth Broker keeps
-  installations, pairing codes, device tokens, and its audit log in
-  memory only; after a broker restart, devices must be re-paired.
-  Durable broker storage is an open hardening item.
+- **Broker state survives restarts.** The Auth Broker persists
+  installations, pairing codes, device tokens, and its audit log
+  in SQLite (`broker.sqlite` under the broker data directory);
+  only the short-lived token cache and the rate-limiter buckets
+  are still in-memory. Audit events older than 90 days are pruned
+  at startup.
 - **Secrets never leave their stores.** The GitHub App private key
   exists only in the Auth Broker; PATs only in the OS credential
   store; the desktop↔agent IPC uses a per-install shared secret from

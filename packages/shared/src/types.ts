@@ -385,3 +385,23 @@ export interface Settings {
   dataDir: string;
   appVersion: string;
 }
+
+/** The result of a diagnostics export (Phase 9). */
+export interface DiagnosticsExport {
+  path: string;
+  bytes: number;
+  generatedAt: string;
+}
+
+/** One database backup file (Phase 9). */
+export interface DatabaseBackup {
+  path: string;
+  bytes: number;
+  createdAt: string;
+}
+
+/** A staged restore (Phase 9): applied at the next startup. */
+export interface RestoreStaged {
+  pendingPath: string;
+  agentWasRunning: boolean;
+}

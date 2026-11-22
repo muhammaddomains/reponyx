@@ -1,8 +1,39 @@
 import { useCallback, useEffect, useState } from "react";
-import { getSettings, setSetting } from "@reponyx/api-client";
-import type { Settings } from "@reponyx/shared";
+import {
+  createDatabaseBackup,
+  deleteDatabaseBackup,
+  exportDiagnostics,
+  getSettings,
+  listDatabaseBackups,
+  openSupportFolder,
+  restoreDatabaseBackup,
+  setSetting,
+} from "@reponyx/api-client";
+import type {
+  DatabaseBackup,
+  DiagnosticsExport,
+  Settings,
+} from "@reponyx/shared";
 import { Button, Card } from "@reponyx/ui";
 import { applyTheme, parseTheme } from "../lib/theme";
+
+function formatBytes(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  if (bytes < 1024 * 1024 * 1024)
+    return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+  return `${(bytes / (1024 * 1024 * 1024)).toFixed(2)} GB`;
+}
+
+function formatDate(value: string): string {
+  if (!value) return "—";
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? value : date.toLocaleString();
+}
+
+function fileName(path: string): string {
+  return path.split(/[/\\]/).pop() ?? path;
+}
 
 function commandMessage(error: unknown): string {
   if (typeof error === "object" && error !== null) {
@@ -27,13 +58,20 @@ const inputClass =
  *  for newly discovered repositories (`sync.default_mode`) and how
  *  many syncs run at once (`sync.concurrency`, takes effect when
  *  the agent next starts). Storage: the archive root
- *  (`storage.root`). Advanced is read-only information. */
+ *  (`storage.root`). Advanced is read-only information.
+ *  Diagnostics & backup (Phase 9) exports a redacted support file
+ *  and manages consistent database snapshots. */
 export default function Settings() {
   const [settings, setSettings] = useState<Settings | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState<string | null>(null);
+  const [backups, setBackups] = useState<DatabaseBackup[]>([]);
+  const [lastExport, setLastExport] = useState<DiagnosticsExport | null>(
+    null,
+  );
+  const [diagBusy, setDiagBusy] = useState(false);
 
   const [theme, setTheme] = useState("system");
   const [mode, setMode] = useState("mirror");
@@ -49,6 +87,10 @@ export default function Settings() {
     setStorageRoot(loaded.storageRoot ?? "");
   }, []);
 
+  const refreshBackups = useCallback(async () => {
+    setBackups(await listDatabaseBackups());
+  }, []);
+
   useEffect(() => {
     let cancelled = false;
     refresh()
@@ -58,10 +100,13 @@ export default function Settings() {
       .finally(() => {
         if (!cancelled) setLoading(false);
       });
+    refreshBackups().catch(() => {
+      // Backups are a convenience; the list can stay empty.
+    });
     return () => {
       cancelled = true;
     };
-  }, [refresh]);
+  }, [refresh, refreshBackups]);
 
   async function save(key: string, value: string, label: string) {
     setError(null);
@@ -92,6 +137,95 @@ export default function Settings() {
       return;
     }
     void save("sync.concurrency", String(parsed), "Concurrent syncs");
+  }
+
+  async function handleExportDiagnostics() {
+    setError(null);
+    setNotice(null);
+    setDiagBusy(true);
+    try {
+      const exported = await exportDiagnostics();
+      setLastExport(exported);
+      setNotice(
+        `Diagnostics exported (${formatBytes(exported.bytes)}). It holds versions, counts, storage sizes and a redacted log tail — no credentials and no repository contents.`,
+      );
+    } catch (e: unknown) {
+      setError(commandMessage(e));
+    } finally {
+      setDiagBusy(false);
+    }
+  }
+
+  async function handleCreateBackup() {
+    setError(null);
+    setNotice(null);
+    setDiagBusy(true);
+    try {
+      const backup = await createDatabaseBackup();
+      setNotice(
+        `Database backed up (${formatBytes(backup.bytes)}). A restore replaces the live database at the next startup.`,
+      );
+      await refreshBackups();
+    } catch (e: unknown) {
+      setError(commandMessage(e));
+    } finally {
+      setDiagBusy(false);
+    }
+  }
+
+  async function handleDeleteBackup(backup: DatabaseBackup) {
+    if (
+      !window.confirm(
+        `Delete this database backup?\n\n${fileName(backup.path)}\n\nThis cannot be undone.`,
+      )
+    ) {
+      return;
+    }
+    setError(null);
+    setNotice(null);
+    setDiagBusy(true);
+    try {
+      await deleteDatabaseBackup(backup.path);
+      setNotice("Backup deleted.");
+      await refreshBackups();
+    } catch (e: unknown) {
+      setError(commandMessage(e));
+    } finally {
+      setDiagBusy(false);
+    }
+  }
+
+  async function handleRestoreBackup(backup: DatabaseBackup) {
+    if (
+      !window.confirm(
+        `Restore the database from this backup?\n\n${fileName(backup.path)}\n\nThe backup is checked first, and the background agent is stopped while the restore is staged. Nothing changes until you quit RepoNyx completely and relaunch it. The current database is kept as a fallback.`,
+      )
+    ) {
+      return;
+    }
+    setError(null);
+    setNotice(null);
+    setDiagBusy(true);
+    try {
+      const staged = await restoreDatabaseBackup(backup.path);
+      setNotice(
+        `Restore staged. Quit RepoNyx completely and relaunch it to apply the backup. The current database is kept as a fallback.${staged.agentWasRunning ? " The background agent was stopped; it restarts when needed." : ""}`,
+      );
+      await refreshBackups();
+    } catch (e: unknown) {
+      setError(commandMessage(e));
+    } finally {
+      setDiagBusy(false);
+    }
+  }
+
+  async function handleOpenFolder(folder: "diagnostics" | "backups") {
+    setError(null);
+    try {
+      await openSupportFolder(folder);
+    } catch (e: unknown) {
+      setError(commandMessage(e));
+    }
   }
 
   return (
@@ -274,6 +408,102 @@ export default function Settings() {
                 </dd>
               </div>
             </dl>
+          </Card>
+
+          <Card className="space-y-4 p-4">
+            <h2 className="text-lg font-semibold">Diagnostics & backup</h2>
+            <div className="space-y-2">
+              <p className="text-sm text-zinc-500">
+                The diagnostics file holds versions, counts, storage
+                sizes and a redacted log tail — no credentials and no
+                repository contents. Send it when reporting a problem.
+              </p>
+              <div className="flex flex-wrap items-center gap-3">
+                <Button
+                  variant="secondary"
+                  disabled={diagBusy}
+                  onClick={() => void handleExportDiagnostics()}
+                >
+                  Export diagnostics
+                </Button>
+                <Button
+                  variant="secondary"
+                  disabled={diagBusy}
+                  onClick={() => void handleOpenFolder("diagnostics")}
+                >
+                  Open folder
+                </Button>
+              </div>
+              {lastExport && (
+                <p className="truncate font-mono text-sm text-zinc-600 dark:text-zinc-400">
+                  {lastExport.path}
+                </p>
+              )}
+            </div>
+            <div className="space-y-2">
+              <p className="text-sm text-zinc-500">
+                Backups are consistent snapshots of the database. A
+                restore is checked, staged, and applied when RepoNyx
+                next starts — the current database is kept as a
+                fallback.
+              </p>
+              <div className="flex flex-wrap items-center gap-3">
+                <Button
+                  variant="secondary"
+                  disabled={diagBusy}
+                  onClick={() => void handleCreateBackup()}
+                >
+                  Back up database now
+                </Button>
+                <Button
+                  variant="secondary"
+                  disabled={diagBusy}
+                  onClick={() => void handleOpenFolder("backups")}
+                >
+                  Open folder
+                </Button>
+              </div>
+              {backups.length === 0 ? (
+                <p className="text-sm text-zinc-500">
+                  No backups yet.
+                </p>
+              ) : (
+                <ul className="space-y-2">
+                  {backups.map((backup) => (
+                    <li
+                      key={backup.path}
+                      className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-zinc-200 px-3 py-2 dark:border-zinc-800"
+                    >
+                      <div className="min-w-0">
+                        <p className="truncate font-mono text-sm">
+                          {fileName(backup.path)}
+                        </p>
+                        <p className="text-sm text-zinc-500">
+                          {formatBytes(backup.bytes)} ·{" "}
+                          {formatDate(backup.createdAt)}
+                        </p>
+                      </div>
+                      <div className="flex flex-wrap gap-2">
+                        <Button
+                          variant="secondary"
+                          disabled={diagBusy}
+                          onClick={() => void handleRestoreBackup(backup)}
+                        >
+                          Restore
+                        </Button>
+                        <Button
+                          variant="danger"
+                          disabled={diagBusy}
+                          onClick={() => void handleDeleteBackup(backup)}
+                        >
+                          Delete
+                        </Button>
+                      </div>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
           </Card>
         </>
       )}

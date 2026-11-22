@@ -8,6 +8,7 @@
 
 mod agent;
 mod auth;
+mod diagnostics;
 mod repositories;
 mod schedules;
 mod settings;
@@ -63,6 +64,11 @@ pub fn run() {
     let data_dir = dirs_data_dir();
     let log_dir = data_dir.join("logs");
     let _ = reponyx_logging::init_logging(&log_dir);
+
+    // A staged database restore (from the Settings page) is applied
+    // here, before the database opens — see `diagnostics.rs`. A
+    // failure leaves the live database untouched.
+    diagnostics::apply_pending_restore(&data_dir);
 
     // Open (and migrate) the database before the UI starts. A failure
     // here must not crash the app: the UI reports zero counts and the
@@ -140,6 +146,12 @@ pub fn run() {
             storage::delete_orphan_command,
             storage::delete_local_archive_command,
             storage::move_archive_for_rename_command,
+            diagnostics::export_diagnostics_command,
+            diagnostics::create_database_backup_command,
+            diagnostics::list_database_backups_command,
+            diagnostics::delete_database_backup_command,
+            diagnostics::restore_database_backup_command,
+            diagnostics::open_support_folder_command,
             settings::get_settings_command,
             settings::set_setting_command,
         ])

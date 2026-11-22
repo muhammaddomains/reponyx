@@ -1,12 +1,13 @@
 # RepoNyx — Project Status
 
-Last updated: 2026-11-21 (Phase 9 storage management + orphan
-detection built — see "Phase 9 — Storage management + orphan
-detection" below; submodules + Both-mode completion built the same
-day; LFS sync built the same day; Phase 8 Settings page built —
-all 6 pages done; Schedules + Repositories + Synchronization +
-Activity + Storage pages done the same day; Phase 6 / Phase 7
-fixes verified + live end-to-end run on this VM — see "Phase 6 /
+Last updated: 2026-11-21 (Phase 9 diagnostics export + DB backup
+built — see "Phase 9 — Diagnostics export + DB backup" below;
+storage management + orphan detection built the same day;
+submodules + Both-mode completion built the same day; LFS sync
+built the same day; Phase 8 Settings page built — all 6 pages
+done; Schedules + Repositories + Synchronization + Activity +
+Storage pages done the same day; Phase 6 / Phase 7 fixes
+verified + live end-to-end run on this VM — see "Phase 6 /
 Phase 7 fixes + re-verification" and "Live end-to-end run" below)
 
 ## Current phase
@@ -27,8 +28,8 @@ built (Schedules, Repositories, Synchronization, Activity,
 Storage, and Settings — see the "Phase 8" sections below).**
 **Phase 9 — Advanced Features — started 2026-11-21: LFS sync +
 verification built, then submodule sync + Both-mode completion,
-then storage management + orphan detection (see the "Phase 9"
-sections below).**
+then storage management + orphan detection, then diagnostics
+export + DB backup (see the "Phase 9" sections below).**
 The desktop Rust wiring is verified by `cargo fmt` + review
 only (the gdk blocker); the real desktop compile check is the
 user's Windows build. Remaining honest gaps are listed in the
@@ -128,8 +129,52 @@ fixes section. Work is on `main` going forward.
   in this step — the Synchronization page already lists
   SubmoduleSync/WorkingClone jobs and the Activity page already
   shows `submodule_sync` operations.
-  Still open in Phase 9: diagnostics export + DB backup,
-  import/export, performance pass.
+  Still open in Phase 9: import/export, performance pass.
+
+- **Phase 9 — Diagnostics export + DB backup (actual,
+  2026-11-21, assistant, uncommitted at the time of writing):**
+  the fifth Phase 9 task. Two support tools, both on the
+  Settings page. **Diagnostics export:** one JSON file under
+  `<data_dir>/diagnostics/` with the app version, OS, git/LFS
+  versions, database counts, storage sizes, the four non-secret
+  settings, a 100-line log tail and the last 50 error lines.
+  Every free-text field goes through `redact_secrets`, and the
+  finished file is checked by a new `verify_no_secrets` scan
+  before it is written — a failed scan writes nothing (the scan
+  accepts the `[REDACTED]` marker and documented placeholders
+  like `C:/path/...`, and fails on raw PAT shapes, live
+  Authorization headers, PEM private-key blocks, credential
+  `key=value` pairs, and credentials in URLs). **Database
+  backup:** consistent snapshots via `VACUUM INTO` (never a
+  file copy of a live WAL database) under `<data_dir>/backups/`,
+  listed newest-first with size and date, deletable. **Restore:**
+  the file is validated first (SQLite header +
+  `PRAGMA integrity_check` + `settings` table, on a throwaway
+  read-only connection), the background agent is stopped over
+  IPC (`ClientMessage::Shutdown` — it holds the database open
+  and is re-spawned on demand), and the file is staged as
+  `reponyx.sqlite.restore-pending`. The swap happens at the
+  next startup, before the database opens: the header is
+  checked again, the live database is moved aside as a
+  `pre-restore-<timestamp>` fallback, stale WAL sidecars are
+  dropped, and any failure leaves the live database untouched
+  (a failed swap tries to put the live file back). Paths from
+  the UI for delete/restore are canonicalized and must stay
+  under the backups folder. New testable pieces live in the
+  library crates: the scan + `tail_lines` in `reponyx-logging`
+  (10 new tests), `diagnostics_counts` + `backup_database` +
+  `validate_backup_file` + the settings allowlist in
+  `reponyx-database` (7 new tests, incl. a backup round-trip
+  that re-opens the snapshot and counts rows). One real sqlx
+  behaviour found while building: dynamic SQL needs
+  `AssertSqlSafe` — `VACUUM INTO` takes no bound parameters,
+  so the escaped path is interpolated with an audit comment.
+  Verified: fmt pass, clippy 0 warnings (3 `question_mark`
+  nits fixed), `cargo test` 395 passed / 0 failed (was 378,
+  +17), typecheck + desktop build (1.88 s) + eslint pass.
+  Desktop Rust is fmt + review only (gdk blocker), as usual;
+  the new commands' signatures were checked against the real
+  helpers by review.
 
 - **Phase 9 — Storage management + orphan detection (actual,
   2026-11-21, assistant, uncommitted at the time of writing):**

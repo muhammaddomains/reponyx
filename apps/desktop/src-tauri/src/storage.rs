@@ -130,7 +130,9 @@ pub struct MoveArchiveResult {
 /// Effective storage root: the `storage.root` setting when it is set
 /// and non-empty, otherwise the product data directory (the same
 /// default the background agent seeds on start).
-async fn effective_storage_root(database: &Database) -> Result<(PathBuf, bool), CommandError> {
+pub(crate) async fn effective_storage_root(
+    database: &Database,
+) -> Result<(PathBuf, bool), CommandError> {
     let setting = get_setting(&database.pool, "storage.root").await?;
     match setting {
         Some(setting) if !setting.value.trim().is_empty() => {
@@ -511,7 +513,7 @@ pub async fn delete_local_archive_command(
         Ok(freed)
     })
     .await
-    .map_err(|err| internal(format!("storage delete failed: {err}")))?;
+    .map_err(|err| internal(format!("storage delete failed: {err}")))??;
     set_local_path(&database.pool, repo.id, None).await?;
     set_archive_status(&database.pool, repo.id, ArchiveStatus::Pending).await?;
     Ok(freed)
@@ -603,7 +605,7 @@ pub async fn move_archive_for_rename_command(
         })
         .await
         .map_err(|err| internal(format!("storage move failed: {err}")))?
-    };
+    }?;
     set_local_path(
         &database.pool,
         repo.id,

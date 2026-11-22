@@ -27,7 +27,10 @@ module + runner auto-enqueue + 9 fixture tests, `cargo test` 373
 passed / 0 failed; storage management + orphan detection built
 the same day — engine scan + safe delete, DB `set_local_path`,
 3 Tauri commands, Storage page sections + actions, `cargo test`
-378 passed / 0 failed; diagnostics/backup, import/export,
+378 passed / 0 failed; diagnostics/backup built the same day —
+secret scan + log tail, `VACUUM INTO` backup + validation, 6
+Tauri commands, Settings page section, restore staged for the
+next startup, `cargo test` 395 passed / 0 failed; import/export,
 performance still open). See
 `ai/memory/PROJECT_STATUS.md` for the honest current state.
 

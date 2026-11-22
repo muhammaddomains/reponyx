@@ -77,6 +77,32 @@ fn client() -> Result<IpcClient, CommandError> {
     IpcClient::open(data_dir(), &store).map_err(CommandError::from)
 }
 
+/// Stop the background agent if it is running, so a database
+/// restore can replace the file it holds open. Returns `true`
+/// when an agent was running and has stopped. The agent is
+/// re-spawned on demand (the Agent page's "Ensure running", or the
+/// next sync enqueue), so stopping it here loses nothing.
+pub(crate) async fn stop_agent_if_running() -> CommandResult<bool> {
+    let dir = data_dir();
+    if !agent_reachable(&dir).await {
+        return Ok(false);
+    }
+    client()?
+        .shutdown_agent()
+        .await
+        .map_err(CommandError::from)?;
+    for _ in 0..20 {
+        tokio::time::sleep(Duration::from_millis(250)).await;
+        if !agent_reachable(&dir).await {
+            return Ok(true);
+        }
+    }
+    Err(CommandError {
+        code: "InternalError".into(),
+        message: "background agent did not stop; the database restore was not staged".into(),
+    })
+}
+
 #[tauri::command]
 pub async fn agent_health_command() -> CommandResult<AgentHealthView> {
     let dir = data_dir();

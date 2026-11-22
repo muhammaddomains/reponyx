@@ -5,6 +5,43 @@ All notable changes to RepoNyx are documented here. Format follows
 
 ## [Unreleased]
 
+### Fixed — CI windows-build on the storage push (2026-11-22)
+
+- CI run 44976745886 (`eab7e23`) failed `cargo check -p
+  reponyx-desktop` with two E0308 errors in
+  `apps/desktop/src-tauri/src/storage.rs`: the `spawn_blocking`
+  closures return `CommandResult<...>`, so
+  `.await.map_err(...)?` leaves the inner Result —
+  `delete_local_archive_command` wrapped it in `Ok(...)` and
+  `move_archive_for_rename_command` destructured it as a plain
+  tuple. Both now unwrap the inner Result. The other two
+  `spawn_blocking` sites were checked and are correct (the
+  overview closure returns a plain tuple; delete_orphan returns
+  the inner Result as the function's tail). Lesson for desktop
+  Rust review: a closure returning `CommandResult<T>` nests two
+  Results — one `?` only peels the JoinError.
+
+### Added — Phase 9 diagnostics export + DB backup (2026-11-21)
+
+- The Settings page has a Diagnostics & backup section. Export
+  diagnostics writes one redacted JSON file (app version, OS,
+  git/LFS versions, database counts, storage sizes, the four
+  non-secret settings, a 100-line log tail + the last 50 error
+  lines) — every free-text field is redacted, and the finished
+  file is scanned again for secret shapes; a failed scan writes
+  nothing. Database backups are consistent `VACUUM INTO`
+  snapshots (never a file copy of a live WAL database), listed
+  with size and date, deletable, and restorable: a restore
+  validates the file (SQLite header + `integrity_check` +
+  `settings` table), stops the background agent over IPC, and
+  stages the file — the swap happens at the next startup, before
+  the database opens, with the replaced live database kept as a
+  `pre-restore` fallback and stale WAL sidecars dropped. New
+  testable pieces: the secret scan + log tail in
+  `reponyx-logging`, counts + backup + validation + the settings
+  allowlist in `reponyx-database`. Verified: `cargo test` 395
+  passed / 0 failed (was 378, +17).
+
 ### Added — Phase 9 storage management + orphan detection (2026-11-21)
 
 - The Storage page now shows what is wrong with the storage, not

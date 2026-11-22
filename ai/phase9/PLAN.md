@@ -29,7 +29,7 @@ diagnostics, backup tools, import/export, performance improvements.
 - [x] Submodule sync
 - [x] Both-mode completion (mirror + working clone)
 - [x] Storage management UI + orphan detection
-- [ ] Diagnostics export + DB backup tools
+- [x] Diagnostics export + DB backup tools
 - [ ] Import/export
 - [ ] Performance pass with measurements
 
@@ -73,6 +73,17 @@ Phases 3, 6–8.
   the storage root at delete time and refuses paths outside the
   root, non-archive directories, and (for orphans) paths a
   repository row still points at.
+- A database restore replaces the live file only at the next
+  startup, and only after the backup passed validation (SQLite
+  header + `integrity_check` + `settings` table) and the
+  background agent was stopped over IPC — the agent holds the
+  database open, and it is re-spawned on demand. The replaced
+  live database is kept as a `pre-restore` fallback, and stale
+  WAL sidecars are dropped before the swap so old frames cannot
+  replay into the restored file.
+- The diagnostics export is built from redacted strings and then
+  scanned again (`verify_no_secrets`): a failed scan writes
+  nothing. Only the four seeded non-secret settings are included.
 
 ## Completion status
 
@@ -84,4 +95,9 @@ tests; `cargo test` 373 passed / 0 failed). Storage management
 + orphan detection done the same day (engine scan + safe
 delete, DB `set_local_path`, 3 new Tauri commands, Storage
 page sections + actions; `cargo test` 378 passed / 0 failed).
-Remaining: diagnostics/backup, import/export, performance.
+Diagnostics export + DB backup done the same day (secret scan
++ log tail in `reponyx-logging`, counts + `VACUUM INTO` backup
++ validation in `reponyx-database`, 6 new Tauri commands,
+Settings page section, restore staged for the next startup;
+`cargo test` 395 passed / 0 failed).
+Remaining: import/export, performance.

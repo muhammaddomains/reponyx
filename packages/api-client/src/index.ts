@@ -17,6 +17,8 @@ import {
   brokerInstallationSchema,
   brokerStatusSchema,
   dashboardCountsSchema,
+  databaseBackupSchema,
+  diagnosticsExportSchema,
   discoveryOutcomeSchema,
   effectiveScheduleSchema,
   gitStatusSchema,
@@ -31,6 +33,7 @@ import {
   providerAccountInfoSchema,
   renamedArchiveSchema,
   repositorySchema,
+  restoreStagedSchema,
   scheduleWithNextRunSchema,
   settingsSchema,
   storageOverviewSchema,
@@ -44,6 +47,8 @@ import type {
   BrokerInstallation,
   BrokerStatus,
   DashboardCounts,
+  DatabaseBackup,
+  DiagnosticsExport,
   DiscoveryOutcome,
   EffectiveSchedule,
   GitStatus,
@@ -57,6 +62,7 @@ import type {
   PatExpiry,
   ProviderAccountInfo,
   Repository,
+  RestoreStaged,
   ScheduleWithNextRun,
   Settings,
   StorageOverview,
@@ -464,6 +470,46 @@ export async function setSetting(key: string, value: string): Promise<string> {
   return z
     .string()
     .parse(await invokeCommand("set_setting_command", { key, value }));
+}
+
+/** Phase 9 diagnostics + database backup commands (Tauri
+ *  `diagnostics.rs`). The export is a redacted JSON file with no
+ *  credentials; a restore is staged and applied at the next
+ *  startup, after the agent has been stopped. */
+export async function exportDiagnostics(): Promise<DiagnosticsExport> {
+  return diagnosticsExportSchema.parse(
+    await invokeCommand("export_diagnostics_command"),
+  );
+}
+
+export async function createDatabaseBackup(): Promise<DatabaseBackup> {
+  return databaseBackupSchema.parse(
+    await invokeCommand("create_database_backup_command"),
+  );
+}
+
+export async function listDatabaseBackups(): Promise<DatabaseBackup[]> {
+  return z
+    .array(databaseBackupSchema)
+    .parse(await invokeCommand("list_database_backups_command"));
+}
+
+export async function deleteDatabaseBackup(path: string): Promise<void> {
+  await invokeCommand("delete_database_backup_command", { path });
+}
+
+export async function restoreDatabaseBackup(
+  path: string,
+): Promise<RestoreStaged> {
+  return restoreStagedSchema.parse(
+    await invokeCommand("restore_database_backup_command", { path }),
+  );
+}
+
+export async function openSupportFolder(
+  folder: "diagnostics" | "backups",
+): Promise<void> {
+  await invokeCommand("open_support_folder_command", { folder });
 }
 
 /** Phase 7 background-agent commands (Tauri `agent.rs`). The agent

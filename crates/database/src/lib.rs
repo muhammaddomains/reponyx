@@ -13,6 +13,7 @@ pub mod accounts;
 pub mod audit;
 pub mod counts;
 pub mod devices;
+pub mod diagnostics;
 pub mod history;
 pub mod installations;
 pub mod jobs;
@@ -24,4 +25,8 @@ pub mod settings;
 mod common;
 
 pub use counts::dashboard_counts;
+pub use diagnostics::{
+    DiagnosticsCounts, backup_database, diagnostics_counts, is_safe_for_diagnostics,
+    validate_backup_file,
+};
 pub use pool::{Database, open_database};

@@ -311,3 +311,20 @@ export const settingsSchema = z.object({
   dataDir: z.string(),
   appVersion: z.string(),
 });
+
+export const diagnosticsExportSchema = z.object({
+  path: z.string(),
+  bytes: z.number().int().nonnegative(),
+  generatedAt: z.string(),
+});
+
+export const databaseBackupSchema = z.object({
+  path: z.string(),
+  bytes: z.number().int().nonnegative(),
+  createdAt: z.string(),
+});
+
+export const restoreStagedSchema = z.object({
+  pendingPath: z.string(),
+  agentWasRunning: z.boolean(),
+});

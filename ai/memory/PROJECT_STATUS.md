@@ -31,6 +31,23 @@ Work is on `main` going forward.
 
 ## Completed tasks
 
+- **CI run #34 failure fixed (actual, 2026-11-21, assistant,
+  uncommitted at the time of writing):** run #34 on commit
+  `0cfc96d` failed only in the `rust` job — the git-engine health
+  test `corrupt_object_is_caught_by_fsck` panicked with
+  `PermissionDenied` at `health.rs:150`. Git stores object files
+  read-only (0444), so overwriting one fails with EACCES for a
+  non-root user; this VM runs as root, so the bug never showed
+  here. The test now removes the object file first (deleting
+  needs directory write permission, not file permission) and
+  writes the corrupted bytes back. Root cause proven by running
+  the test binary as user `nobody` (like the runner): exact CI
+  panic before the fix, 6/6 health tests green after it (3 runs).
+  Run #34's annotations list only the `rust` error — the
+  `windows-build` job passed, confirming the run #32
+  desktop-compile fix in CI. Verification: fmt pass, clippy 0
+  warnings, `cargo test` 332 passed / 0 failed. Test-only change.
+
 - **CI run #32 failures fixed (actual, 2026-11-21, assistant,
   uncommitted at the time of writing):** CI run #32 on commit
   `65d4c2f` failed in two jobs. (1) `rust`: the git-engine

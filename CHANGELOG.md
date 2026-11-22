@@ -5,6 +5,22 @@ All notable changes to RepoNyx are documented here. Format follows
 
 ## [Unreleased]
 
+### Fixed — CI run #34 failure (2026-11-21)
+
+- `rust` job: `corrupt_object_is_caught_by_fsck` (git-engine
+  health test) failed on the runner with `PermissionDenied` at
+  `health.rs:150` — the test overwrote a git object file, but git
+  stores objects read-only (0444), so the write fails with EACCES
+  for a non-root user. This VM runs as root, so the bug never
+  showed here. The test now removes the object file first
+  (deleting needs write permission on the directory, not the
+  file) and writes the corrupted bytes back under the same name.
+  Root cause was proven by running the test binary as user
+  `nobody` (like the runner): it failed with the exact CI panic
+  before the fix and passes after it. Note: run #34's annotations
+  list only the `rust` error — the `windows-build` job passed,
+  so the run #32 desktop-compile fix is confirmed working in CI.
+
 ### Fixed — CI run #32 failures (2026-11-21)
 
 - `rust` job: `cancel_mirror_clone_leaves_diagnosable_destination`

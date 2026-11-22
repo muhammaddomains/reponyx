@@ -147,6 +147,13 @@ async fn corrupt_object_is_caught_by_fsck() {
         .join(&sha[2..]);
     let mut bytes = std::fs::read(&object).unwrap();
     bytes[0] ^= 0xff;
+    // Git stores objects read-only (0444), so overwriting one
+    // fails with EACCES for a non-root user. This VM runs as root,
+    // so the write succeeds here and the bug only shows on CI.
+    // Remove the file first — deleting needs write permission on
+    // the directory, not the file — then write the corrupted
+    // bytes back under the same name.
+    std::fs::remove_file(&object).unwrap();
     std::fs::write(&object, bytes).unwrap();
     let diagnosis = verify(&work).await;
     assert_eq!(diagnosis.status, HealthStatus::Corrupt);

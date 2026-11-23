@@ -89,6 +89,7 @@ pub fn run() {
 
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .manage(db_state)
         .manage(auth::AuthState::new())
@@ -96,6 +97,7 @@ pub fn run() {
             if let Err(e) = tray::setup_tray(app.handle()) {
                 tracing::warn!(error = %e, "tray setup failed; continuing without tray");
             }
+            agent::start_progress_forwarder(app.handle());
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![

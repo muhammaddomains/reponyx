@@ -52,6 +52,30 @@ pub async fn run_agent() -> Result<(), Box<dyn std::error::Error>> {
     let cancel = CancellationToken::new();
     let (ipc_server, cmd_rx) = bind_ipc(&data, store, generation).await?;
 
+    // Forward the queue's progress events to IPC subscribers. The
+    // queue broadcasts typed events; the IPC server forwards JSON
+    // values, so a small adapter serializes each event into a JSON
+    // broadcast channel whose receiver the server hands to every
+    // connection (see `AgentIpcServer::set_progress_source`). The
+    // adapter ends on its own when the queue shuts down.
+    {
+        let (json_tx, json_rx) = tokio::sync::broadcast::channel::<serde_json::Value>(256);
+        ipc_server.set_progress_source(json_rx).await;
+        let mut queue_rx = state.queue.subscribe();
+        tokio::spawn(async move {
+            while let Ok(event) = queue_rx.recv().await {
+                match serde_json::to_value(event) {
+                    Ok(value) => {
+                        let _ = json_tx.send(value);
+                    }
+                    Err(e) => {
+                        warn!(error = %e, "could not serialize progress event");
+                    }
+                }
+            }
+        });
+    }
+
     // OS signals.
     let signal_cancel = cancel.clone();
     tokio::spawn(async move {

@@ -123,9 +123,10 @@ impl AgentIpcServer {
                             let token = self.expected_token.clone();
                             let generation = self.generation;
                             let commands = self.commands.clone();
+                            let progress_rx = Arc::clone(&self.progress_rx);
                             let cancel = cancel.child_token();
                             tokio::spawn(async move {
-                                if let Err(e) = handle_connection(conn, token, generation, commands, cancel).await {
+                                if let Err(e) = handle_connection(conn, token, generation, commands, progress_rx, cancel).await {
                                     debug!(error = %e, "ipc connection ended");
                                 }
                             });
@@ -141,16 +142,63 @@ impl AgentIpcServer {
 }
 
 async fn handle_connection(
-    mut conn: transport::Conn,
+    conn: transport::Conn,
     expected_token: String,
     generation: u64,
     commands: mpsc::Sender<AgentCommand>,
+    progress_rx: Arc<RwLock<Option<tokio::sync::broadcast::Receiver<serde_json::Value>>>>,
     cancel: tokio_util::sync::CancellationToken,
 ) -> Result<(), String> {
+    // Split the stream: the request loop owns the read half, and
+    // replies + progress pushes share the write half behind a mutex,
+    // so a push never waits for the next request to arrive.
+    let (mut reader, writer) = tokio::io::split(conn);
+    let writer = Arc::new(tokio::sync::Mutex::new(writer));
+
+    // Forward queue progress events to this connection as
+    // `ServerMessage::Progress` frames. Each connection gets its own
+    // resubscribed receiver; lag is expected (the UI polls the job
+    // list anyway) and just skips ahead. The forwarder ends when the
+    // connection is cancelled or its write half fails.
+    {
+        let writer = Arc::clone(&writer);
+        let cancel = cancel.clone();
+        tokio::spawn(async move {
+            let mut rx = {
+                let guard = progress_rx.read().await;
+                match guard.as_ref() {
+                    Some(rx) => rx.resubscribe(),
+                    None => return,
+                }
+            };
+            loop {
+                tokio::select! {
+                    _ = cancel.cancelled() => return,
+                    received = rx.recv() => {
+                        let event = match received {
+                            Ok(event) => event,
+                            // Lagged: a newer event is already queued.
+                            Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => continue,
+                            Err(tokio::sync::broadcast::error::RecvError::Closed) => return,
+                        };
+                        let bytes = match serde_json::to_vec(&ServerMessage::Progress { event }) {
+                            Ok(bytes) => bytes,
+                            Err(_) => continue,
+                        };
+                        let mut writer = writer.lock().await;
+                        if write_frame(&mut *writer, &bytes).await.is_err() {
+                            return;
+                        }
+                    }
+                }
+            }
+        });
+    }
+
     loop {
         tokio::select! {
             _ = cancel.cancelled() => return Ok(()),
-            frame = read_frame(&mut conn) => {
+            frame = read_frame(&mut reader) => {
                 let body = match frame {
                     Ok(b) => b,
                     Err(crate::frame::FrameError::Closed) => return Ok(()),
@@ -159,7 +207,8 @@ async fn handle_connection(
                 let msg = parse_client_message(&body)?;
                 let reply = dispatch(msg, &expected_token, generation, &commands).await;
                 let bytes = serde_json::to_vec(&reply).map_err(|e| e.to_string())?;
-                write_frame(&mut conn, &bytes).await.map_err(|e| e.to_string())?;
+                let mut writer = writer.lock().await;
+                write_frame(&mut *writer, &bytes).await.map_err(|e| e.to_string())?;
             }
         }
     }

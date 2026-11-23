@@ -58,7 +58,9 @@ const inputClass =
 
 /** Settings: the app's real configuration — every control here
  *  reads and writes a setting the code actually uses. General:
- *  theme (`ui.theme`, applied on startup). Sync: the default mode
+ *  theme (`ui.theme`, applied on startup). Notifications: a
+ *  system notification when a sync job finishes or fails
+ *  (`notifications.enabled`, on unless set to `false`). Sync: the default mode
  *  for newly discovered repositories (`sync.default_mode`) and how
  *  many syncs run at once (`sync.concurrency`, takes effect when
  *  the agent next starts). Storage: the archive root
@@ -83,6 +85,7 @@ export default function Settings() {
   const [diagBusy, setDiagBusy] = useState(false);
 
   const [theme, setTheme] = useState("system");
+  const [notifications, setNotifications] = useState(true);
   const [mode, setMode] = useState("mirror");
   const [concurrency, setConcurrency] = useState("5");
   const [storageRoot, setStorageRoot] = useState("");
@@ -91,6 +94,7 @@ export default function Settings() {
     const loaded = await getSettings();
     setSettings(loaded);
     setTheme(parseTheme(loaded.theme));
+    setNotifications(loaded.notificationsEnabled ?? true);
     setMode(loaded.defaultSyncMode ?? "mirror");
     setConcurrency(String(loaded.concurrency ?? 5));
     setStorageRoot(loaded.storageRoot ?? "");
@@ -138,6 +142,11 @@ export default function Settings() {
     setTheme(next);
     applyTheme(next);
     await save("ui.theme", next, "Theme");
+  }
+
+  async function handleNotificationsChange(value: boolean) {
+    setNotifications(value);
+    await save("notifications.enabled", String(value), "Notifications");
   }
 
   function handleConcurrencySave() {
@@ -332,6 +341,28 @@ export default function Settings() {
                 System follows your OS theme at startup.
               </span>
             </div>
+          </Card>
+
+          <Card className="space-y-3 p-4">
+            <h2 className="text-lg font-semibold">Notifications</h2>
+            <label className="flex flex-wrap items-center gap-3 text-sm">
+              <input
+                type="checkbox"
+                checked={notifications}
+                disabled={saving === "notifications.enabled"}
+                onChange={(e) =>
+                  void handleNotificationsChange(e.target.checked)
+                }
+              />
+              <span className="font-medium">
+                Notify me when a sync finishes or fails
+              </span>
+            </label>
+            <p className="text-sm text-zinc-500">
+              A system notification names the repository and the job.
+              Turn it off to stay quiet — the Synchronization page
+              still shows every job.
+            </p>
           </Card>
 
           <Card className="space-y-4 p-4">

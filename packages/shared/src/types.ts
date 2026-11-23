@@ -388,6 +388,7 @@ export interface Settings {
   concurrency: number | null;
   storageRoot: string | null;
   theme: string | null;
+  notificationsEnabled: boolean | null;
   deviceIdentifier: string | null;
   dataDir: string;
   appVersion: string;
@@ -434,3 +435,36 @@ export interface ImportReport {
   schedulesUpdated: number;
   skipped: SkippedRef[];
 }
+
+/** Live progress event from the background agent (Phase 8). */
+export type SyncProgressEvent =
+  | {
+      type: "job_started";
+      job_id: string;
+      repository_id: string;
+      attempt: number;
+      operation: string;
+    }
+  | {
+      type: "job_progress";
+      job_id: string;
+      stage: string;
+      detail?: string | null;
+      percent?: number | null;
+    }
+  | {
+      type: "job_completed";
+      job_id: string;
+      repository_id: string;
+      duration_ms?: number | null;
+    }
+  | {
+      type: "job_failed";
+      job_id: string;
+      repository_id: string;
+      error_code: string;
+      message: string;
+      will_retry: boolean;
+      next_attempt?: number | null;
+    }
+  | { type: "job_cancelled"; job_id: string; repository_id: string };

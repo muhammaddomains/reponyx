@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { useVirtualizer } from "@tanstack/react-virtual";
 import {
   agentEnqueue,
   deleteRepository,
@@ -93,6 +94,23 @@ export default function Repositories() {
   const [outcome, setOutcome] = useState<DiscoveryOutcome | null>(null);
 
   const [syncingId, setSyncingId] = useState<string | null>(null);
+
+  // True virtualization (Phase 8): only the rows on screen are in
+  // the DOM, however many repositories are loaded. The list still
+  // pages 100 rows at a time from the server ("Show more" below);
+  // the virtualizer renders the loaded rows. Row heights vary
+  // (long paths wrap), so each row is measured after mount and the
+  // estimate only seeds the scrollbar.
+  const listRef = useRef<HTMLDivElement | null>(null);
+  const rowVirtualizer = useVirtualizer({
+    count: repositories.length,
+    getScrollElement: () => listRef.current,
+    estimateSize: () => 190,
+    overscan: 5,
+    // Seeds the first paint (and jsdom, where the container has no
+    // layout yet); the ResizeObserver corrects it on mount.
+    initialRect: { width: 800, height: 640 },
+  });
 
   // Search applies 400 ms after the last keystroke, so every key
   // does not refetch the list.
@@ -486,132 +504,164 @@ export default function Repositories() {
             Select all shown ({visible.length})
           </label>
         )}
-        {visible.map((repository) => (
-          <Card key={repository.id} className="space-y-3 p-4">
-            <div className="flex flex-wrap items-start justify-between gap-2">
-              <div className="flex items-start gap-3">
-                <input
-                  type="checkbox"
-                  className="mt-1"
-                  checked={selected.has(repository.id)}
-                  onChange={() => toggleSelected(repository.id)}
-                  aria-label={`Select ${repository.fullName}`}
-                />
-                <div>
-                  <span className="font-medium">{repository.fullName}</span>
-                  <span className="ml-2 text-sm text-zinc-500">
-                    {accounts.find((a) => a.id === repository.accountId)
-                      ?.username ?? ""}
-                  </span>
-                  <p className="text-sm text-zinc-600 dark:text-zinc-400">
-                    Last synced: {formatDate(repository.lastSyncedAt)}
-                    {repository.localPath
-                      ? ` · ${repository.localPath}`
-                      : " · not synced yet"}
-                  </p>
-                </div>
-              </div>
-              <div className="flex items-center gap-2">
-                {statusBadge(repository.archiveStatus)}
-                <Badge>{repository.visibility}</Badge>
-                <Badge>{repository.syncMode}</Badge>
-                {!repository.syncEnabled && <Badge>sync off</Badge>}
-              </div>
+        {visible.length > 0 && (
+          <div
+            ref={listRef}
+            className="h-[640px] overflow-auto rounded-lg"
+          >
+            <div
+              style={{
+                height: `${rowVirtualizer.getTotalSize()}px`,
+                width: "100%",
+                position: "relative",
+              }}
+            >
+              {rowVirtualizer.getVirtualItems().map((virtualRow) => {
+                const repository = repositories[virtualRow.index];
+                return (
+                  <div
+                    key={repository.id}
+                    data-index={virtualRow.index}
+                    ref={rowVirtualizer.measureElement}
+                    style={{
+                      position: "absolute",
+                      top: 0,
+                      left: 0,
+                      width: "100%",
+                      transform: `translateY(${virtualRow.start}px)`,
+                    }}
+                    className="pb-4"
+                  >
+                    <Card className="space-y-3 p-4">
+                      <div className="flex flex-wrap items-start justify-between gap-2">
+                        <div className="flex items-start gap-3">
+                          <input
+                            type="checkbox"
+                            className="mt-1"
+                            checked={selected.has(repository.id)}
+                            onChange={() => toggleSelected(repository.id)}
+                            aria-label={`Select ${repository.fullName}`}
+                          />
+                          <div>
+                            <span className="font-medium">{repository.fullName}</span>
+                            <span className="ml-2 text-sm text-zinc-500">
+                              {accounts.find((a) => a.id === repository.accountId)
+                                ?.username ?? ""}
+                            </span>
+                            <p className="text-sm text-zinc-600 dark:text-zinc-400">
+                              Last synced: {formatDate(repository.lastSyncedAt)}
+                              {repository.localPath
+                                ? ` · ${repository.localPath}`
+                                : " · not synced yet"}
+                            </p>
+                          </div>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          {statusBadge(repository.archiveStatus)}
+                          <Badge>{repository.visibility}</Badge>
+                          <Badge>{repository.syncMode}</Badge>
+                          {!repository.syncEnabled && <Badge>sync off</Badge>}
+                        </div>
+                      </div>
+                      <div className="flex flex-wrap items-center gap-2">
+                        <Button
+                          variant="secondary"
+                          disabled={busy || syncingId === repository.id}
+                          onClick={() => void handleSyncNow(repository)}
+                        >
+                          {syncingId === repository.id ? "Queuing…" : "Sync now"}
+                        </Button>
+                        <Button
+                          variant="secondary"
+                          disabled={busy}
+                          onClick={() =>
+                            run(
+                              () =>
+                                updateRepository({
+                                  id: repository.id,
+                                  sync_enabled: !repository.syncEnabled,
+                                }),
+                              () =>
+                                setNotice(
+                                  repository.syncEnabled
+                                    ? `Paused ${repository.fullName}.`
+                                    : `Resumed ${repository.fullName}.`,
+                                ),
+                            )
+                          }
+                        >
+                          {repository.syncEnabled ? "Pause" : "Resume"}
+                        </Button>
+                        <select
+                          className="rounded-md border border-zinc-300 bg-white px-3 py-2 text-sm dark:border-zinc-700 dark:bg-zinc-900"
+                          value={repository.syncMode}
+                          disabled={busy}
+                          aria-label={`Sync mode for ${repository.fullName}`}
+                          onChange={(e) =>
+                            run(
+                              () =>
+                                updateRepository({
+                                  id: repository.id,
+                                  sync_mode: e.target.value as SyncMode,
+                                }),
+                              () =>
+                                setNotice(
+                                  `${repository.fullName} mode set to ${e.target.value}.`,
+                                ),
+                            )
+                          }
+                        >
+                          <option value="mirror">Mirror</option>
+                          <option value="working">Working clone</option>
+                          <option value="both">Both</option>
+                        </select>
+                        <Button
+                          variant="secondary"
+                          disabled={busy || !repository.localPath}
+                          onClick={() =>
+                            run(() => openRepositoryLocation(repository.id))
+                          }
+                        >
+                          Open folder
+                        </Button>
+                        <Button
+                          variant="secondary"
+                          disabled={busy}
+                          onClick={() =>
+                            run(() => openRepositoryInBrowser(repository.id))
+                          }
+                        >
+                          Open on GitHub
+                        </Button>
+                        <Button
+                          variant="danger"
+                          disabled={busy}
+                          onClick={() => {
+                            if (
+                              window.confirm(
+                                `Remove ${repository.fullName} from RepoNyx? Its local files on disk are kept — only the RepoNyx row is deleted.`,
+                              )
+                            ) {
+                              void run(
+                                () => deleteRepository(repository.id),
+                                () =>
+                                  setNotice(
+                                    `Removed ${repository.fullName}. Local files were kept.`,
+                                  ),
+                              );
+                            }
+                          }}
+                        >
+                          Remove
+                        </Button>
+                      </div>
+                    </Card>
+                  </div>
+                );
+              })}
             </div>
-            <div className="flex flex-wrap items-center gap-2">
-              <Button
-                variant="secondary"
-                disabled={busy || syncingId === repository.id}
-                onClick={() => void handleSyncNow(repository)}
-              >
-                {syncingId === repository.id ? "Queuing…" : "Sync now"}
-              </Button>
-              <Button
-                variant="secondary"
-                disabled={busy}
-                onClick={() =>
-                  run(
-                    () =>
-                      updateRepository({
-                        id: repository.id,
-                        sync_enabled: !repository.syncEnabled,
-                      }),
-                    () =>
-                      setNotice(
-                        repository.syncEnabled
-                          ? `Paused ${repository.fullName}.`
-                          : `Resumed ${repository.fullName}.`,
-                      ),
-                  )
-                }
-              >
-                {repository.syncEnabled ? "Pause" : "Resume"}
-              </Button>
-              <select
-                className="rounded-md border border-zinc-300 bg-white px-3 py-2 text-sm dark:border-zinc-700 dark:bg-zinc-900"
-                value={repository.syncMode}
-                disabled={busy}
-                aria-label={`Sync mode for ${repository.fullName}`}
-                onChange={(e) =>
-                  run(
-                    () =>
-                      updateRepository({
-                        id: repository.id,
-                        sync_mode: e.target.value as SyncMode,
-                      }),
-                    () =>
-                      setNotice(
-                        `${repository.fullName} mode set to ${e.target.value}.`,
-                      ),
-                  )
-                }
-              >
-                <option value="mirror">Mirror</option>
-                <option value="working">Working clone</option>
-                <option value="both">Both</option>
-              </select>
-              <Button
-                variant="secondary"
-                disabled={busy || !repository.localPath}
-                onClick={() =>
-                  run(() => openRepositoryLocation(repository.id))
-                }
-              >
-                Open folder
-              </Button>
-              <Button
-                variant="secondary"
-                disabled={busy}
-                onClick={() =>
-                  run(() => openRepositoryInBrowser(repository.id))
-                }
-              >
-                Open on GitHub
-              </Button>
-              <Button
-                variant="danger"
-                disabled={busy}
-                onClick={() => {
-                  if (
-                    window.confirm(
-                      `Remove ${repository.fullName} from RepoNyx? Its local files on disk are kept — only the RepoNyx row is deleted.`,
-                    )
-                  ) {
-                    void run(
-                      () => deleteRepository(repository.id),
-                      () =>
-                        setNotice(
-                          `Removed ${repository.fullName}. Local files were kept.`,
-                        ),
-                    );
-                  }
-                }}
-              >
-                Remove
-              </Button>
-            </div>
-          </Card>
-        ))}
+          </div>
+        )}
         {repositories.length < total && (
           <Button
             variant="secondary"

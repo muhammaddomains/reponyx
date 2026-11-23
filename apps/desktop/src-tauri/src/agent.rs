@@ -12,7 +12,7 @@ use serde::Serialize;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::Duration;
-use tauri::State;
+use tauri::{AppHandle, Emitter, State};
 use uuid::Uuid;
 
 #[derive(Debug, Clone, Serialize)]
@@ -75,6 +75,39 @@ fn data_dir() -> PathBuf {
 fn client() -> Result<IpcClient, CommandError> {
     let store = default_store();
     IpcClient::open(data_dir(), &store).map_err(CommandError::from)
+}
+
+/// Forward the agent's live progress stream to the frontend as
+/// `sync-progress` Tauri events, for as long as the app runs.
+///
+/// The subscription is a single long-lived IPC connection; if the
+/// agent is down (or goes away) the forwarder retries every 10 s,
+/// so progress resumes on its own the next time the agent starts.
+/// Events carry no secrets (job id, stage label, optional
+/// percentage) and are emitted as-is — the Synchronization page
+/// validates them before rendering.
+pub fn start_progress_forwarder(app: &AppHandle) {
+    let handle = app.clone();
+    tauri::async_runtime::spawn(async move {
+        loop {
+            let _ = forward_progress_stream(&handle).await;
+            tokio::time::sleep(Duration::from_secs(10)).await;
+        }
+    });
+}
+
+async fn forward_progress_stream(app: &AppHandle) -> Result<(), ()> {
+    let client = client().map_err(|_| ())?;
+    let mut rx = client.subscribe_progress().await.map_err(|_| ())?;
+    loop {
+        match rx.recv().await {
+            Ok(event) => {
+                let _ = app.emit("sync-progress", event);
+            }
+            Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => continue,
+            Err(tokio::sync::broadcast::error::RecvError::Closed) => return Ok(()),
+        }
+    }
 }
 
 /// Stop the background agent if it is running, so a database

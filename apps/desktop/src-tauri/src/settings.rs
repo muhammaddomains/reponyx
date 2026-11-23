@@ -1,6 +1,6 @@
 //! Tauri commands for the Phase 8 Settings page.
 //!
-//! Only four keys are writable, and each value is validated here
+//! Only five keys are writable, and each value is validated here
 //! before it is stored — the settings table is internal state, not
 //! a free-form store. Two of the keys were previously write-only
 //! values nothing consumed: `sync.default_mode` is now read by
@@ -10,7 +10,8 @@
 //! (clamped 1..=10 there too); `storage.root` takes effect after
 //! the agent restarts, and existing archives stay at the old
 //! location — the page says so, rather than pretending a move
-//! happens.
+//! happens. `notifications.enabled` is read by the frontend's sync
+//! notification hook (on unless explicitly set to `false`).
 //!
 //! The desktop crate cannot be compiled on this VM (missing
 //! WebViewGTK system libs — the known Tauri blocker), so these
@@ -34,6 +35,7 @@ pub struct SettingsDto {
     pub concurrency: Option<i64>,
     pub storage_root: Option<String>,
     pub theme: Option<String>,
+    pub notifications_enabled: Option<bool>,
     pub device_identifier: Option<String>,
     pub data_dir: String,
     pub app_version: String,
@@ -46,7 +48,7 @@ async fn setting_value(database: &Database, key: &str) -> CommandResult<Option<S
 }
 
 /// Validate one writable setting before it is stored. Unknown keys
-/// are refused — callers can only write the four keys the Settings
+/// are refused — callers can only write the five keys the Settings
 /// page offers. The rules live in `reponyx-database` (`config`)
 /// so the config import validates values the same way; this just
 /// maps the error into a command error.
@@ -70,6 +72,10 @@ pub async fn get_settings_command(db: State<'_, Option<Database>>) -> CommandRes
         concurrency,
         storage_root: setting_value(database, "storage.root").await?,
         theme: setting_value(database, "ui.theme").await?,
+        notifications_enabled: match setting_value(database, "notifications.enabled").await? {
+            Some(raw) => raw.trim().parse::<bool>().ok(),
+            None => None,
+        },
         device_identifier: setting_value(database, "device.identifier").await?,
         data_dir: crate::dirs_data_dir().to_string_lossy().into_owned(),
         app_version: env!("CARGO_PKG_VERSION").to_string(),

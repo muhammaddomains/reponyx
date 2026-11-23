@@ -12,6 +12,7 @@ import {
   Users,
 } from "lucide-react";
 import { NavLink, Outlet } from "react-router";
+import { useSyncNotifications } from "../hooks/useSyncNotifications";
 import { useTheme } from "../hooks/useTheme";
 
 const NAV = [
@@ -28,6 +29,7 @@ const NAV = [
 
 export default function AppLayout() {
   const { theme, toggleTheme } = useTheme();
+  useSyncNotifications();
 
   return (
     <div className="flex h-screen bg-zinc-50 text-zinc-900 dark:bg-zinc-950 dark:text-zinc-100">

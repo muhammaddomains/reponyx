@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
+import { listen } from "@tauri-apps/api/event";
 import {
   agentEnqueue,
   agentHealth,
@@ -15,7 +16,9 @@ import type {
   JobStatus,
   JobStatusCount,
   SyncJob,
+  SyncProgressEvent,
 } from "@reponyx/shared";
+import { syncProgressEventSchema } from "@reponyx/shared";
 import { Badge, Button, Card } from "@reponyx/ui";
 
 const ROW_CAP = 100;
@@ -74,15 +77,22 @@ function countFor(counts: JobStatusCount[], status: JobStatus): number {
 
 type StatusFilter = "active" | "all" | JobStatus;
 
+type JobProgress = Extract<SyncProgressEvent, { type: "job_progress" }>;
+
 /** Synchronization: the live sync queue. Job rows are read from
- *  SQLite and refreshed every 5 seconds — there are no live
- *  progress bars yet, because the queue's progress events are not
- *  forwarded over IPC to the desktop. */
+ *  SQLite and refreshed every 5 seconds; per-job progress bars are
+ *  live on top of that — the desktop forwards the agent's progress
+ *  events as `sync-progress` Tauri events (see
+ *  `start_progress_forwarder` in the Tauri backend) and this page
+ *  renders them under the running job. */
 export default function Synchronization() {
   const [jobs, setJobs] = useState<SyncJob[]>([]);
   const [counts, setCounts] = useState<JobStatusCount[]>([]);
   const [health, setHealth] = useState<AgentHealth | null>(null);
   const [repoNames, setRepoNames] = useState<Record<string, string>>({});
+  const [progressByJob, setProgressByJob] = useState<
+    Record<string, JobProgress>
+  >({});
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -144,6 +154,50 @@ export default function Synchronization() {
       cancelled = true;
     };
   }, [jobs, repoNames]);
+
+  // Live progress: the desktop forwards the agent's progress
+  // events as `sync-progress` Tauri events. A job_progress event
+  // updates the bar for its job; a terminal event clears it (the
+  // 5 s poll then shows the final status). Events the schema
+  // rejects are ignored. In the web preview there is no Tauri
+  // event bridge — the listen fails and polling carries the page.
+  useEffect(() => {
+    let unlisten: (() => void) | undefined;
+    listen("sync-progress", (event) => {
+      const parsed = syncProgressEventSchema.safeParse(event.payload);
+      if (!parsed.success) return;
+      const progressEvent = parsed.data;
+      switch (progressEvent.type) {
+        case "job_progress":
+          setProgressByJob((current) => ({
+            ...current,
+            [progressEvent.job_id]: progressEvent,
+          }));
+          break;
+        case "job_completed":
+        case "job_failed":
+        case "job_cancelled":
+          setProgressByJob((current) => {
+            if (!(progressEvent.job_id in current)) return current;
+            const next = { ...current };
+            delete next[progressEvent.job_id];
+            return next;
+          });
+          break;
+        default:
+          break;
+      }
+    })
+      .then((fn) => {
+        unlisten = fn;
+      })
+      .catch(() => {
+        // No Tauri event bridge (web preview); polling still works.
+      });
+    return () => {
+      unlisten?.();
+    };
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -231,10 +285,9 @@ export default function Synchronization() {
         <div>
           <h1 className="text-2xl font-semibold">Synchronization</h1>
           <p className="text-sm text-zinc-500">
-            The live sync queue. This page polls the job rows every 5
-            seconds — per-job progress bars are not available yet,
-            because the queue&apos;s progress events are not forwarded
-            over IPC to the desktop.
+            The live sync queue. Job rows refresh every 5 seconds,
+            and running jobs show a live progress bar from the
+            agent&apos;s progress events when one is running.
           </p>
         </div>
         <div className="flex gap-2">
@@ -381,6 +434,44 @@ export default function Synchronization() {
                   {job.errorCode ? `${job.errorCode}: ` : ""}
                   {job.errorMessage ?? "Unknown error."}
                 </p>
+              )}
+              {job.status === "running" && progressByJob[job.id] && (
+                <div className="space-y-1">
+                  <div className="flex items-center justify-between gap-2 text-sm">
+                    <span className="text-zinc-600 dark:text-zinc-400">
+                      {progressByJob[job.id].stage}
+                      {progressByJob[job.id].detail
+                        ? ` — ${progressByJob[job.id].detail}`
+                        : ""}
+                    </span>
+                    {progressByJob[job.id].percent != null && (
+                      <span className="font-medium">
+                        {progressByJob[job.id].percent}%
+                      </span>
+                    )}
+                  </div>
+                  <div
+                    className="h-2 w-full overflow-hidden rounded-full bg-zinc-200 dark:bg-zinc-800"
+                    role="progressbar"
+                    aria-valuenow={
+                      progressByJob[job.id].percent ?? undefined
+                    }
+                    aria-valuemin={0}
+                    aria-valuemax={100}
+                    aria-label={`Sync progress for ${repoNames[job.repositoryId] ?? job.repositoryId}`}
+                  >
+                    {progressByJob[job.id].percent != null ? (
+                      <div
+                        className="h-full rounded-full bg-emerald-500 transition-all"
+                        style={{
+                          width: `${progressByJob[job.id].percent}%`,
+                        }}
+                      />
+                    ) : (
+                      <div className="h-full w-1/3 animate-pulse rounded-full bg-emerald-500" />
+                    )}
+                  </div>
+                </div>
               )}
               <div className="flex flex-wrap gap-2">
                 {(job.status === "pending" || job.status === "running") && (

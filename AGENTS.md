@@ -18,7 +18,10 @@ Scheduler and Background Agent (scheduler crate verified complete
 fixed + verified the same day); Phase 8 — Desktop UI (started
 2026-11-21: all six pages built + pushed — Schedules, Repositories,
 Synchronization, Activity, Storage, Settings — see
-`ai/memory/PROJECT_STATUS.md`, "Phase 8 — Settings page"). Phase 9
+`ai/memory/PROJECT_STATUS.md`, "Phase 8 — Settings page"; complete
+2026-11-23 with notifications, frontend tests, true list
+virtualization, tray-menu polish, and live progress bars (IPC
+forwarding) — see "Phase 8 — Completion"). Phase 9
 — Advanced Features (started 2026-11-21: LFS sync + verification
 built — engine `lfs` module + runner auto-enqueue + real git-lfs
 fixture tests, `cargo test` 352 passed / 0 failed; submodule sync

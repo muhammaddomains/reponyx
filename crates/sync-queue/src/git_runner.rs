@@ -159,29 +159,36 @@ impl JobRunner for GitJobRunner {
             let out = progress.clone();
             tokio::spawn(async move {
                 while let Some(event) = rx.recv().await {
-                    let (stage, detail) = match &event {
-                        ProgressEvent::CountingObjects { .. } => {
-                            ("counting objects", event.to_string())
+                    let (stage, detail, percent) = match &event {
+                        ProgressEvent::CountingObjects { received, total } => (
+                            "counting objects",
+                            event.to_string(),
+                            total.filter(|t| *t > 0).map(|t| {
+                                received.saturating_mul(100).saturating_div(t).min(100) as u8
+                            }),
+                        ),
+                        ProgressEvent::CompressingObjects { percent } => {
+                            ("compressing objects", event.to_string(), Some(*percent))
                         }
-                        ProgressEvent::CompressingObjects { .. } => {
-                            ("compressing objects", event.to_string())
+                        ProgressEvent::ReceivingObjects { percent, .. } => {
+                            ("receiving objects", event.to_string(), Some(*percent))
                         }
-                        ProgressEvent::ReceivingObjects { .. } => {
-                            ("receiving objects", event.to_string())
+                        ProgressEvent::ResolvingDeltas { percent } => {
+                            ("resolving deltas", event.to_string(), Some(*percent))
                         }
-                        ProgressEvent::ResolvingDeltas { .. } => {
-                            ("resolving deltas", event.to_string())
+                        ProgressEvent::CheckingOut { percent } => {
+                            ("checking out", event.to_string(), Some(*percent))
                         }
-                        ProgressEvent::CheckingOut { .. } => ("checking out", event.to_string()),
-                        ProgressEvent::UpdatingFiles { .. } => {
-                            ("updating files", event.to_string())
+                        ProgressEvent::UpdatingFiles { percent } => {
+                            ("updating files", event.to_string(), Some(*percent))
                         }
-                        ProgressEvent::Other(_) => ("git progress", event.to_string()),
+                        ProgressEvent::Other(_) => ("git progress", event.to_string(), None),
                     };
                     let _ = out.send(SyncProgressEvent::JobProgress {
                         job_id,
                         stage: stage.to_string(),
                         detail: Some(detail),
+                        percent,
                     });
                 }
             });
@@ -619,6 +626,9 @@ fn emit_stage(
             job_id,
             stage: stage.to_string(),
             detail: Some(detail.to_string()),
+            // Coarse stage markers carry no number; the UI shows an
+            // indeterminate bar until git reports a percentage.
+            percent: None,
         });
     }
 }

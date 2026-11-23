@@ -8,7 +8,7 @@ name: CI
 #   crate — `reponyx-desktop` needs WebViewGTK / gdk-3.0, which
 #   Linux runners do not have (same limitation as a local Linux VM).
 # - `frontend` (Linux): pnpm install (frozen lockfile), typecheck,
-#   desktop vite build, eslint.
+#   frontend unit tests (Vitest), desktop vite build, eslint.
 # - `windows-build` (Windows): the desktop Rust compile check —
 #   `cargo check -p reponyx-desktop` — plus the vite build. This is
 #   the first real compile of the desktop Tauri wiring (agent.rs,
@@ -16,8 +16,6 @@ name: CI
 #   build happens in the Release workflow, not here.
 #
 # What intentionally does NOT run here:
-# - There is no JavaScript unit test suite in this repo (no Vitest,
-#   no Playwright), so there is no `pnpm run test:unit` step.
 # - `cargo tauri build` (installer packaging) is release-only.
 
 on:
@@ -72,6 +70,9 @@ jobs:
 
       - name: Typecheck
         run: pnpm -r typecheck
+
+      - name: Frontend tests
+        run: pnpm --filter @reponyx/desktop test
 
       - name: Desktop build
         run: pnpm --filter @reponyx/desktop build

@@ -1,6 +1,7 @@
 # RepoNyx — Project Status
 
-Last updated: 2026-11-22 (Phase 10 started — see "Phase 10 —
+Last updated: 2026-11-23 (Phase 8 now 100% complete — see
+"Phase 8 — Completion" below; Phase 10 started — see "Phase 10 —
 Security audit (first pass)" below; Phase 9 performance pass built
 — see "Phase 9 — Performance pass" below; Phase 9 now complete;
 CI on `0c1112f` fully green; Phase 9 import/export built — see
@@ -28,9 +29,11 @@ writing — see "Phase 6 / Phase 7 fixes + re-verification" below).
 Phase 7 — Scheduler and Background Agent — scheduler crate verified
 2026-11-19; agent, IPC, tray, and Agent page code landed 2026-11-21
 and were fixed and verified the same day (same section).**
-**Phase 8 — Desktop UI — started 2026-11-21: all six pages are
-built (Schedules, Repositories, Synchronization, Activity,
-Storage, and Settings — see the "Phase 8" sections below).**
+**Phase 8 — Desktop UI — started 2026-11-21, complete 2026-11-23:
+all six pages built (Schedules, Repositories, Synchronization,
+Activity, Storage, and Settings) plus the three remaining items —
+notifications, frontend tests, and true list virtualization — and
+tray-menu polish (see the "Phase 8 — Completion" section below).**
 **Phase 9 — Advanced Features — started 2026-11-21: LFS sync +
 verification built, then submodule sync + Both-mode completion,
 then storage management + orphan detection, then diagnostics
@@ -416,6 +419,74 @@ fixes section. Work is on `main` going forward.
   as usual; the new commands' signatures were checked against
   the real helpers (`set_local_path`, `set_archive_status`,
   `get_account`, `CommandError` fields) by review.
+
+- **Phase 8 — Completion (actual, 2026-11-23, assistant,
+  uncommitted at the time of writing):** the three remaining
+  Phase 8 items, built after the six pages — Phase 8 is now
+  100% per its plan. **Notifications:** `tauri-plugin-notification`
+  v2 (Rust crate + JS package, `notification:default` capability,
+  registered in `lib.rs`) with a `useSyncNotifications` hook
+  mounted in the app layout — it polls finished jobs every 30 s,
+  seeds silently on the first poll (old jobs are history, not
+  news), then notifies once per newly completed/failed job naming
+  the repository and the job type, with the error message on
+  failures. A new fifth writable setting `notifications.enabled`
+  (validator arm in `reponyx-database::config`, `SettingsDto` /
+  shared type + schema, toggle on the Settings page, on unless
+  explicitly `false`, re-read on every poll so the toggle takes
+  effect without a restart); permission is requested once and a
+  denial stops polling. Nothing in the hook may break the app —
+  every failure is swallowed. **Frontend tests:** Vitest 5.1.1 +
+  Testing Library 16 + jsdom 31, `pnpm --filter @reponyx/desktop
+  test`, 41 tests in 6 files (theme, zod schemas, shared UI
+  components, Settings page incl. validation + error state,
+  notification hook incl. fake timers, virtualized Repositories
+  list); CI frontend job now runs the suite (the old "no JS unit
+  test suite" note in `ci.yml` is gone). Testing lessons: RTL
+  needs manual `cleanup()` with Vitest `globals: false`;
+  `waitFor` deadlocks under fake timers (flush with
+  `advanceTimersByTimeAsync` instead); jsdom has no layout, so
+  the Repositories test mocks `offsetHeight`/`clientHeight`/
+  `clientWidth` (the virtualizer reads exactly those). **True
+  virtualization:** the Repositories list is now a
+  `@tanstack/react-virtual` 3.14.28 virtualizer in a 640px scroll
+  container with dynamic row measurement (`measureElement`,
+  190px estimate, overscan 5, `initialRect` seeds the first
+  paint); server pagination ("Show more") is unchanged underneath.
+  **Tray menu:** new "Sync due now" item (ensures the agent is
+  running, materializes due schedules, reports the result as a
+  system notification), a separator before Quit, and Pause/Resume
+  are now state-aware — a background task polls agent health
+  every 30 s and enables only the action that applies (neither
+  when the agent is down). Unused `Placeholder.tsx` deleted.
+  Verification: fmt pass, clippy 0 warnings, `cargo test` 413
+  passed / 0 failed (was 412, +1 validator test), typecheck +
+  desktop build (1.92 s) + eslint pass, frontend tests 41
+  passed / 0 failed, local Semgrep (exact CI command) 0 findings.
+  Desktop Rust is fmt + review only (gdk blocker), as usual; the
+  new tray/notification wiring compiles in the CI windows-build
+  job. **Live progress bars (added the same day at the user's
+  request, second commit):** the gap above is closed — the agent
+  forwards the queue's progress broadcast to IPC subscribers as
+  JSON `ServerMessage::Progress` frames (one forwarder task per
+  connection; replies and pushes share the write half behind a
+  mutex so a push never waits for the next request), the desktop
+  subscribes on one long-lived connection and re-emits
+  `sync-progress` Tauri events (10 s retry loop, so progress
+  resumes when the agent restarts), and the Synchronization page
+  renders a determinate bar when git reports a percent — new
+  `percent: Option<u8>` on `SyncProgressEvent::JobProgress`,
+  filled from the git progress parser (counting objects from
+  received/total, the rest from the parsed percent) — and an
+  indeterminate bar otherwise; terminal events clear the bar and
+  the 5 s poll shows the final status. Proven by 2 new IPC tests
+  (`crates/ipc/tests/progress_forwarding.rs`: event reaches a
+  subscriber while ping still works; requests work with no source
+  attached) + 4 new page tests (determinate, indeterminate,
+  cleared on completion, malformed events ignored). Totals after
+  the second commit: cargo test 415 passed / 0 failed, frontend
+  tests 45 passed / 0 failed. Phase 8 is now 100% with no open
+  items.
 
 - **Phase 8 — Settings page (actual, 2026-11-21, assistant,
   uncommitted at the time of writing):** the sixth and last

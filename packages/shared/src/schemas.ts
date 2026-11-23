@@ -312,6 +312,7 @@ export const settingsSchema = z.object({
   concurrency: z.number().int().nullable(),
   storageRoot: z.string().nullable(),
   theme: z.string().nullable(),
+  notificationsEnabled: z.boolean().nullable(),
   deviceIdentifier: z.string().nullable(),
   dataDir: z.string(),
   appVersion: z.string(),
@@ -352,3 +353,49 @@ export const importReportSchema = z.object({
   schedulesUpdated: z.number().int().nonnegative(),
   skipped: z.array(skippedRefSchema),
 });
+
+/**
+ * Live progress events from the background agent, forwarded over IPC
+ * as JSON and re-emitted by the desktop as `sync-progress` Tauri
+ * events (Phase 8). Field names are snake_case, straight from the
+ * Rust `SyncProgressEvent` serde shape — not the camelCase of the
+ * Tauri command DTOs. Only the job variants the Synchronization
+ * page renders are listed; anything else fails validation and is
+ * ignored by the page.
+ */
+export const syncProgressEventSchema = z.discriminatedUnion("type", [
+  z.object({
+    type: z.literal("job_started"),
+    job_id: z.string(),
+    repository_id: z.string(),
+    attempt: z.number().int(),
+    operation: z.string(),
+  }),
+  z.object({
+    type: z.literal("job_progress"),
+    job_id: z.string(),
+    stage: z.string(),
+    detail: z.string().nullable().optional(),
+    percent: z.number().int().min(0).max(100).nullable().optional(),
+  }),
+  z.object({
+    type: z.literal("job_completed"),
+    job_id: z.string(),
+    repository_id: z.string(),
+    duration_ms: z.number().int().nullable().optional(),
+  }),
+  z.object({
+    type: z.literal("job_failed"),
+    job_id: z.string(),
+    repository_id: z.string(),
+    error_code: z.string(),
+    message: z.string(),
+    will_retry: z.boolean(),
+    next_attempt: z.number().int().nullable().optional(),
+  }),
+  z.object({
+    type: z.literal("job_cancelled"),
+    job_id: z.string(),
+    repository_id: z.string(),
+  }),
+]);

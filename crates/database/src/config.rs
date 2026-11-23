@@ -47,7 +47,7 @@ pub const CONFIG_VERSION: u32 = 1;
 
 // -- The file format --------------------------------------------------
 
-/// One settings row in the file. Only the four non-secret keys
+/// One settings row in the file. Only the five non-secret keys
 /// (see [`validate_setting_value`]) are ever written or accepted.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ConfigSetting {
@@ -134,11 +134,17 @@ pub struct ImportReport {
 // -- Settings validation (single source of truth) ---------------------
 
 /// Validate one setting value the way the Settings page does.
-/// Unknown keys are refused — only the four non-secret settings
+/// Unknown keys are refused — only the five non-secret settings
 /// travel in a config file. The desktop `validate_setting` in
 /// `settings.rs` delegates here so the rules live in one place.
 pub fn validate_setting_value(key: &str, value: &str) -> Result<(), RepoNyxError> {
     match key {
+        "notifications.enabled" => match value {
+            "true" | "false" => Ok(()),
+            _ => Err(invalid(format!(
+                "notifications.enabled must be true or false (got {value})"
+            ))),
+        },
         "sync.default_mode" => match value {
             "mirror" | "working" | "both" => Ok(()),
             _ => Err(invalid(format!(
@@ -577,4 +583,18 @@ pub async fn apply_config_import(
         schedules_updated,
         skipped,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn notifications_enabled_accepts_booleans_only() {
+        assert!(validate_setting_value("notifications.enabled", "true").is_ok());
+        assert!(validate_setting_value("notifications.enabled", "false").is_ok());
+        assert!(validate_setting_value("notifications.enabled", "yes").is_err());
+        assert!(validate_setting_value("notifications.enabled", "1").is_err());
+        assert!(validate_setting_value("notifications.enabled", "").is_err());
+    }
 }

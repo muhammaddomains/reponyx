@@ -1,6 +1,6 @@
 # Phase 8 — Desktop Interface
 
-- Status: Started 2026-11-21 — all 6 pages done (Schedules, Repositories, Synchronization, Activity, Storage, Settings); notifications + frontend tests + virtualization remain
+- Status: Complete 2026-11-23 — all 6 pages done (Schedules, Repositories, Synchronization, Activity, Storage, Settings); notifications, frontend tests, and true list virtualization done; tray menu polished
 - Depends on: Phases 2–7 (features land as their backends do)
 
 ## Objectives
@@ -69,21 +69,32 @@ Activity, Storage, Settings (+ notifications, system tray).
       failed in the agent even after pairing — it is now saved on
       pairing. Verified: fmt + clippy 0 warnings + 338 tests pass
       + typecheck + desktop build + eslint pass.
-- [ ] Wire each remaining section to real Tauri commands
-- [ ] Repository list virtualization + bulk selection (bulk
-      selection done 2026-11-21; true virtualization deferred — the
-      list pages 100 rows at a time with "Show more")
-- [ ] Sync progress UI + cancellation (cancel done 2026-11-21 on
-      the Synchronization page; live progress bars still need IPC
-      progress forwarding)
-- [ ] Settings sections (General, Auth, Repos, Sync, Storage, Background, Advanced)
+- [x] Wire each remaining section to real Tauri commands
+- [x] Repository list virtualization + bulk selection (bulk
+      selection done 2026-11-21; true virtualization done
+      2026-11-23 — `@tanstack/react-virtual` in a 640px scroll
+      container, dynamic row measurement, server pagination
+      unchanged underneath)
+- [x] Sync progress UI + cancellation (cancel done 2026-11-21 on
+      the Synchronization page; live progress bars done 2026-11-23
+      — IPC progress forwarding: the agent forwards the queue's
+      broadcast as JSON `ServerMessage::Progress` frames, the
+      desktop subscribes on a long-lived IPC connection and
+      re-emits `sync-progress` Tauri events, and the page renders
+      a determinate bar when git reports a percent and an
+      indeterminate one otherwise)
+- [x] Settings sections (General, Auth, Repos, Sync, Storage, Background, Advanced)
       — General, Sync, Storage, and Advanced (read-only) done
       2026-11-21 on the Settings page. Auth lives on the Accounts
       page; Repos on the Repositories page; Background on the
       Agent page. There is no single page with all seven sections
       — the sections are distributed across the pages that own
       them.
-- [ ] Notifications + tray menu
+- [x] Notifications + tray menu (done 2026-11-23: system
+      notifications for finished/failed sync jobs with a
+      `notifications.enabled` setting + toggle; tray "Sync due
+      now" with a result notification, separator before Quit, and
+      state-aware Pause/Resume polled from agent health)
 
 ## Dependencies
 
@@ -104,14 +115,9 @@ All prior phases.
 - Repository scope on the Schedules page needs a typed UUID — the
   Repositories page now lists repository ids, so copy one from
   there (a picker is still missing).
-- The Repositories list pages 100 rows at a time instead of true
-  virtualization.
 - Discovery has no progress indicator yet (full paged scan).
-- No frontend tests yet (the plan asks for them); pages are verified
-  by typecheck + build + eslint only.
-- The Storage page is read-only in v1 — no delete action for local
-  archives (destructive; needs its own confirm flow). Sizes are
-  measured on demand, not polled.
+- The Storage page's read-only v1 note is outdated — Phase 9
+  storage management added delete/move actions there.
 - The new storage and settings commands are verified by `cargo fmt`
   + review only on this VM (gdk blocker); the CI windows-build job
   is their first real compile.
@@ -122,7 +128,17 @@ All prior phases.
 
 ## Completion status
 
-Started 2026-11-21. All six pages done and verified (fmt + clippy
-0 warnings + 338 tests pass + typecheck + desktop build + eslint
-pass). Remaining: notifications + tray menu, frontend tests, and
-true list virtualization for Repositories.
+Complete 2026-11-23. All six pages, notifications, frontend tests
+(45 tests, run in CI), true list virtualization, tray-menu polish,
+and live progress bars are done and verified (fmt + clippy 0
+warnings + 415 tests pass + typecheck + desktop build + eslint
+pass + frontend tests 45 pass + local Semgrep 0 findings). Live
+progress bars were added at the user's request after the first
+completion commit: the agent forwards the queue's broadcast as
+JSON `ServerMessage::Progress` frames (one forwarder task per IPC
+connection, replies and pushes share the write half behind a
+mutex), the desktop subscribes on a long-lived connection and
+re-emits `sync-progress` Tauri events with a 10 s retry loop, and
+the Synchronization page renders a determinate bar when git
+reports a percent (new `percent` field on `JobProgress`) and an
+indeterminate one otherwise. No open items remain.

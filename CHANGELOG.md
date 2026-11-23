@@ -5,6 +5,40 @@ All notable changes to RepoNyx are documented here. Format follows
 
 ## [Unreleased]
 
+### Added — Phase 8 completion (2026-11-23)
+
+- **Notifications:** system notifications when a sync job finishes
+  or fails, via `tauri-plugin-notification` v2 and a
+  `useSyncNotifications` hook mounted in the app layout (30 s
+  poll, silent seeding on the first poll, one notification per
+  newly finished job naming the repository and job type, error
+  message included on failures). A new fifth writable setting,
+  `notifications.enabled`, with a toggle on the Settings page
+  (on unless explicitly `false`); permission is requested once
+  and a denial stops polling. The hook never breaks the app —
+  every failure is swallowed and the next poll retries.
+- **Frontend tests:** Vitest 5.1.1 + Testing Library 16 + jsdom
+  31, run with `pnpm --filter @reponyx/desktop test` and in the
+  CI frontend job — 41 tests in 6 files (theme, zod schemas,
+  shared UI components, Settings page, notification hook,
+  virtualized Repositories list).
+- **True virtualization:** the Repositories list now renders only
+  the rows on screen (`@tanstack/react-virtual`, dynamic row
+  measurement, 640px scroll container); server-side pagination
+  ("Show more") is unchanged underneath.
+- **Tray menu:** new "Sync due now" item (materializes due
+  schedules and reports the result as a notification), a
+  separator before Quit, and state-aware Pause/Resume driven by
+  a 30 s agent-health poll. Unused `Placeholder.tsx` deleted.
+- **Live progress bars (added 2026-11-23 at the user's request):**
+  the agent forwards the queue's progress broadcast to IPC
+  subscribers as JSON `ServerMessage::Progress` frames, the
+  desktop subscribes on one long-lived connection and re-emits
+  `sync-progress` Tauri events (10 s retry loop), and the
+  Synchronization page renders a determinate bar when git
+  reports a percent (new `percent: Option<u8>` on
+  `JobProgress`) and an indeterminate bar otherwise.
+
 ### Added — Phase 10 durable broker storage (F1, 2026-11-22)
 
 - The Auth Broker now persists installations, pairing codes, setup

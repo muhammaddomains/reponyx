@@ -29,6 +29,12 @@ pub enum SyncProgressEvent {
         /// Free-form stage label from the runner / git progress parser.
         stage: String,
         detail: Option<String>,
+        /// 0–100 when the underlying git output reports a percentage
+        /// (receiving/compressing/resolving/checking out); `None` for
+        /// coarse stage events and lines git gives no number for.
+        /// The UI draws a determinate bar when this is present and
+        /// an indeterminate one otherwise.
+        percent: Option<u8>,
     },
     JobCompleted {
         job_id: Uuid,

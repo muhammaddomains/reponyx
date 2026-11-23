@@ -165,6 +165,51 @@ impl IpcClient {
         }
     }
 
+    /// Open a long-lived subscription to the agent's progress stream.
+    ///
+    /// Connects once, authenticates with a Ping, then forwards every
+    /// `ServerMessage::Progress` event into the returned broadcast
+    /// channel. The connection (and its reader task) ends when the
+    /// agent goes away or when the last receiver is dropped — the
+    /// caller re-subscribes on the next attempt. Normal request
+    /// traffic is unaffected: each `roundtrip` uses its own
+    /// connection, so a push can never land in place of a reply.
+    pub async fn subscribe_progress(
+        &self,
+    ) -> Result<tokio::sync::broadcast::Receiver<serde_json::Value>, RepoNyxError> {
+        let mut conn = transport::connect(&self.data_dir)
+            .await
+            .map_err(map_transport)?;
+        let ping = serde_json::to_vec(&ClientMessage::Ping {
+            protocol_version: PROTOCOL_VERSION,
+            token: self.token.clone(),
+            request_id: Uuid::new_v4(),
+        })
+        .map_err(|e| RepoNyxError::new(ErrorCode::InternalError, format!("serialize ipc: {e}")))?;
+        write_frame(&mut conn, &ping).await.map_err(map_frame)?;
+        let (tx, rx) = tokio::sync::broadcast::channel(256);
+        tokio::spawn(async move {
+            loop {
+                match read_frame(&mut conn).await {
+                    Ok(bytes) => match parse_server_message(&bytes) {
+                        Ok(ServerMessage::Progress { event }) => {
+                            if tx.send(event).is_err() {
+                                // No receivers left; stop reading.
+                                return;
+                            }
+                        }
+                        // Replies (e.g. the Ping's Pong) are not
+                        // progress; ignore them and keep reading.
+                        Ok(_) => {}
+                        Err(_) => return,
+                    },
+                    Err(_) => return,
+                }
+            }
+        });
+        Ok(rx)
+    }
+
     async fn roundtrip(&self, msg: ClientMessage) -> Result<ServerMessage, RepoNyxError> {
         let mut conn = transport::connect(&self.data_dir)
             .await

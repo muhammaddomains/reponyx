@@ -5,6 +5,16 @@ All notable changes to RepoNyx are documented here. Format follows
 
 ## [Unreleased]
 
+### Fixed — Weekly audit finding RUSTSEC-2026-0594 (2026-11-23)
+
+- Bumped `cookie` 0.18.2 → 0.18.3 in `Cargo.lock` (transitive via
+  Tauri/wry): fixes RUSTSEC-2026-0594 ("Private cookie nonces can
+  repeat in processes that fork", severity 6.5 medium, dated
+  2026-11-23), found by the weekly scheduled-maintenance audit's
+  second run. `cargo audit` clean again (0 vulnerabilities, same 7
+  known no-fix warnings). No code changed; `cargo test` still 415
+  passed / 0 failed.
+
 ### Added — Phase 10 F3 key-rotation runbook (2026-11-23)
 
 - `docs/security/key-rotation-runbook.md` closes threat-model

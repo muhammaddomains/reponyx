@@ -246,8 +246,19 @@ fixes section. Work is on `main` going forward.
   pass. Phase 10 remaining: the Windows verification items, the
   key-rotation runbook (F3), and the first release itself.
 
-- **Phase 10 — F3 key-rotation runbook (actual, 2026-11-23,
-  assistant, uncommitted at the time of writing):**
+- **Phase 10 — Weekly audit finding, cookie fix (actual,
+  2026-11-23, assistant, uncommitted at the time of writing):**
+  the scheduled-maintenance workflow ran for the first time
+  2026-11-23 ~11:47 MST (run #1) and failed on the Rust audit
+  job; a manual re-run (run #2, 13:29 MST) failed the same way,
+  this time with a real finding: `cookie` 0.18.2,
+  RUSTSEC-2026-0594 ("Private cookie nonces can repeat in
+  processes that fork", severity 6.5 medium, dated 2026-11-23).
+  Fixed with `cargo update -p cookie` → 0.18.3 (transitive via
+  Tauri/wry; `Cargo.lock` only, 3 lines). `cargo audit` clean
+  again (0 vulnerabilities, same 7 known warnings); `cargo test`
+  still 415 passed / 0 failed. Phase 10 remaining: the Windows
+  verification items and the first release itself.
   `docs/security/key-rotation-runbook.md` closes finding F3.
   Written against the real code (broker config env vars,
   `POST /pairing/revoke`, IPC service/account names, OS credential

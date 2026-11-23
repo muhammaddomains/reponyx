@@ -87,9 +87,10 @@ All prior phases.
   GitHub App private key, broker setup token, device tokens, IPC
   shared secret, and PATs, plus incident response and audit
   queries.
-- The `cargo audit` / `pnpm audit` weekly CI job has never run yet
-  (first scheduled run Monday 2026-11-23); the audits were run
-  locally for this pass instead.
+- The `cargo audit` / `pnpm audit` weekly CI job ran for the first
+  time Monday 2026-11-23 (run #1 failed on the Rust audit job;
+  manual re-run #2 found `cookie` 0.18.2, RUSTSEC-2026-0594,
+  fixed the same day by bumping to 0.18.3).
 
 ## Completion status
 

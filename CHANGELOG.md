@@ -5,6 +5,18 @@ All notable changes to RepoNyx are documented here. Format follows
 
 ## [Unreleased]
 
+### Added — Phase 10 F3 key-rotation runbook (2026-11-23)
+
+- `docs/security/key-rotation-runbook.md` closes threat-model
+  finding F3: routine rotation procedures for the GitHub App
+  private key, broker setup token, per-device tokens, IPC shared
+  secret, and fine-grained PATs, a verify-after-rotation
+  checklist, and incident response for a suspected broker,
+  desktop/agent, or key compromise, with the audit queries that
+  prove what happened. Every env var, endpoint, and credential
+  store location in it was verified against the source before
+  writing.
+
 ### Added — Phase 8 completion (2026-11-23)
 
 - **Notifications:** system notifications when a sync job finishes

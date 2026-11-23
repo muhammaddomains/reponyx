@@ -1,8 +1,9 @@
 # Phase 10 — Security, QA and Release
 
 - Status: In progress — first pass done 2026-11-22 (see below); Windows
-  verification items, durable broker storage (F1), and the key-rotation
-  runbook (F3) still open.
+  verification items and the first release still open. Durable broker
+  storage (F1) done 2026-11-22; key-rotation runbook (F3) done
+  2026-11-23.
 - Depends on: All prior phases
 
 ## Objectives
@@ -81,7 +82,11 @@ All prior phases.
 - Broker state is durable (F1, fixed 2026-11-22): SQLite store
   survives restarts; token cache and rate-limiter buckets remain
   in-memory.
-- No key-rotation / incident runbook (F3).
+- Key-rotation / incident runbook (F3, fixed 2026-11-23):
+  `docs/security/key-rotation-runbook.md` covers rotation of the
+  GitHub App private key, broker setup token, device tokens, IPC
+  shared secret, and PATs, plus incident response and audit
+  queries.
 - The `cargo audit` / `pnpm audit` weekly CI job has never run yet
   (first scheduled run Monday 2026-11-23); the audits were run
   locally for this pass instead.
@@ -90,4 +95,5 @@ All prior phases.
 
 First pass done 2026-11-22 (audit, threat-model review, migration
 tests, docs, secret scan re-run). F1 (durable broker storage) done
-2026-11-22. Not complete: Windows items, F3, first release.
+2026-11-22. F3 (key-rotation runbook) done 2026-11-23. Not complete:
+Windows items, first release.

@@ -1,6 +1,7 @@
 # RepoNyx — Project Status
 
-Last updated: 2026-11-23 (Phase 8 now 100% complete — see
+Last updated: 2026-11-23 (Phase 10 F3 key-rotation runbook done —
+see "Phase 10 — F3" below; Phase 8 now 100% complete — see
 "Phase 8 — Completion" below; Phase 10 started — see "Phase 10 —
 Security audit (first pass)" below; Phase 9 performance pass built
 — see "Phase 9 — Performance pass" below; Phase 9 now complete;
@@ -244,6 +245,22 @@ fixes section. Work is on `main` going forward.
   (was 406, +6), typecheck + desktop build (1.65 s) + `pnpm lint`
   pass. Phase 10 remaining: the Windows verification items, the
   key-rotation runbook (F3), and the first release itself.
+
+- **Phase 10 — F3 key-rotation runbook (actual, 2026-11-23,
+  assistant, uncommitted at the time of writing):**
+  `docs/security/key-rotation-runbook.md` closes finding F3.
+  Written against the real code (broker config env vars,
+  `POST /pairing/revoke`, IPC service/account names, OS credential
+  store locations — each verified by reading the source before
+  writing). Covers routine rotation of all five secrets (GitHub
+  App private key with the generate → restart → verify → delete-old
+  order, broker setup token, per-device tokens, IPC shared secret
+  via delete + agent restart, fine-grained PATs), a verify-after-
+  rotation checklist, and incident response for a suspected broker,
+  desktop/agent, or key compromise, with the audit queries
+  (`broker_audit_events` + desktop `audit_logs`) that prove what
+  happened. Threat-model F3 marked fixed. Phase 10 remaining: the
+  Windows verification items and the first release itself.
 
 - **Phase 9 — Performance pass (actual, 2026-11-22, assistant,
   uncommitted at the time of writing):** the seventh and last

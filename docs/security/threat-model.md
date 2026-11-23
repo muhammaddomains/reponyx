@@ -50,7 +50,8 @@ below names the boundary, the mitigation, and the residual risk.
   tokens; least-privilege permissions.
 - **Residual:** Compromise of the broker host is total for installed
   accounts until the key is rotated and installations re-authorized.
-  Key rotation + incident runbook are still missing (see finding F3).
+  Rotation is documented in `docs/security/key-rotation-runbook.md`
+  (finding F3, fixed 2026-11-23).
 
 ## 4. Unauthorized device pairing
 
@@ -170,11 +171,12 @@ documented here with its consequence — nothing is silently dropped.
   same-user boundary (§1) — a same-user attacker can already read
   the credential store — but restricting the pipe to the current
   user is a hardening item for a later release.
-- **F3 — No key-rotation / incident runbook (open).** There is no
-  documented procedure for rotating the GitHub App private key or
-  for responding to a broker compromise. Fix: write the runbook
-  (rotate key in the broker, re-authorize installations, revoke
-  device tokens) before the first public release.
+- **F3 — No key-rotation / incident runbook (fixed 2026-11-23).**
+  The runbook is `docs/security/key-rotation-runbook.md`: routine
+  rotation for the GitHub App private key, broker setup token,
+  device tokens, IPC shared secret, and fine-grained PATs, plus
+  incident response for a suspected broker, desktop/agent, or key
+  compromise, with the audit queries that prove what happened.
 
 ## 11. Account revocation
 

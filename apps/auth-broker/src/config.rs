@@ -152,7 +152,13 @@ impl BrokerConfig {
             max_pairing_attempts: DEFAULT_MAX_PAIRING_ATTEMPTS,
             mint_per_minute_per_device: 30.0,
             pairing_per_minute_per_ip: 10.0,
-            data_dir: std::env::temp_dir().join("reponyx-broker-test"),
+            // Unpredictable name: the Semgrep temp-dir rule only
+            // flags fixed names under the shared temp directory
+            // (see the store_persistence.rs helper, which uses the
+            // same pattern and passes). The path is never used by
+            // tests — `BrokerState::new` runs in-memory.
+            data_dir: std::env::temp_dir()
+                .join(format!("reponyx-broker-test-{}", uuid::Uuid::new_v4())),
         }
     }
 }

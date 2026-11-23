@@ -7,15 +7,14 @@
 //! - Serve authenticated local IPC for the desktop.
 //! - Graceful shutdown on SIGINT/SIGTERM or IPC `shutdown`.
 //!
-//! This process is intentionally independent of the UI. Task Scheduler /
-//! launchd registration is handled outside the hot path (see
-//! `windows_task.rs` helpers and docs).
+//! This process is intentionally independent of the UI. Start-at-logon
+//! registration lives in the desktop (`register_agent_autostart_command`
+//! in `apps/desktop/src-tauri/src/agent.rs`, exposed on the Agent page);
+//! the agent itself never registers itself.
 
 mod lifecycle;
 mod paths;
 mod runtime;
-#[cfg(windows)]
-mod windows_task;
 
 use lifecycle::run_agent;
 use tracing::error;

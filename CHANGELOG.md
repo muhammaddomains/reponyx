@@ -5,6 +5,20 @@ All notable changes to RepoNyx are documented here. Format follows
 
 ## [Unreleased]
 
+### Fixed — Phase 10 Windows verification, VM part (2026-11-23)
+
+- Deleted the agent's dead duplicate `windows_task.rs` (zero
+  callers; the desktop owns autostart registration) and fixed the
+  stale README line claiming Task Scheduler integration was "not
+  yet wired" — it is wired end to end (Agent page buttons →
+  api-client → Tauri commands → schtasks), since the Phase 6/7
+  code landed.
+- Added `docs/qa/windows-verification.md`: executable checklist
+  for the Windows machine (installer, autostart + logoff/logon,
+  Credential Manager, full binary secret scan, real process-kill
+  recovery). Secret scan re-run on this VM: PASSED on the source
+  half, binary half skipped (no built binary here).
+
 ### Fixed — Weekly audit finding RUSTSEC-2026-0594 (2026-11-23)
 
 - Bumped `cookie` 0.18.2 → 0.18.3 in `Cargo.lock` (transitive via

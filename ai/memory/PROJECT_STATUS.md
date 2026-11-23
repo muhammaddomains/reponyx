@@ -246,8 +246,21 @@ fixes section. Work is on `main` going forward.
   pass. Phase 10 remaining: the Windows verification items, the
   key-rotation runbook (F3), and the first release itself.
 
-- **Phase 10 — Weekly audit finding, cookie fix (actual,
-  2026-11-23, assistant, uncommitted at the time of writing):**
+- **Phase 10 — Windows verification, VM part (actual, 2026-11-23,
+  assistant, uncommitted at the time of writing):** survey found
+  the Task Scheduler integration IS wired end to end (Agent page
+  buttons → api-client → registered Tauri commands → schtasks;
+  buttons landed in the user's Phase 6/7 code, `b24acb1`) — the
+  README line saying it was "not yet wired" was stale since then
+  and is fixed. The agent's duplicate `windows_task.rs` had zero
+  callers and is deleted (main.rs doc now points at the desktop's
+  autostart commands). Secret scan re-run on this VM: PASSED on
+  the source half, binary half skipped (no built binary here).
+  Wrote `docs/qa/windows-verification.md`: executable checklist
+  for the Windows machine (installer, autostart + logoff/logon,
+  Credential Manager, full binary secret scan, real process-kill
+  recovery). Still needs a real Windows run; then only the first
+  release remains.
   the scheduled-maintenance workflow ran for the first time
   2026-11-23 ~11:47 MST (run #1) and failed on the Rust audit
   job; a manual re-run (run #2, 13:29 MST) failed the same way,

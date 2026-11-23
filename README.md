@@ -24,7 +24,8 @@ with scheduled, background synchronization independent of the desktop UI.
 - Mirror clones (default archival mode) and working clones, or Both
 - Scheduled synchronization with per-repository / per-account / global precedence
 - Background agent that runs as a separate process (started from the
-  desktop); Windows Task Scheduler integration is not yet wired
+  desktop); start-at-logon via the Agent page (Windows Task Scheduler
+  ONLOGON, systemd user unit, or macOS LaunchAgent)
 - Local storage layout separating accounts and owners, with collision protection
 - Detailed sync logs, retry with exponential backoff, crash recovery
 - Git LFS and submodule support, including Both-mode

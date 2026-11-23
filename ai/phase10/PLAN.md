@@ -52,6 +52,10 @@ handling, release documentation.
   (tag-triggered, NSIS + MSI, signed updater artifacts) but
   `TAURI_SIGNING_PRIVATE_KEY` (+ password) are not yet set in repo
   secrets, and the installer has never run on a real Windows machine.
+  Verification checklist written 2026-11-23
+  (`docs/qa/windows-verification.md`): installer, Task Scheduler
+  autostart, Credential Manager, binary secret scan, real
+  process-kill recovery.
 - [x] Upgrade/migration testing — V1→V4 and V3→V4 upgrade tests in
   `crates/database/tests/migrations.rs` (data intact, dedupe index
   works on new rows; pre-upgrade rows carry NULL dedupe_key —
@@ -96,5 +100,9 @@ All prior phases.
 
 First pass done 2026-11-22 (audit, threat-model review, migration
 tests, docs, secret scan re-run). F1 (durable broker storage) done
-2026-11-22. F3 (key-rotation runbook) done 2026-11-23. Not complete:
-Windows items, first release.
+2026-11-22. F3 (key-rotation runbook) done 2026-11-23. Windows
+verification checklist (`docs/qa/windows-verification.md`) written
+2026-11-23; dead duplicate agent `windows_task.rs` removed and the
+stale README "Task Scheduler not wired" line fixed the same day.
+Not complete: running the checklist on a real Windows machine,
+first release.

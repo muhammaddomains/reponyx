@@ -246,7 +246,6 @@ async fn mirror_clone_auto_enqueues_lfs_fetch_which_verifies() {
         .join("repositories")
         .join("github")
         .join("octocat")
-        .join("octocat")
         .join("hello.git");
     let ls = git(
         &[

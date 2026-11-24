@@ -57,12 +57,14 @@ below names the boundary, the mitigation, and the residual risk.
 
 - **Threat:** An attacker pairs their device to a victim's GitHub
   installation and receives its repositories.
-- **Mitigation (verified 2026-11-22):** Cryptographically random
-  pairing codes, stored only as SHA-256 hashes, single-use (a
-  confirmed/revoked code is rejected on reuse), 10-minute TTL
-  (`pairing_ttl`, `apps/auth-broker/src/config.rs`), per-IP rate
-  limiting, device identification, explicit user confirmation in the
-  browser flow; revocation + audit history.
+- **Mitigation (verified 2026-11-22, pairing expiry removed
+  2026-11-24):** Cryptographically random pairing codes, stored
+  only as SHA-256 hashes, single-use (a confirmed/revoked code is
+  rejected on reuse), no expiry — the code is bound to one device,
+  confirm requires the setup token, and wrong-device attempts
+  revoke the code after 5 tries — per-IP rate limiting, device
+  identification, explicit user confirmation in the browser flow;
+  revocation + audit history.
 - **Residual:** If an attacker also controls the victim's GitHub
   session, pairing cannot distinguish them; GitHub session security
   is the boundary. The audit history is durable (SQLite, F1 fixed

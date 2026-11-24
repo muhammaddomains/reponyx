@@ -5,7 +5,10 @@ Status: Accepted (Phase 1) · Engine: Phase 3
 ## Modes
 
 - **A — Mirror (default).** `git clone --mirror <url>` into
-  `<root>/repositories/github/<account>/<owner>/<name>.git/`; sync with
+  `<root>/repositories/github/<account>/<owner>/<name>.git/` (or
+  `<root>/repositories/github/<account>/<name>.git/` when the
+  account and the owner are the same user — the owner segment is
+  omitted, so the username appears once); sync with
   `git --git-dir=<path> fetch --prune`. Preserves objects, branches,
   tags, remote refs, full history. A bare repo is never treated as a
   working directory.
@@ -51,6 +54,11 @@ A parent's authentication is never assumed to cover submodules.
   lfs/ logs/ exports/ backups/
   data/reponyx.sqlite  data/database-backups/
 ```
+
+When the account and the owner are the same GitHub user, the
+owner segment is omitted: `repositories/github/<account>/<name>.git/`
+and `working-clones/<account>/<name>/`. A fetch relocates sides
+cloned under the old doubled layout to the collapsed one.
 
 Path components (account/owner/name) are validated before use
 (`git-engine::paths`): no separators, no `..`, no Windows-reserved

@@ -257,7 +257,7 @@ async fn set_local_path_sets_and_clears() {
     let repo = make_repository(pool(&db), account.id, "456", "octocat", "hello").await;
     assert!(repo.local_path.is_none());
 
-    let path = std::path::Path::new("/data/reponyx/repositories/github/octocat/octocat/hello.git");
+    let path = std::path::Path::new("/data/reponyx/repositories/github/octocat/hello.git");
     let updated = set_local_path(pool(&db), repo.id, Some(path))
         .await
         .unwrap();

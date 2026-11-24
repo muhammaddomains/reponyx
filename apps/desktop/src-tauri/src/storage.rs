@@ -37,6 +37,7 @@ use reponyx_database::repositories::{
     RepositoryFilter, get_repository, list_repositories, set_archive_status, set_local_path,
 };
 use reponyx_database::settings::get_setting;
+use reponyx_git_engine::owner_segment;
 use reponyx_git_engine::storage::{
     ArchiveKind, delete_archive_dir, dir_size, disk_usage, scan_archive_dirs,
 };
@@ -150,7 +151,9 @@ fn canonical_or_raw(path: &Path) -> PathBuf {
 
 /// Parse an archive path into (account, owner, name, kind):
 /// `<root>/repositories/github/<account>/<owner>/<name>.git` or
-/// `<root>/working-clones/<account>/<owner>/<name>`. `None` for
+/// `<root>/working-clones/<account>/<owner>/<name>`, or the
+/// collapsed form `<account>/<name>` when the account and the
+/// owner are the same user (then owner == account). `None` for
 /// paths outside the layout.
 fn parse_archive_path(path: &Path) -> Option<(String, String, String, ArchiveKind)> {
     let parts: Vec<String> = path
@@ -159,11 +162,14 @@ fn parse_archive_path(path: &Path) -> Option<(String, String, String, ArchiveKin
         .collect();
     for (i, part) in parts.iter().enumerate() {
         if part == "repositories" && parts.get(i + 1).is_some_and(|p| p == "github") {
-            let (account, owner, name) = (
-                parts.get(i + 2)?.clone(),
-                parts.get(i + 3)?.clone(),
-                parts.get(i + 4)?.clone(),
-            );
+            let rest = &parts[i + 2..];
+            let (account, owner, name) = match rest {
+                [account, name] if name.ends_with(".git") => {
+                    (account.clone(), account.clone(), name.clone())
+                }
+                [account, owner, name] => (account.clone(), owner.clone(), name.clone()),
+                _ => return None,
+            };
             return Some((
                 account,
                 owner,
@@ -172,11 +178,12 @@ fn parse_archive_path(path: &Path) -> Option<(String, String, String, ArchiveKin
             ));
         }
         if part == "working-clones" {
-            let (account, owner, name) = (
-                parts.get(i + 1)?.clone(),
-                parts.get(i + 2)?.clone(),
-                parts.get(i + 3)?.clone(),
-            );
+            let rest = &parts[i + 1..];
+            let (account, owner, name) = match rest {
+                [account, name] => (account.clone(), account.clone(), name.clone()),
+                [account, owner, name] => (account.clone(), owner.clone(), name.clone()),
+                _ => return None,
+            };
             return Some((account, owner, name, ArchiveKind::Working));
         }
     }
@@ -184,6 +191,9 @@ fn parse_archive_path(path: &Path) -> Option<(String, String, String, ArchiveKin
 }
 
 /// Layout path for one side, from the row's current owner/name.
+/// Collapses to `<account>/<name>` when the account and the owner
+/// are the same user (same rule as `RepositoryLayout::new` in the
+/// git engine, via `owner_segment`).
 fn layout_path(
     root: &Path,
     account_username: &str,
@@ -191,18 +201,18 @@ fn layout_path(
     name: &str,
     kind: ArchiveKind,
 ) -> PathBuf {
+    let base = match kind {
+        ArchiveKind::Mirror => root.join("repositories").join("github"),
+        ArchiveKind::Working => root.join("working-clones"),
+    };
+    let base = base.join(account_username);
+    let base = match owner_segment(account_username, owner) {
+        Some(owner) => base.join(owner),
+        None => base,
+    };
     match kind {
-        ArchiveKind::Mirror => root
-            .join("repositories")
-            .join("github")
-            .join(account_username)
-            .join(owner)
-            .join(format!("{name}.git")),
-        ArchiveKind::Working => root
-            .join("working-clones")
-            .join(account_username)
-            .join(owner)
-            .join(name),
+        ArchiveKind::Mirror => base.join(format!("{name}.git")),
+        ArchiveKind::Working => base.join(name),
     }
 }
 

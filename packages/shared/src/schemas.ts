@@ -66,7 +66,7 @@ export const patExpirySchema = z.object({
 
 export const pairingInfoSchema = z.object({
   pairingCode: z.string(),
-  expiresAt: z.string(),
+  expiresAt: z.string().nullable(),
   installationId: z.string(),
   deviceIdentifier: z.string(),
 });

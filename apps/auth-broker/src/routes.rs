@@ -325,7 +325,8 @@ struct PairingRequestBody {
 #[derive(Debug, Serialize)]
 struct PairingRequestResponse {
     pairing_code: String,
-    expires_at: DateTime<Utc>,
+    /// `None`: pairing codes never expire.
+    expires_at: Option<DateTime<Utc>>,
 }
 
 async fn pairing_request(
@@ -472,7 +473,21 @@ async fn mint_token(
     Json(body): Json<MintTokenBody>,
 ) -> Result<Json<MintTokenResponse>, ApiError> {
     let device = DeviceAuth::from_headers(&state, &headers).await?;
-    if device.0.installation_id != installation_id {
+    // The device token authenticates the *device*; the gate is the
+    // installation's paired device, not the installation the token
+    // happened to be confirmed for. One device token covers every
+    // installation paired to that device — the desktop stores one
+    // token per device, overwritten on each pairing, so gating on
+    // the token's installation made every earlier installation's
+    // Validate fail with "device is not paired to this
+    // installation" even though the installation really was paired
+    // to this device.
+    let paired = state
+        .installation(&installation_id)
+        .await
+        .and_then(|record| record.paired_device)
+        .is_some_and(|paired| paired == device.0.device_identifier);
+    if !paired {
         state
             .audit(
                 &device.0.device_identifier,
@@ -542,15 +557,22 @@ async fn list_installations(
     headers: HeaderMap,
 ) -> Result<Json<Vec<InstallationResponse>>, ApiError> {
     SetupToken::from_headers(&state, &headers)?;
+    // The install callback does not carry the account login, so the
+    // recorded login is usually absent. Fill it from GitHub (one
+    // call for all installations); on any failure the recorded
+    // value stands and the list still succeeds.
+    let logins = crate::tokens::list_app_installations(&state.http, &state.config).await;
     Ok(Json(
         state
             .list_installations()
             .await
             .into_iter()
             .map(|record| InstallationResponse {
-                installation_id: record.installation_id,
+                installation_id: record.installation_id.clone(),
                 setup_action: record.setup_action,
-                account_login: record.account_login,
+                account_login: record
+                    .account_login
+                    .or_else(|| logins.get(&record.installation_id).cloned()),
                 installed_at: record.installed_at,
                 paired_device: record.paired_device,
             })

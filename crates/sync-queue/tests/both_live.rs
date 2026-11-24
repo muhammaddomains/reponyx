@@ -186,10 +186,10 @@ async fn run_pool(p: &SqlitePool) -> reponyx_sync_queue::QueueHandle {
 }
 
 fn mirror_path(storage_root: &Path) -> PathBuf {
+    // Account == owner: the layout collapses the username to one segment.
     storage_root
         .join("repositories")
         .join("github")
-        .join("octocat")
         .join("octocat")
         .join("hello.git")
 }
@@ -197,7 +197,6 @@ fn mirror_path(storage_root: &Path) -> PathBuf {
 fn working_path(storage_root: &Path) -> PathBuf {
     storage_root
         .join("working-clones")
-        .join("octocat")
         .join("octocat")
         .join("hello")
 }

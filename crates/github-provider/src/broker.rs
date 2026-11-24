@@ -153,18 +153,18 @@ impl BrokerClient {
 
     /// Request a pairing code for an installation. Requires the
     /// broker setup token. Returns the code (show it to the user)
-    /// and its expiry.
+    /// and its expiry (`None`: pairing codes never expire).
     pub async fn request_pairing_code(
         &self,
         setup_token: &str,
         installation_id: &str,
         device_name: &str,
         device_identifier: &str,
-    ) -> Result<(String, DateTime<Utc>), RepoNyxError> {
+    ) -> Result<(String, Option<DateTime<Utc>>), RepoNyxError> {
         #[derive(Deserialize)]
         struct PairingRequestResponse {
             pairing_code: String,
-            expires_at: DateTime<Utc>,
+            expires_at: Option<DateTime<Utc>>,
         }
         let response = self
             .http

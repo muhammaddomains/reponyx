@@ -104,8 +104,11 @@ fn looks_like_working(path: &Path) -> bool {
 
 /// Enumerate the archive directories under a storage root:
 /// mirrors at `<root>/repositories/github/<account>/<owner>/<name>.git`
-/// and working clones at `<root>/working-clones/<account>/<owner>/<name>`.
-/// A directory counts only when it looks like an archive (see
+/// and working clones at `<root>/working-clones/<account>/<owner>/<name>`,
+/// or at `<root>/repositories/github/<account>/<name>.git` and
+/// `<root>/working-clones/<account>/<name>` when the account and
+/// the owner are the same user (collapsed layout). A directory
+/// counts only when it looks like an archive (see
 /// [`looks_like_mirror`] / [`looks_like_working`]) — stray folders
 /// a user dropped into the tree are ignored. Missing trees are
 /// simply empty; an unreadable level is skipped, never fatal.
@@ -113,8 +116,22 @@ pub fn scan_archive_dirs(root: &Path) -> Vec<ArchiveDir> {
     let mut found = Vec::new();
     let mirrors = root.join("repositories").join("github");
     for account in child_dirs(&mirrors) {
-        for owner in child_dirs(&account) {
-            for name in child_dirs(&owner) {
+        for child in child_dirs(&account) {
+            // Collapsed layout (account == owner): the repo sits
+            // directly under the account.
+            if child
+                .file_name()
+                .is_some_and(|n| n.to_string_lossy().ends_with(".git"))
+                && looks_like_mirror(&child)
+            {
+                found.push(ArchiveDir {
+                    bytes: dir_size(&child),
+                    path: child,
+                    kind: ArchiveKind::Mirror,
+                });
+                continue;
+            }
+            for name in child_dirs(&child) {
                 if name
                     .file_name()
                     .is_some_and(|n| n.to_string_lossy().ends_with(".git"))
@@ -131,8 +148,18 @@ pub fn scan_archive_dirs(root: &Path) -> Vec<ArchiveDir> {
     }
     let working = root.join("working-clones");
     for account in child_dirs(&working) {
-        for owner in child_dirs(&account) {
-            for name in child_dirs(&owner) {
+        for child in child_dirs(&account) {
+            // Collapsed layout (account == owner): the clone sits
+            // directly under the account.
+            if looks_like_working(&child) {
+                found.push(ArchiveDir {
+                    bytes: dir_size(&child),
+                    path: child,
+                    kind: ArchiveKind::Working,
+                });
+                continue;
+            }
+            for name in child_dirs(&child) {
                 if looks_like_working(&name) {
                     found.push(ArchiveDir {
                         bytes: dir_size(&name),
@@ -321,6 +348,47 @@ mod tests {
             found.iter().any(|a| a.kind == ArchiveKind::Working
                 && a.path.ends_with("hello")
                 && a.bytes == 5)
+        );
+    }
+
+    #[test]
+    fn scan_finds_collapsed_archives() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        // Account == owner: the repo sits directly under the account.
+        make_mirror(
+            &root
+                .join("repositories")
+                .join("github")
+                .join("octocat")
+                .join("hello.git"),
+        );
+        make_working(&root.join("working-clones").join("octocat").join("hello"));
+        // A different-owner repo still uses the doubled layout.
+        make_mirror(
+            &root
+                .join("repositories")
+                .join("github")
+                .join("octocat")
+                .join("torvalds")
+                .join("linux.git"),
+        );
+
+        let found = scan_archive_dirs(root);
+        assert_eq!(found.len(), 3);
+        assert!(
+            found
+                .iter()
+                .any(|a| a.kind == ArchiveKind::Mirror && a.path.ends_with("octocat/hello.git"))
+        );
+        assert!(
+            found.iter().any(|a| a.kind == ArchiveKind::Working
+                && a.path.ends_with("working-clones/octocat/hello"))
+        );
+        assert!(
+            found
+                .iter()
+                .any(|a| a.kind == ArchiveKind::Mirror && a.path.ends_with("torvalds/linux.git"))
         );
     }
 

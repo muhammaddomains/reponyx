@@ -21,8 +21,6 @@ use std::time::Duration;
 pub const DEFAULT_BIND_ADDR: &str = "127.0.0.1:8765";
 /// Default GitHub API base.
 pub const DEFAULT_GITHUB_API_BASE: &str = "https://api.github.com";
-/// Pairing codes live 10 minutes.
-pub const DEFAULT_PAIRING_TTL: Duration = Duration::from_secs(600);
 /// GitHub-callback `state` values live 10 minutes.
 pub const DEFAULT_STATE_TTL: Duration = Duration::from_secs(600);
 /// Wrong-code attempts allowed per pairing code before it is
@@ -44,7 +42,6 @@ pub struct BrokerConfig {
     /// Token that authenticates pairing/setup requests from the
     /// desktop operator. Secret — redacted in `Debug`, never logged.
     pub setup_token: String,
-    pub pairing_ttl: Duration,
     pub state_ttl: Duration,
     pub max_pairing_attempts: u32,
     /// Token-mint rate limit: requests per minute per device.
@@ -66,7 +63,6 @@ impl std::fmt::Debug for BrokerConfig {
             .field("github_api_base", &self.github_api_base)
             .field("bind_addr", &self.bind_addr)
             .field("setup_token", &"<redacted>")
-            .field("pairing_ttl", &self.pairing_ttl)
             .field("state_ttl", &self.state_ttl)
             .field("max_pairing_attempts", &self.max_pairing_attempts)
             .field("data_dir", &self.data_dir)
@@ -123,7 +119,6 @@ impl BrokerConfig {
             github_api_base,
             bind_addr,
             setup_token,
-            pairing_ttl: DEFAULT_PAIRING_TTL,
             state_ttl: DEFAULT_STATE_TTL,
             max_pairing_attempts: DEFAULT_MAX_PAIRING_ATTEMPTS,
             mint_per_minute_per_device: 30.0,
@@ -147,7 +142,6 @@ impl BrokerConfig {
             github_api_base: github_api_base.into(),
             bind_addr: "127.0.0.1:0".parse().unwrap(),
             setup_token: "test-setup-token-do-not-use".to_string(),
-            pairing_ttl: DEFAULT_PAIRING_TTL,
             state_ttl: DEFAULT_STATE_TTL,
             max_pairing_attempts: DEFAULT_MAX_PAIRING_ATTEMPTS,
             mint_per_minute_per_device: 30.0,
@@ -178,7 +172,6 @@ mod tests {
             github_api_base: DEFAULT_GITHUB_API_BASE.to_string(),
             bind_addr: DEFAULT_BIND_ADDR.parse().unwrap(),
             setup_token: "test-setup-token-secret".to_string(),
-            pairing_ttl: DEFAULT_PAIRING_TTL,
             state_ttl: DEFAULT_STATE_TTL,
             max_pairing_attempts: DEFAULT_MAX_PAIRING_ATTEMPTS,
             mint_per_minute_per_device: 30.0,

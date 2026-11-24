@@ -37,7 +37,9 @@ pub use health::{HealthStatus, RepositoryDiagnosis, verify_repository};
 pub use locks::{RepoLockGuard, RepoLockManager};
 pub use mirror::{FetchSummary, MirrorInfo, mirror_clone, mirror_fetch};
 pub use options::{DEFAULT_LOCK_TIMEOUT, DEFAULT_TIMEOUT, SyncOptions};
-pub use paths::{RepositoryLayout, validate_path_component, validate_repository_path};
+pub use paths::{
+    RepositoryLayout, owner_segment, validate_path_component, validate_repository_path,
+};
 pub use progress::{ProgressEvent, parse_progress_line};
 pub use refs::{BranchInfo, RefKind, TagInfo, head_sha, list_branches, list_tags};
 pub use working::{

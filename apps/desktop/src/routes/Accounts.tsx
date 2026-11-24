@@ -513,8 +513,9 @@ export default function Accounts() {
                 {pairing.pairingCode}
               </p>
               <p className="text-xs text-zinc-500">
-                Expires {new Date(pairing.expiresAt).toLocaleString()}. The
-                code is single-use and bound to this device.
+                {pairing.expiresAt
+                  ? `Expires ${new Date(pairing.expiresAt).toLocaleString()}. The code is single-use and bound to this device.`
+                  : "The code is single-use and bound to this device, and it does not expire."}
               </p>
               <div className="flex gap-2">
                 <Button

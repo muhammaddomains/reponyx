@@ -192,7 +192,7 @@ pub struct PatExpiryDto {
 #[serde(rename_all = "camelCase")]
 pub struct PairingDto {
     pub pairing_code: String,
-    pub expires_at: String,
+    pub expires_at: Option<String>,
     pub installation_id: String,
     pub device_identifier: String,
 }
@@ -560,7 +560,7 @@ pub async fn start_pairing_command(
     }
     Ok(PairingDto {
         pairing_code: code,
-        expires_at: expires_at.to_rfc3339(),
+        expires_at: expires_at.map(|at| at.to_rfc3339()),
         installation_id,
         device_identifier: device_id,
     })

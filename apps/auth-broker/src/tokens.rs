@@ -128,6 +128,56 @@ pub async fn mint_installation_token(
     })
 }
 
+/// List the App's installations with their account logins
+/// (`GET /app/installations`, App JWT auth), as
+/// installation-id → account-login. Best-effort: any failure
+/// (GitHub unreachable, bad JWT, unparsable body) returns an empty
+/// map — the installations list must never fail because GitHub is
+/// unreachable; callers fall back to the login recorded at install
+/// time (which is usually absent — the install callback does not
+/// carry it).
+pub async fn list_app_installations(
+    http: &reqwest::Client,
+    config: &BrokerConfig,
+) -> std::collections::HashMap<String, String> {
+    #[derive(Deserialize)]
+    struct AppInstallation {
+        id: u64,
+        account: AppInstallationAccount,
+    }
+    #[derive(Deserialize)]
+    struct AppInstallationAccount {
+        login: String,
+    }
+    let mut out = std::collections::HashMap::new();
+    let Ok(jwt) = app_jwt(config) else {
+        return out;
+    };
+    let url = format!(
+        "{}/app/installations",
+        config.github_api_base.trim_end_matches('/')
+    );
+    let Ok(response) = http
+        .get(&url)
+        .header("Authorization", format!("Bearer {jwt}"))
+        .header("Accept", "application/vnd.github+json")
+        .header("X-GitHub-Api-Version", "2022-11-28")
+        .send()
+        .await
+    else {
+        return out;
+    };
+    if !response.status().is_success() {
+        return out;
+    }
+    if let Ok(installations) = response.json::<Vec<AppInstallation>>().await {
+        for installation in installations {
+            out.insert(installation.id.to_string(), installation.account.login);
+        }
+    }
+    out
+}
+
 fn parse_error_message(body: &str) -> String {
     #[derive(Deserialize)]
     struct ErrorBody {

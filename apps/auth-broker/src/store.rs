@@ -126,7 +126,7 @@ impl BrokerStore {
         .bind(&record.device_name)
         .bind(&record.device_identifier)
         .bind(to_text(record.created_at))
-        .bind(to_text(record.expires_at))
+        .bind(record.expires_at.map(to_text))
         .bind(record.attempts as i64)
         .bind(record.status.as_str())
         .execute(&self.pool)
@@ -160,7 +160,10 @@ impl BrokerStore {
                 device_name: row.get("device_name"),
                 device_identifier: row.get("device_identifier"),
                 created_at: parse_time(row.get("created_at"))?,
-                expires_at: parse_time(row.get("expires_at"))?,
+                expires_at: match row.get::<Option<String>, _>("expires_at") {
+                    Some(text) => Some(parse_time(text)?),
+                    None => None,
+                },
                 attempts: row.get::<i64, _>("attempts") as u32,
                 status: match status.as_str() {
                     "confirmed" => PairingStatus::Confirmed,
@@ -172,14 +175,19 @@ impl BrokerStore {
         Ok(out)
     }
 
-    /// Delete pairing codes whose TTL has passed. Called at startup
-    /// (expired codes are inert, but there is no reason to keep
-    /// them) and before issuing a new code.
-    pub async fn prune_expired_pairing_codes(&self) -> Result<u64, sqlx::Error> {
-        let result = sqlx::query("DELETE FROM broker_pairing_codes WHERE expires_at < ?")
-            .bind(to_text(Utc::now()))
-            .execute(&self.pool)
-            .await?;
+    /// Delete spent pairing codes (confirmed or revoked) older than
+    /// 90 days. Pending codes never expire, so there is no expiry
+    /// to prune; spent codes are kept that long so a replay still
+    /// reports "already used" instead of "invalid code". Called at
+    /// startup and before issuing a new code.
+    pub async fn prune_spent_pairing_codes(&self) -> Result<u64, sqlx::Error> {
+        let cutoff = Utc::now() - chrono::Duration::days(90);
+        let result = sqlx::query(
+            "DELETE FROM broker_pairing_codes WHERE status != 'pending' AND created_at < ?",
+        )
+        .bind(to_text(cutoff))
+        .execute(&self.pool)
+        .await?;
         Ok(result.rows_affected())
     }
 

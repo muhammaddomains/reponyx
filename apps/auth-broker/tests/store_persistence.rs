@@ -27,9 +27,8 @@ fn throwaway_private_pem() -> String {
         .to_string()
 }
 
-fn test_config(pairing_ttl: Duration, state_ttl: Duration) -> BrokerConfig {
+fn test_config(state_ttl: Duration) -> BrokerConfig {
     let mut config = BrokerConfig::for_tests("123456", throwaway_private_pem(), "http://localhost");
-    config.pairing_ttl = pairing_ttl;
     config.state_ttl = state_ttl;
     config
 }
@@ -63,11 +62,7 @@ async fn restart_preserves_pairing_flow() {
     let installation_id = "777";
     let device = "device-restart-1";
     let token = {
-        let state = open_state(
-            &dir,
-            test_config(Duration::from_secs(600), Duration::from_secs(600)),
-        )
-        .await;
+        let state = open_state(&dir, test_config(Duration::from_secs(600))).await;
         state
             .record_installation(installation_id, "install", Some("octocat".to_string()))
             .await
@@ -85,11 +80,7 @@ async fn restart_preserves_pairing_flow() {
         drop(state);
         token
     };
-    let state = open_state(
-        &dir,
-        test_config(Duration::from_secs(600), Duration::from_secs(600)),
-    )
-    .await;
+    let state = open_state(&dir, test_config(Duration::from_secs(600))).await;
     let installations = state.list_installations().await;
     assert_eq!(installations.len(), 1);
     assert_eq!(installations[0].installation_id, installation_id);
@@ -118,11 +109,7 @@ async fn restart_preserves_revocation() {
     let dir = fresh_dir();
     let device = "device-restart-2";
     let token = {
-        let state = open_state(
-            &dir,
-            test_config(Duration::from_secs(600), Duration::from_secs(600)),
-        )
-        .await;
+        let state = open_state(&dir, test_config(Duration::from_secs(600))).await;
         state
             .record_installation("778", "install", None)
             .await
@@ -139,11 +126,7 @@ async fn restart_preserves_revocation() {
         (token, pending_code)
     };
     let (token, pending_code) = token;
-    let state = open_state(
-        &dir,
-        test_config(Duration::from_secs(600), Duration::from_secs(600)),
-    )
-    .await;
+    let state = open_state(&dir, test_config(Duration::from_secs(600))).await;
     assert!(state.device_for_token(&token).await.is_none());
     assert_eq!(state.pairing_status(&pending_code).await.status, "revoked");
     assert!(!state.revoke_device(device).await.unwrap());
@@ -154,21 +137,13 @@ async fn restart_preserves_revocation() {
 async fn setup_state_is_single_use_across_restart() {
     let dir = fresh_dir();
     let issued = {
-        let state = open_state(
-            &dir,
-            test_config(Duration::from_secs(600), Duration::from_secs(600)),
-        )
-        .await;
+        let state = open_state(&dir, test_config(Duration::from_secs(600))).await;
         let (state_value, _) = state.issue_setup_state().await.unwrap();
         assert!(state.consume_setup_state(&state_value).await.unwrap());
         drop(state);
         state_value
     };
-    let state = open_state(
-        &dir,
-        test_config(Duration::from_secs(600), Duration::from_secs(600)),
-    )
-    .await;
+    let state = open_state(&dir, test_config(Duration::from_secs(600))).await;
     // Consumed before the restart: still consumed after it.
     assert!(!state.consume_setup_state(&issued).await.unwrap());
     std::fs::remove_dir_all(&dir).ok();
@@ -178,11 +153,7 @@ async fn setup_state_is_single_use_across_restart() {
 async fn wrong_device_attempts_survive_restart() {
     let dir = fresh_dir();
     let code = {
-        let state = open_state(
-            &dir,
-            test_config(Duration::from_secs(600), Duration::from_secs(600)),
-        )
-        .await;
+        let state = open_state(&dir, test_config(Duration::from_secs(600))).await;
         state
             .record_installation("779", "install", None)
             .await
@@ -203,11 +174,7 @@ async fn wrong_device_attempts_survive_restart() {
         drop(state);
         code
     };
-    let state = open_state(
-        &dir,
-        test_config(Duration::from_secs(600), Duration::from_secs(600)),
-    )
-    .await;
+    let state = open_state(&dir, test_config(Duration::from_secs(600))).await;
     // Three more wrong attempts: the 5th invalidates the code.
     for _ in 0..2 {
         assert!(
@@ -227,14 +194,13 @@ async fn wrong_device_attempts_survive_restart() {
 }
 
 #[tokio::test]
-async fn expired_pairing_code_is_pruned_on_restart() {
+async fn pending_pairing_code_survives_restart() {
+    // Pairing codes never expire: a pending code requested before a
+    // broker restart still confirms after it (past the old 1 s TTL
+    // this test used to stand in for).
     let dir = fresh_dir();
     let code = {
-        let state = open_state(
-            &dir,
-            test_config(Duration::from_secs(1), Duration::from_secs(1)),
-        )
-        .await;
+        let state = open_state(&dir, test_config(Duration::from_secs(1))).await;
         state
             .record_installation("780", "install", None)
             .await
@@ -247,18 +213,13 @@ async fn expired_pairing_code_is_pruned_on_restart() {
         drop(state);
         code
     };
-    let state = open_state(
-        &dir,
-        test_config(Duration::from_secs(1), Duration::from_secs(1)),
-    )
-    .await;
-    // Expired before the restart: pruned at load, not resurrected.
-    assert_eq!(state.pairing_status(&code).await.status, "unknown");
+    let state = open_state(&dir, test_config(Duration::from_secs(1))).await;
+    assert_eq!(state.pairing_status(&code).await.status, "pending");
     assert!(
         state
             .confirm_pairing(&code, "device-restart-4")
             .await
-            .is_err()
+            .is_ok()
     );
     std::fs::remove_dir_all(&dir).ok();
 }

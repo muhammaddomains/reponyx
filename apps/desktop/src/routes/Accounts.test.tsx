@@ -26,6 +26,7 @@ import {
   getBrokerStatus,
   listAccounts,
   listBrokerInstallations,
+  startPairing,
 } from "@reponyx/api-client";
 import type { Account } from "@reponyx/shared";
 
@@ -127,5 +128,50 @@ describe("Accounts page — Delete account", () => {
       await screen.findByRole("button", { name: "Delete account" }),
     );
     expect(deletePatAccount).not.toHaveBeenCalled();
+  });
+});
+
+describe("Accounts page — pairing code", () => {
+  const installation = {
+    installationId: "777",
+    setupAction: "install",
+    accountLogin: "octocat",
+    installedAt: "2026-11-24T00:00:00Z",
+    pairedDevice: null,
+  };
+
+  it("shows the account login next to the installation and the expiry when the broker returns one", async () => {
+    vi.mocked(listBrokerInstallations).mockResolvedValue([installation]);
+    vi.mocked(startPairing).mockResolvedValue({
+      pairingCode: "ABC-DEF-GHI",
+      expiresAt: "2026-11-24T10:30:00Z",
+      installationId: "777",
+      deviceIdentifier: "device-1",
+    });
+    render(<Accounts />);
+    expect(
+      await screen.findByText("Installation 777 (octocat)"),
+    ).toBeInTheDocument();
+    fireEvent.click(
+      await screen.findByRole("button", { name: "Pair this device" }),
+    );
+    expect(await screen.findByText("ABC-DEF-GHI")).toBeInTheDocument();
+    expect(screen.getByText(/Expires/)).toBeInTheDocument();
+  });
+
+  it("says the code does not expire when the broker returns no expiry", async () => {
+    vi.mocked(listBrokerInstallations).mockResolvedValue([installation]);
+    vi.mocked(startPairing).mockResolvedValue({
+      pairingCode: "ABC-DEF-GHI",
+      expiresAt: null,
+      installationId: "777",
+      deviceIdentifier: "device-1",
+    });
+    render(<Accounts />);
+    fireEvent.click(
+      await screen.findByRole("button", { name: "Pair this device" }),
+    );
+    expect(await screen.findByText("ABC-DEF-GHI")).toBeInTheDocument();
+    expect(screen.getByText(/it does not expire/)).toBeInTheDocument();
   });
 });

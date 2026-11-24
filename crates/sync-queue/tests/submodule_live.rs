@@ -278,7 +278,6 @@ async fn mirror_clone_auto_enqueues_submodule_sync() {
         .join("repositories")
         .join("github")
         .join("octocat")
-        .join("octocat")
         .join("hello.git");
     let out = Command::new("git")
         .args([
@@ -319,11 +318,11 @@ async fn working_clone_auto_enqueues_submodule_sync() {
     handle.join().await;
 
     // The layout puts working clones at
-    // <root>/working-clones/<account>/<owner>/<name> (no `github`
-    // segment, unlike the mirror path).
+    // <root>/working-clones/<account>/<name> (no `github`
+    // segment, unlike the mirror path; account == owner here,
+    // so the username appears once).
     let work = storage_root
         .join("working-clones")
-        .join("octocat")
         .join("octocat")
         .join("hello");
     assert_eq!(

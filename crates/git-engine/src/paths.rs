@@ -9,9 +9,26 @@
 //! <root>/repositories/github/<account>/<owner>/<name>.git/   (mirror)
 //! <root>/working-clones/<account>/<owner>/<name>/            (working)
 //! ```
+//! When the account and the owner are the same GitHub user, the
+//! username appears once: `<account>/<name>` (the doubled
+//! `<account>/<owner>/<name>` was confusing — the common case is
+//! syncing your own repositories).
 
 use reponyx_core::{ErrorCode, RepoNyxError};
 use std::path::{Component, Path, PathBuf};
+
+/// The owner segment of the layout, or `None` when the account
+/// and the owner are the same GitHub user (usernames are
+/// case-insensitive on GitHub, so the comparison is too). Shared
+/// by [`RepositoryLayout::new`] and the desktop's storage page, so
+/// both sides of the layout agree.
+pub fn owner_segment<'a>(account: &'a str, owner: &'a str) -> Option<&'a str> {
+    if account.eq_ignore_ascii_case(owner) {
+        None
+    } else {
+        Some(owner)
+    }
+}
 
 /// A single path component is valid iff it is a plain name: no
 /// separators, no `.`/`..`, no NUL, no Windows-reserved device names,
@@ -103,22 +120,21 @@ pub struct RepositoryLayout {
 impl RepositoryLayout {
     /// Build the layout for `account / owner / name` under `root`.
     /// All components are validated; collisions are detected by the
-    /// caller (Phase 3) before any directory is created.
+    /// caller (Phase 3) before any directory is created. When the
+    /// account and the owner are the same user, the owner segment
+    /// is omitted — the username appears once.
     pub fn new(root: &Path, account: &str, owner: &str, name: &str) -> Result<Self, RepoNyxError> {
         for c in [account, owner, name] {
             validate_path_component(c)?;
         }
-        let mirror_path = root
-            .join("repositories")
-            .join("github")
-            .join(account)
-            .join(owner)
-            .join(format!("{name}.git"));
-        let working_path = root
-            .join("working-clones")
-            .join(account)
-            .join(owner)
-            .join(name);
+        let mut mirror_path = root.join("repositories").join("github").join(account);
+        let mut working_path = root.join("working-clones").join(account);
+        if let Some(owner) = owner_segment(account, owner) {
+            mirror_path = mirror_path.join(owner);
+            working_path = working_path.join(owner);
+        }
+        let mirror_path = mirror_path.join(format!("{name}.git"));
+        let working_path = working_path.join(name);
         validate_repository_path(root, &mirror_path)?;
         validate_repository_path(root, &working_path)?;
         Ok(Self {
@@ -175,6 +191,30 @@ mod tests {
         assert_eq!(
             layout.working_path,
             PathBuf::from("/data/working-clones/account-01/owner-a/project-one")
+        );
+    }
+
+    #[test]
+    fn layout_collapses_when_account_is_owner() {
+        let layout =
+            RepositoryLayout::new(Path::new("/data"), "octocat", "octocat", "hello").unwrap();
+        assert_eq!(
+            layout.mirror_path,
+            PathBuf::from("/data/repositories/github/octocat/hello.git")
+        );
+        assert_eq!(
+            layout.working_path,
+            PathBuf::from("/data/working-clones/octocat/hello")
+        );
+    }
+
+    #[test]
+    fn layout_collapse_is_case_insensitive() {
+        let layout =
+            RepositoryLayout::new(Path::new("/data"), "OctoCat", "octocat", "hello").unwrap();
+        assert_eq!(
+            layout.working_path,
+            PathBuf::from("/data/working-clones/OctoCat/hello")
         );
     }
 

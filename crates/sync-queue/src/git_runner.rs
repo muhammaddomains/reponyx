@@ -99,7 +99,7 @@ impl JobRunner for GitJobRunner {
     async fn run(&self, ctx: JobContext) -> Result<JobRunResult, RepoNyxError> {
         let started = std::time::Instant::now();
 
-        let repo = get_repository(&ctx.pool, ctx.job.repository_id)
+        let mut repo = get_repository(&ctx.pool, ctx.job.repository_id)
             .await?
             .ok_or_else(|| {
                 RepoNyxError::new(
@@ -203,6 +203,20 @@ impl JobRunner for GitJobRunner {
             operation_label(ctx.job.job_type),
             "started",
         );
+        // A fetch works on the archive that already exists. When
+        // the layout collapsed (account == owner), sides cloned
+        // under the old doubled layout must move first — otherwise
+        // a Both repo fails the fetch ("neither mirror nor working
+        // clone exists") and a single-mode repo keeps fetching at
+        // the old path forever. The in-memory row is patched too:
+        // the fetch resolves its path from it, not from the DB.
+        if ctx.job.job_type == JobType::Fetch
+            && let Some(new_local_path) = self
+                .relocate_collapsed_layout(&ctx, &repo, &layout, &storage_root, &account.username)
+                .await?
+        {
+            repo.local_path = Some(new_local_path.to_string_lossy().into_owned());
+        }
         match ctx.job.job_type {
             JobType::MirrorClone => {
                 self.run_mirror_clone(&ctx, &git, &repo, &layout, opts)
@@ -262,6 +276,89 @@ impl JobRunner for GitJobRunner {
 }
 
 impl GitJobRunner {
+    /// Move archive sides from the pre-collapse doubled layout
+    /// (`<account>/<owner>/<name>`) to the current layout, which
+    /// omits the owner segment when the account and the owner are
+    /// the same user. Only moves a side when the old path exists
+    /// and the new path does not. Returns the new `local_path`
+    /// when the row's `local_path` pointed at a moved side (the
+    /// caller patches its in-memory row — the fetch resolves its
+    /// path from it). The per-path locks for both the old and the
+    /// new path are held during the move so a concurrent
+    /// clone/fetch for the same repo cannot race it.
+    async fn relocate_collapsed_layout(
+        &self,
+        ctx: &JobContext,
+        repo: &Repository,
+        layout: &RepositoryLayout,
+        storage_root: &Path,
+        account_username: &str,
+    ) -> Result<Option<PathBuf>, RepoNyxError> {
+        let legacy_mirror = storage_root
+            .join("repositories")
+            .join("github")
+            .join(account_username)
+            .join(&repo.owner)
+            .join(format!("{}.git", repo.name));
+        let legacy_working = storage_root
+            .join("working-clones")
+            .join(account_username)
+            .join(&repo.owner)
+            .join(&repo.name);
+        let mut new_local_path = None;
+        for (legacy, current) in [
+            (legacy_mirror, layout.mirror_path.clone()),
+            (legacy_working, layout.working_path.clone()),
+        ] {
+            if legacy == current || !legacy.is_dir() || current.exists() {
+                continue;
+            }
+            let _legacy_guard = self
+                .locks
+                .acquire(&legacy, self.config.lock_timeout)
+                .await?;
+            let _current_guard = self
+                .locks
+                .acquire(&current, self.config.lock_timeout)
+                .await?;
+            // Re-check after acquiring: a concurrent job may have
+            // moved or created the side while we waited.
+            if !legacy.is_dir() || current.exists() {
+                continue;
+            }
+            if let Some(parent) = current.parent() {
+                std::fs::create_dir_all(parent).map_err(|e| {
+                    RepoNyxError::new(
+                        ErrorCode::InternalError,
+                        "cannot create relocated archive parent",
+                    )
+                    .with_details(e.to_string())
+                })?;
+            }
+            std::fs::rename(&legacy, &current).map_err(|e| {
+                RepoNyxError::new(
+                    ErrorCode::InternalError,
+                    "cannot relocate archive to the collapsed layout",
+                )
+                .with_details(format!(
+                    "{} -> {}: {e}",
+                    legacy.display(),
+                    current.display()
+                ))
+            })?;
+            if repo.local_path.as_deref() == legacy.to_str() {
+                set_local_path(&ctx.pool, repo.id, Some(&current)).await?;
+                new_local_path = Some(current.clone());
+            }
+            debug!(
+                from = %legacy.display(),
+                to = %current.display(),
+                "relocated archive to the collapsed layout"
+            );
+        }
+        Ok(new_local_path)
+    }
+
     async fn run_mirror_clone(
         &self,
         ctx: &JobContext,

@@ -43,7 +43,12 @@ pub struct InstallationRecord {
     pub paired_device: Option<String>,
 }
 
-/// A pairing code, keyed by its SHA-256 hash.
+/// A pairing code, keyed by its SHA-256 hash. `expires_at` is
+/// `None`: pairing codes never expire (Phase 10 fix — the old
+/// 10-minute TTL expired while users were mid-flow). They stay
+/// safe without it: single-use, bound to one device, confirm
+/// requires the setup token, and wrong-device attempts revoke the
+/// code after `max_pairing_attempts`.
 #[derive(Debug, Clone)]
 pub struct PairingCodeRecord {
     pub code_hash: String,
@@ -51,15 +56,14 @@ pub struct PairingCodeRecord {
     pub device_name: String,
     pub device_identifier: String,
     pub created_at: DateTime<Utc>,
-    pub expires_at: DateTime<Utc>,
+    pub expires_at: Option<DateTime<Utc>>,
     /// Wrong-device attempts so far; at `max_pairing_attempts` the
     /// code is revoked.
     pub attempts: u32,
     pub status: PairingStatus,
 }
 
-/// Pairing-code lifecycle. Expiry is computed from `expires_at`,
-/// not stored.
+/// Pairing-code lifecycle.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PairingStatus {
     Pending,
@@ -172,14 +176,14 @@ impl BrokerState {
         Arc::new(Self::new_inner(config, None))
     }
 
-    /// Open broker state backed by `store`: prune expired rows and
+    /// Open broker state backed by `store`: prune spent rows and
     /// stale audit events, then load every record into the memory
     /// maps so a restart resumes where the broker left off.
     pub async fn open(
         config: BrokerConfig,
         store: Arc<BrokerStore>,
     ) -> Result<Arc<Self>, sqlx::Error> {
-        store.prune_expired_pairing_codes().await?;
+        store.prune_spent_pairing_codes().await?;
         store.prune_setup_states().await?;
         store.prune_audit_events().await?;
         let installations = store.load_installations().await?;
@@ -337,13 +341,14 @@ impl BrokerState {
 
     /// Request a pairing code for an installation. The installation
     /// must already be recorded (via the install callback).
-    /// Returns the raw code (shown to the user) and its expiry.
+    /// Returns the raw code (shown to the user) and `None` for its
+    /// expiry — pairing codes never expire.
     pub async fn request_pairing(
         &self,
         installation_id: &str,
         device_name: &str,
         device_identifier: &str,
-    ) -> Result<(String, DateTime<Utc>), RepoNyxError> {
+    ) -> Result<(String, Option<DateTime<Utc>>), RepoNyxError> {
         if self.installation(installation_id).await.is_none() {
             return Err(RepoNyxError::new(
                 ErrorCode::InvalidInput,
@@ -351,7 +356,6 @@ impl BrokerState {
             ));
         }
         let code = pairing_code();
-        let expires_at = Utc::now() + self.config.pairing_ttl;
         let hash = sha256_hex(&normalize_pairing_code(&code));
         let record = PairingCodeRecord {
             code_hash: hash.clone(),
@@ -359,13 +363,13 @@ impl BrokerState {
             device_name: device_name.to_string(),
             device_identifier: device_identifier.to_string(),
             created_at: Utc::now(),
-            expires_at,
+            expires_at: None,
             attempts: 0,
             status: PairingStatus::Pending,
         };
         if let Some(store) = &self.store {
             store
-                .prune_expired_pairing_codes()
+                .prune_spent_pairing_codes()
                 .await
                 .map_err(store_error)?;
             store
@@ -374,7 +378,7 @@ impl BrokerState {
                 .map_err(store_error)?;
         }
         self.pairing_codes.write().await.insert(hash, record);
-        Ok((code, expires_at))
+        Ok((code, None))
     }
 
     /// Confirm a pairing code. On success returns the device token
@@ -433,20 +437,6 @@ impl BrokerState {
             return Err(RepoNyxError::new(
                 ErrorCode::InvalidInput,
                 "pairing code already used",
-            ));
-        }
-        if Utc::now() > record.expires_at {
-            drop(codes);
-            self.audit(
-                device_identifier,
-                "pairing.failed",
-                "failure",
-                "expired pairing code",
-            )
-            .await;
-            return Err(RepoNyxError::new(
-                ErrorCode::InvalidInput,
-                "pairing code expired",
             ));
         }
         if record.device_identifier != device_identifier {
@@ -628,11 +618,7 @@ impl BrokerState {
                 device_identifier: None,
             };
         };
-        let status = if record.status == PairingStatus::Pending && Utc::now() > record.expires_at {
-            "expired".to_string()
-        } else {
-            record.status.as_str().to_string()
-        };
+        let status = record.status.as_str().to_string();
         PairingStatusInfo {
             status,
             installation_id: Some(record.installation_id),

@@ -209,10 +209,10 @@ async fn scheduler_to_queue_to_real_mirror_clone() {
     handle.join().await;
 
     // 3. The mirror clone is really on disk with the remote's refs.
+    // Account == owner: the layout collapses the username to one segment.
     let mirror = storage_root
         .join("repositories")
         .join("github")
-        .join("octocat")
         .join("octocat")
         .join("hello.git");
     assert!(

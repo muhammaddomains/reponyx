@@ -76,7 +76,8 @@ export interface PatExpiry {
 
 export interface PairingInfo {
   pairingCode: string;
-  expiresAt: string;
+  /** `null`: pairing codes never expire. */
+  expiresAt: string | null;
   installationId: string;
   deviceIdentifier: string;
 }

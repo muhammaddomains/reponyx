@@ -128,15 +128,34 @@ fn parse_sync_mode(value: &str) -> CommandResult<SyncMode> {
 /// Open `target` (a local path or an https URL) with the OS default
 /// application. The target is passed as a single argument — never
 /// through a shell — so it cannot inject a command. Callers only
-/// ever pass values read from the database, never free user input.
+/// ever pass values read from the database (or produced by our own
+/// broker), never free user input.
+///
+/// URLs and local paths take different openers on Windows:
+/// `explorer` treats a URL with a query string as a file path and
+/// falls back to opening the Documents folder instead of the
+/// browser (proven 2026-11-24: the GitHub App install URL, which
+/// carries `?state=…`, opened Documents; plain repo URLs without a
+/// query string opened fine). So https URLs go through
+/// `rundll32 url.dll,FileProtocolHandler`, which hands the URL to
+/// the default browser untouched, while local paths still go
+/// through `explorer`.
 pub(crate) fn open_with_os_app(target: &str) -> CommandResult<()> {
     #[cfg(target_os = "windows")]
-    let opener = "explorer";
+    let (program, extra_args): (&str, &[&str]) = {
+        let is_url = target.starts_with("https://") || target.starts_with("http://");
+        if is_url {
+            ("rundll32", &["url.dll,FileProtocolHandler"])
+        } else {
+            ("explorer", &[])
+        }
+    };
     #[cfg(target_os = "macos")]
-    let opener = "open";
+    let (program, extra_args): (&str, &[&str]) = ("open", &[]);
     #[cfg(not(any(target_os = "windows", target_os = "macos")))]
-    let opener = "xdg-open";
-    Command::new(opener)
+    let (program, extra_args): (&str, &[&str]) = ("xdg-open", &[]);
+    Command::new(program)
+        .args(extra_args)
         .arg(target)
         .spawn()
         .map_err(|e| CommandError {

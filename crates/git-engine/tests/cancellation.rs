@@ -141,7 +141,17 @@ async fn cancel_mirror_clone_leaves_diagnosable_destination() {
     // which one appears depends on where the 300 ms cancel lands,
     // and on a loaded runner it is Corrupt. It must never claim to
     // hold the remote's commits.
+    //
+    // It must also never report Locked: a git killed mid-operation
+    // can leave index.lock behind, and the engine removes that
+    // leftover on cancel/timeout (see remove_leftover_index_lock),
+    // so the diagnosis reaches one of the states above instead of
+    // staying locked forever.
     let diagnosis = verify_repository(git(), &dest, Duration::from_secs(30)).await;
+    assert!(
+        !dest.join("index.lock").exists(),
+        "cancelled clone left index.lock behind"
+    );
     match diagnosis.status {
         HealthStatus::IncompleteClone | HealthStatus::NotARepository | HealthStatus::Corrupt => {}
         HealthStatus::Healthy => {

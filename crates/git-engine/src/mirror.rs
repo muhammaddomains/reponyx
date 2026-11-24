@@ -89,13 +89,30 @@ pub async fn mirror_clone(
     if let Some(helper) = &opts.credential {
         helper.install(&mut cmd);
     }
-    let out = run_git_command_streaming(
+    let out = match run_git_command_streaming(
         &cmd,
         opts.timeout,
         opts.cancel.as_ref(),
         opts.progress.clone(),
     )
-    .await?;
+    .await
+    {
+        Ok(out) => out,
+        Err(e) => {
+            if matches!(
+                e.code,
+                ErrorCode::OperationCancelled | ErrorCode::OperationTimedOut
+            ) {
+                // We killed git (and waited for it), so no git process
+                // can still hold the index lock; the transport helper
+                // never touches the index. Remove the leftover so the
+                // destination diagnoses as incomplete/corrupt instead
+                // of locked forever.
+                remove_leftover_index_lock(dest);
+            }
+            return Err(e);
+        }
+    };
     if !out.success {
         return Err(map_git_failure(&cmd, &out));
     }
@@ -123,13 +140,27 @@ pub async fn mirror_fetch(
     if let Some(helper) = &opts.credential {
         helper.install(&mut cmd);
     }
-    let out = run_git_command_streaming(
+    let out = match run_git_command_streaming(
         &cmd,
         opts.timeout,
         opts.cancel.as_ref(),
         opts.progress.clone(),
     )
-    .await?;
+    .await
+    {
+        Ok(out) => out,
+        Err(e) => {
+            if matches!(
+                e.code,
+                ErrorCode::OperationCancelled | ErrorCode::OperationTimedOut
+            ) {
+                // Same cleanup as mirror_clone: we killed git, so a
+                // leftover index.lock is ours to remove.
+                remove_leftover_index_lock(mirror_path);
+            }
+            return Err(e);
+        }
+    };
     if !out.success {
         return Err(map_git_failure(&cmd, &out));
     }
@@ -152,6 +183,23 @@ pub async fn mirror_fetch(
         added,
         pruned,
     })
+}
+
+/// Remove an `index.lock` a killed git left behind in a bare mirror.
+///
+/// Only called after the git child was killed and reaped (cancel or
+/// timeout), while the per-repository lock is still held — so no
+/// other RepoNyx operation and no live git process can hold it; the
+/// transport helper never touches the index. Without this, a
+/// cancelled clone can leave the destination reporting `Locked`
+/// forever (the health check never removes the file itself), and the
+/// next diagnosis never reaches the incomplete/corrupt states.
+/// Best-effort: a failed removal must not mask the original error.
+fn remove_leftover_index_lock(mirror_path: &Path) {
+    let lock = mirror_path.join("index.lock");
+    if lock.exists() {
+        let _ = std::fs::remove_file(&lock);
+    }
 }
 
 /// Verify a mirror is a bare repository with readable refs.
@@ -193,5 +241,19 @@ mod tests {
         };
         assert_eq!(summary.added, ["refs/heads/new"]);
         assert_eq!(summary.pruned, ["refs/heads/old"]);
+    }
+
+    #[test]
+    fn leftover_index_lock_removal_only_removes_the_lock() {
+        let dir = tempfile::tempdir().unwrap();
+        let mirror = dir.path().join("mirror.git");
+        std::fs::create_dir(&mirror).unwrap();
+        std::fs::write(mirror.join("index.lock"), "stale").unwrap();
+        std::fs::write(mirror.join("HEAD"), "ref: refs/heads/main\n").unwrap();
+        remove_leftover_index_lock(&mirror);
+        assert!(!mirror.join("index.lock").exists());
+        assert!(mirror.join("HEAD").exists());
+        // Missing lock file is not an error.
+        remove_leftover_index_lock(&mirror);
     }
 }

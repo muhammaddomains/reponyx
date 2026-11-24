@@ -7,6 +7,7 @@ node_modules/
 .pnpm-store/
 
 # Tauri / app data (local dev only)
+/logs/
 *.log
 
 # Env / secrets — NEVER commit credentials, private keys, or tokens.

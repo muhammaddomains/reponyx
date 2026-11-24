@@ -15,6 +15,7 @@ import {
   agentHealthSchema,
   appInfoSchema,
   brokerInstallationSchema,
+  brokerSetupStateSchema,
   brokerStatusSchema,
   configExportSchema,
   dashboardCountsSchema,
@@ -48,6 +49,7 @@ import type {
   AgentHealth,
   AppInfo,
   BrokerInstallation,
+  BrokerSetupState,
   BrokerStatus,
   ConfigExport,
   DashboardCounts,
@@ -189,6 +191,12 @@ export async function listBrokerInstallations(): Promise<BrokerInstallation[]> {
   return z
     .array(brokerInstallationSchema)
     .parse(await invokeCommand("list_broker_installations_command"));
+}
+
+export async function createBrokerSetupState(): Promise<BrokerSetupState> {
+  return brokerSetupStateSchema.parse(
+    await invokeCommand("create_broker_setup_state_command"),
+  );
 }
 
 export async function startPairing(

@@ -597,19 +597,26 @@ export default function Repositories() {
                           value={repository.syncMode}
                           disabled={busy}
                           aria-label={`Sync mode for ${repository.fullName}`}
-                          onChange={(e) =>
+                          onChange={(e) => {
+                            // Capture the picked mode now: reading
+                            // `e.target.value` in the `done` callback below
+                            // would see the previous mode, because React
+                            // re-renders this controlled select with the
+                            // still-stale `repository.syncMode` while the
+                            // update is in flight.
+                            const mode = e.target.value as SyncMode;
                             run(
                               () =>
                                 updateRepository({
                                   id: repository.id,
-                                  syncMode: e.target.value as SyncMode,
+                                  syncMode: mode,
                                 }),
                               () =>
                                 setNotice(
-                                  `${repository.fullName} mode set to ${e.target.value}.`,
+                                  `${repository.fullName} mode set to ${mode}.`,
                                 ),
-                            )
-                          }
+                            );
+                          }}
                         >
                           <option value="mirror">Mirror</option>
                           <option value="working">Working clone</option>

@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import {
   addPatAccount,
   completePairing,
+  createBrokerSetupState,
   getBrokerStatus,
   listAccounts,
   listBrokerInstallations,
@@ -410,6 +411,43 @@ export default function Accounts() {
               Save setup token
             </Button>
           </div>
+
+          <div className="flex flex-wrap gap-3">
+            <Button
+              variant="secondary"
+              disabled={busy || broker?.configured !== true}
+              onClick={() =>
+                run(
+                  () => createBrokerSetupState(),
+                  (state) =>
+                    setNotice(
+                      `Install page opened in your browser — complete the install there within 10 minutes (before ${new Date(state.expiresAt).toLocaleString()}), then press Refresh below. The installation will appear here and you can pair this device.`,
+                    ),
+                )
+              }
+            >
+              Install GitHub App
+            </Button>
+            <Button
+              variant="secondary"
+              disabled={busy}
+              onClick={() =>
+                run(
+                  async () => undefined,
+                  () => setNotice("Accounts and installations refreshed."),
+                )
+              }
+            >
+              Refresh
+            </Button>
+          </div>
+
+          {broker?.configured === true && installations.length === 0 && (
+            <p className="text-sm text-zinc-600 dark:text-zinc-400">
+              No installations yet. Install the GitHub App to pair this
+              device.
+            </p>
+          )}
 
           {installations.length > 0 && (
             <div className="space-y-2">

@@ -85,6 +85,11 @@ export const brokerInstallationSchema = z.object({
   pairedDevice: z.string().nullable().optional(),
 });
 
+export const brokerSetupStateSchema = z.object({
+  installUrl: z.string(),
+  expiresAt: z.string(),
+});
+
 /** Phase 7 scheduler DTOs: camelCase, matching the Tauri
  *  `schedules.rs` DTOs. */
 

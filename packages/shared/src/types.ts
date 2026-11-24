@@ -95,6 +95,11 @@ export interface BrokerInstallation {
   pairedDevice?: string | null;
 }
 
+export interface BrokerSetupState {
+  installUrl: string;
+  expiresAt: string;
+}
+
 export interface Repository {
   id: string;
   accountId: string;

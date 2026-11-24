@@ -17,6 +17,7 @@ vi.mock("@tauri-apps/api/core", () => ({ invoke: invokeMock }));
 import {
   addPatAccount,
   agentCancelJob,
+  createBrokerSetupState,
   createSchedule,
   removePatAccount,
 } from "@reponyx/api-client";
@@ -104,6 +105,20 @@ describe("Tauri invoke argument names are camelCase", () => {
       timezone: "America/Phoenix",
       enabled: true,
     });
+  });
+
+  it("createBrokerSetupState calls the setup-state command and parses the install URL", async () => {
+    invokeMock.mockResolvedValue({
+      installUrl:
+        "https://github.com/apps/reponyx/installations/new?state=abc",
+      expiresAt: "2026-11-23T19:30:00Z",
+    });
+    const result = await createBrokerSetupState();
+    expect(invokeMock).toHaveBeenCalledWith(
+      "create_broker_setup_state_command",
+      undefined,
+    );
+    expect(result.installUrl).toContain("github.com/apps/reponyx");
   });
 
   it("agentCancelJob sends jobId, not job_id", async () => {

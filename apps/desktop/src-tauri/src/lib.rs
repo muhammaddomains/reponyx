@@ -123,6 +123,7 @@ pub fn run() {
             auth::set_broker_setup_token_command,
             auth::get_broker_status_command,
             auth::list_broker_installations_command,
+            auth::create_broker_setup_state_command,
             auth::start_pairing_command,
             auth::complete_pairing_command,
             auth::validate_github_app_account_command,

@@ -7,7 +7,7 @@ import {
   it,
   vi,
 } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { render, screen, fireEvent } from "@testing-library/react";
 import type { Repository } from "@reponyx/shared";
 import Repositories from "./Repositories";
 
@@ -23,7 +23,7 @@ vi.mock("@reponyx/api-client", () => ({
   updateRepository: vi.fn(),
 }));
 
-import { listAccounts, listRepositories } from "@reponyx/api-client";
+import { listAccounts, listRepositories, updateRepository } from "@reponyx/api-client";
 
 function repo(fullName: string): Repository {
   const [owner, name] = fullName.split("/");
@@ -146,6 +146,25 @@ describe("Repositories page (virtualized list)", () => {
     render(<Repositories />);
     expect(
       await screen.findByRole("button", { name: /Show more \(249 remaining\)/ }),
+    ).toBeInTheDocument();
+  });
+
+  it("mode notice names the mode just picked, not the previous one", async () => {
+    const initial = repo("muhammaddomains/reponyx");
+    const updated: Repository = { ...initial, syncMode: "working" };
+    vi.mocked(listRepositories)
+      .mockResolvedValueOnce({ items: [initial], total: 1 })
+      .mockResolvedValue({ items: [updated], total: 1 });
+    vi.mocked(updateRepository).mockResolvedValue(updated);
+    render(<Repositories />);
+    const select = await screen.findByLabelText(
+      "Sync mode for muhammaddomains/reponyx",
+    );
+    fireEvent.change(select, { target: { value: "working" } });
+    expect(
+      await screen.findByText(
+        "muhammaddomains/reponyx mode set to working.",
+      ),
     ).toBeInTheDocument();
   });
 });

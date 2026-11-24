@@ -215,6 +215,17 @@ pub struct BrokerInstallationDto {
     pub paired_device: Option<String>,
 }
 
+/// The one-time setup state for the GitHub App install flow: the
+/// install URL to send the user to and when the `state` expires
+/// (10 minutes). The raw `state` value is embedded in the install
+/// URL and is not returned separately.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BrokerSetupStateDto {
+    pub install_url: String,
+    pub expires_at: String,
+}
+
 // -- helpers ----------------------------------------------------------
 
 pub(crate) fn require_db<'a>(db: &'a State<'_, Option<Database>>) -> CommandResult<&'a Database> {
@@ -449,6 +460,33 @@ pub async fn list_broker_installations_command(
         .collect())
 }
 
+#[tauri::command]
+pub async fn create_broker_setup_state_command(
+    auth: State<'_, AuthState>,
+) -> CommandResult<BrokerSetupStateDto> {
+    let token = setup_token(&auth)?;
+    let (_state, install_url, expires_at) = broker_client(&auth)?
+        .request_setup_state(token.expose())
+        .await?;
+    // The install URL is produced by our own broker (never free user
+    // input) and is checked to be a github.com apps URL before
+    // opening, so a misconfigured broker base URL cannot steer the
+    // desktop at an arbitrary address.
+    if !install_url.starts_with("https://github.com/apps/") {
+        return Err(invalid_input(
+            "broker returned an unexpected install URL; not opening it",
+        ));
+    }
+    crate::repositories::open_with_os_app(&install_url)?;
+    Ok(BrokerSetupStateDto {
+        install_url,
+        expires_at: expires_at.to_rfc3339(),
+    })
+}
+
+/// Request a pairing code for an installation. Requires the
+/// broker setup token. Returns the code (show it to the user)
+/// and its expiry.
 #[tauri::command]
 pub async fn start_pairing_command(
     db: State<'_, Option<Database>>,

@@ -96,6 +96,7 @@ export default function Agent() {
 
   const reachable = health?.reachable === true;
   const status = health?.status;
+  const paused = status?.paused === true;
 
   return (
     <div className="space-y-6 p-6">
@@ -207,14 +208,14 @@ export default function Agent() {
           Stop agent
         </Button>
         <Button
-          disabled={busy || !reachable}
+          disabled={busy || !reachable || paused}
           variant="secondary"
           onClick={() => run(agentPause)}
         >
           Pause
         </Button>
         <Button
-          disabled={busy || !reachable}
+          disabled={busy || !reachable || !paused}
           variant="secondary"
           onClick={() => run(agentResume)}
         >

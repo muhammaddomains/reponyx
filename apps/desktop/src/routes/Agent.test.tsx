@@ -69,6 +69,27 @@ describe("Agent page start/stop controls", () => {
     expect(stop).not.toBeDisabled();
   });
 
+  it("enables only Pause while the agent is running and not paused", async () => {
+    vi.mocked(agentHealth).mockResolvedValue(healthy);
+    vi.mocked(autostartStatus).mockResolvedValue(false);
+    render(<Agent />);
+    await screen.findByText("1795528861981");
+    expect(screen.getByRole("button", { name: "Pause" })).not.toBeDisabled();
+    expect(screen.getByRole("button", { name: "Resume" })).toBeDisabled();
+  });
+
+  it("enables only Resume while the agent is paused", async () => {
+    vi.mocked(agentHealth).mockResolvedValue({
+      ...healthy,
+      status: { ...healthy.status, paused: true },
+    });
+    vi.mocked(autostartStatus).mockResolvedValue(false);
+    render(<Agent />);
+    await screen.findByText("1795528861981");
+    expect(screen.getByRole("button", { name: "Pause" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Resume" })).not.toBeDisabled();
+  });
+
   it("shows the stop result as a notice", async () => {
     vi.mocked(agentHealth).mockResolvedValue(healthy);
     vi.mocked(autostartStatus).mockResolvedValue(false);

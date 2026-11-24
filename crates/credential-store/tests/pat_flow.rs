@@ -3,15 +3,18 @@
 //! (`test-pat-…`); no real credentials, no network to github.com.
 
 use chrono::{Duration, Utc};
-use reponyx_core::{AccountStatus, AccountType, AuthenticationMethod, ErrorCode};
+use reponyx_core::{
+    AccountStatus, AccountType, AuthenticationMethod, ErrorCode, SyncMode, Visibility,
+};
 use reponyx_credential_store::{
     PatExpiryStatus, PatInput, PatTokenSource, SERVICE_PAT, SecretString, add_pat_account,
-    memory_store, pat_expiry_status, reconnect_pat_account, remove_pat, replace_pat,
-    validate_pat_account,
+    delete_pat_account, memory_store, pat_expiry_status, reconnect_pat_account, remove_pat,
+    replace_pat, validate_pat_account,
 };
 use reponyx_database::{
     accounts::{get_account, get_account_by_provider, list_accounts, set_account_status},
     open_database,
+    repositories::{NewRepository, create_repository, get_repository},
 };
 use reponyx_github_provider::credentials::CredentialSource;
 use serde_json::json;
@@ -233,6 +236,68 @@ async fn remove_pat_deletes_secret_and_revokes_account() {
     );
     // The account row itself stays (local data is never deleted).
     assert!(get_account(&pool, account.id).await.unwrap().is_some());
+}
+
+#[tokio::test]
+async fn delete_pat_account_removes_row_secret_and_child_repositories() {
+    let (_dir, pool) = temp_db().await;
+    let server = MockServer::start().await;
+    mock_user_ok(&server).await;
+    let store = memory_store();
+    let account = add_pat_account(&pool, &store, &server.uri(), pat_input(PAT_OCTOCAT))
+        .await
+        .unwrap();
+    let repository = create_repository(
+        &pool,
+        NewRepository {
+            account_id: account.id,
+            provider_repository_id: "123".to_string(),
+            owner: "octocat".to_string(),
+            name: "hello-world".to_string(),
+            visibility: Visibility::Public,
+            default_branch: Some("main".to_string()),
+            clone_url: "https://github.com/octocat/hello-world.git".to_string(),
+            sync_enabled: true,
+            sync_mode: SyncMode::Mirror,
+            local_path: None,
+            remote_updated_at: None,
+        },
+    )
+    .await
+    .unwrap();
+
+    assert!(delete_pat_account(&pool, &store, account.id).await.unwrap());
+    assert_eq!(
+        store.get(SERVICE_PAT, &account.id.to_string()).unwrap(),
+        None
+    );
+    // The account row is gone, and its repository went with it
+    // via ON DELETE CASCADE.
+    assert!(get_account(&pool, account.id).await.unwrap().is_none());
+    assert_eq!(list_accounts(&pool).await.unwrap().len(), 0);
+    assert!(
+        get_repository(&pool, repository.id)
+            .await
+            .unwrap()
+            .is_none()
+    );
+}
+
+#[tokio::test]
+async fn delete_pat_account_works_after_remove() {
+    let (_dir, pool) = temp_db().await;
+    let server = MockServer::start().await;
+    mock_user_ok(&server).await;
+    let store = memory_store();
+    let account = add_pat_account(&pool, &store, &server.uri(), pat_input(PAT_OCTOCAT))
+        .await
+        .unwrap();
+    // Revoke first: the PAT is already gone from the store, and
+    // deleting the account must still succeed.
+    let removed = remove_pat(&pool, &store, account.id).await.unwrap();
+    assert_eq!(removed.status, AccountStatus::Revoked);
+    assert!(delete_pat_account(&pool, &store, account.id).await.unwrap());
+    assert!(get_account(&pool, account.id).await.unwrap().is_none());
 }
 
 #[tokio::test]

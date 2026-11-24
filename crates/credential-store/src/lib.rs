@@ -14,8 +14,8 @@ pub mod store;
 
 pub use pat::{
     GITHUB_API_BASE, PAT_EXPIRY_WARNING_DAYS, PatExpiryStatus, PatInput, PatTokenSource,
-    add_pat_account, pat_expiry_status, reconnect_pat_account, remove_pat, replace_pat,
-    validate_pat_account,
+    add_pat_account, delete_pat_account, pat_expiry_status, reconnect_pat_account, remove_pat,
+    replace_pat, validate_pat_account,
 };
 pub use secret::SecretString;
 pub use store::{

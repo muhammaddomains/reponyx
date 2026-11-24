@@ -7,7 +7,10 @@
 #[path = "common.rs"]
 mod common;
 
-use common::{TOKEN, mount_sequence, next_link, provider_for, repo_json, user_json};
+use common::{
+    TOKEN, installation_provider_for, mount_sequence, next_installation_link, next_link,
+    provider_for, repo_json, user_json,
+};
 use reponyx_core::Visibility;
 use serde_json::json;
 use wiremock::matchers::{method, path};
@@ -195,8 +198,9 @@ async fn validate_auth_rejects_bad_credentials() {
 
 #[tokio::test]
 async fn auth_header_is_sent_per_kind() {
+    // Installation tokens go out as `Bearer …`.
     let server = MockServer::start().await;
-    let provider = provider_for(&server);
+    let provider = installation_provider_for(&server);
     Mock::given(method("GET"))
         .and(path("/user"))
         .and(wiremock::matchers::header(
@@ -209,4 +213,132 @@ async fn auth_header_is_sent_per_kind() {
         .await;
 
     provider.validate_auth().await.unwrap();
+}
+
+#[tokio::test]
+async fn auth_header_is_sent_per_kind_pat() {
+    // PATs go out as `token …`.
+    let server = MockServer::start().await;
+    let provider = provider_for(&server);
+    Mock::given(method("GET"))
+        .and(path("/user"))
+        .and(wiremock::matchers::header(
+            "authorization",
+            format!("token {TOKEN}"),
+        ))
+        .respond_with(ResponseTemplate::new(200).set_body_json(user_json()))
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    provider.validate_auth().await.unwrap();
+}
+
+/// `GET /user` and `/user/repos` refuse installation tokens, so
+/// discovery for one reads `GET /installation/repositories` — an
+/// object with a `repositories` array, not a bare array.
+#[tokio::test]
+async fn installation_discovery_reads_installation_repositories() {
+    let server = MockServer::start().await;
+    let provider = installation_provider_for(&server);
+    Mock::given(method("GET"))
+        .and(path("/installation/repositories"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "total_count": 2,
+            "repositories": [
+                repo_json(1, "octocat", "alpha"),
+                repo_json(2, "octocat", "beta"),
+            ],
+        })))
+        .mount(&server)
+        .await;
+
+    let page = provider.discover_repositories(None).await.unwrap();
+    assert_eq!(page.repositories.len(), 2);
+    assert_eq!(page.repositories[0].full_name, "octocat/alpha");
+    assert_eq!(page.repositories[1].full_name, "octocat/beta");
+    assert!(!page.has_next_page);
+    // The request went to the installation endpoint, not /user/repos.
+    assert_eq!(server.received_requests().await.unwrap().len(), 1);
+    assert_eq!(
+        server.received_requests().await.unwrap()[0].url.path(),
+        "/installation/repositories"
+    );
+}
+
+#[tokio::test]
+async fn installation_discovery_follows_link_pagination() {
+    let server = MockServer::start().await;
+    let provider = installation_provider_for(&server);
+    mount_sequence(
+        &server,
+        "/installation/repositories",
+        vec![
+            ResponseTemplate::new(200)
+                .set_body_json(json!({
+                    "total_count": 3,
+                    "repositories": [repo_json(1, "octocat", "alpha")],
+                }))
+                .insert_header("link", next_installation_link(&server, 2)),
+            ResponseTemplate::new(200).set_body_json(json!({
+                "total_count": 3,
+                "repositories": [
+                    repo_json(2, "octocat", "beta"),
+                    repo_json(3, "acme", "gamma"),
+                ],
+            })),
+        ],
+    )
+    .await;
+
+    let mut stream = provider.discover_all_stream();
+    let mut all = Vec::new();
+    while let Some(page) = stream.recv().await {
+        all.extend(page.unwrap());
+    }
+    assert_eq!(all.len(), 3);
+    assert_eq!(all[2].full_name, "acme/gamma");
+}
+
+#[tokio::test]
+async fn validate_installation_returns_owner_identity() {
+    let server = MockServer::start().await;
+    let provider = installation_provider_for(&server);
+    Mock::given(method("GET"))
+        .and(path("/installation/repositories"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "total_count": 1,
+            "repositories": [repo_json(1, "octocat", "alpha")],
+        })))
+        .mount(&server)
+        .await;
+
+    let account = provider.validate_installation("185410556").await.unwrap();
+    // Namespaced key: a PAT account for the same GitHub user already
+    // owns the bare numeric id under UNIQUE (provider,
+    // provider_account_id).
+    assert_eq!(account.provider_account_id, "github-app:185410556");
+    assert_eq!(account.username, "octocat");
+    assert!(account.display_name.is_none());
+}
+
+#[tokio::test]
+async fn validate_installation_rejects_empty_installation() {
+    let server = MockServer::start().await;
+    let provider = installation_provider_for(&server);
+    Mock::given(method("GET"))
+        .and(path("/installation/repositories"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "total_count": 0,
+            "repositories": [],
+        })))
+        .mount(&server)
+        .await;
+
+    let err = provider
+        .validate_installation("185410556")
+        .await
+        .unwrap_err();
+    assert_eq!(err.code, reponyx_core::ErrorCode::InvalidInput);
+    assert!(err.to_string().contains("no accessible repositories"));
 }

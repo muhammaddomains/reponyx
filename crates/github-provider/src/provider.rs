@@ -1,9 +1,12 @@
 //! The GitHub provider: [`GitProvider`] over the GitHub REST API.
 //!
-//! Discovery uses `GET /user/repos` (repositories the token can
-//! access, personal and organisational), sorted by full name so
-//! pagination order is deterministic. Installation endpoints use only
-//! what a user/installation token can call:
+//! Discovery uses `GET /user/repos` for user credentials (PATs)
+//! and `GET /installation/repositories` for installation tokens —
+//! each endpoint refuses the other credential class (`GET /user`
+//! and `/user/repos` have no user behind an installation token),
+//! so discovery follows the token kind. Pages are sorted by full
+//! name so pagination order is deterministic. Installation
+//! endpoints use only what a user/installation token can call:
 //!
 //! - `GET /user/installations` — installations visible to the token.
 //! - `GET /user/installations/{id}/repositories` — repositories of
@@ -18,7 +21,7 @@
 //!   provider then works unchanged.
 
 use crate::client::GitHubClient;
-use crate::credentials::CredentialSource;
+use crate::credentials::{CredentialKind, CredentialSource};
 use crate::model::{
     ApiInstallation, ApiPermissions, ApiRepository, ApiUser, GitHubInstallation, PermissionLevel,
     RepositoryAccess, map_account, map_installation, map_permissions, map_repository,
@@ -67,36 +70,106 @@ impl GitHubProvider {
     }
 
     /// Validate the credential and return account identity (`GET
-    /// /user`). 401 → `AuthenticationExpired`; a suspended/revoked
-    /// grant → `AuthenticationRevoked`.
+    /// /user`). Only for user credentials (PATs, user access
+    /// tokens) — an installation token has no user to return, so
+    /// `GET /user` answers 403 whatever the App holds; use
+    /// [`Self::validate_installation`] for those. 401 →
+    /// `AuthenticationExpired`; a suspended/revoked grant →
+    /// `AuthenticationRevoked`.
     pub async fn validate_auth(&self) -> Result<ProviderAccountInfo, RepoNyxError> {
         let response = self.client.get_json::<ApiUser>("/user").await?;
         Ok(map_account(response.body))
+    }
+
+    /// Validate an installation token and return the account it is
+    /// installed on. `GET /user` refuses installation tokens — an
+    /// installation belongs to an App on an account, not to a
+    /// person, so there is no user to return and GitHub answers 403
+    /// before permissions are consulted. This reads the owner of
+    /// the first accessible repository instead
+    /// (`GET /installation/repositories?per_page=1`), which also
+    /// proves the token is alive.
+    ///
+    /// The account key is namespaced (`github-app:{installation_id}`):
+    /// `accounts` has `UNIQUE (provider, provider_account_id)` and
+    /// a PAT account for the same GitHub user already owns the bare
+    /// numeric id, so the installation id is the stable per-account
+    /// key (one App install per GitHub account).
+    pub async fn validate_installation(
+        &self,
+        installation_id: &str,
+    ) -> Result<ProviderAccountInfo, RepoNyxError> {
+        let response = self
+            .client
+            .get_json::<InstallationRepositoriesResponse>("/installation/repositories?per_page=1")
+            .await?;
+        let Some(first) = response.body.repositories.into_iter().next() else {
+            return Err(RepoNyxError::new(
+                ErrorCode::InvalidInput,
+                "installation has no accessible repositories; grant the App access to at least one repository",
+            ));
+        };
+        Ok(ProviderAccountInfo {
+            provider_account_id: format!("github-app:{installation_id}"),
+            username: first.owner.login,
+            display_name: None,
+            avatar_url: None,
+        })
     }
 
     /// One page of discovery. `cursor` is the opaque `next_cursor`
     /// from the previous page (`None` for the first page); it is the
     /// next-page URL from the `Link` header, validated against the
     /// API base before use.
+    ///
+    /// The endpoint and the response shape follow the token kind:
+    /// `/user/repos` (a JSON array) refuses installation tokens and
+    /// `/installation/repositories` (an object with a `repositories`
+    /// array) refuses PATs, so there is no endpoint both accept. A
+    /// later page's URL comes from the previous page's `Link`
+    /// header, so it already points at the right endpoint — only
+    /// the parse stays kind-dependent.
     pub async fn discover_repositories(
         &self,
         cursor: Option<&str>,
     ) -> Result<RepositoryPage, RepoNyxError> {
+        let installation = self.client.token().await?.kind == CredentialKind::InstallationToken;
         let url = match cursor {
             Some(cursor) => resolve_cursor(self.client.base_url(), cursor)?,
-            None => format!(
-                "{}/user/repos?per_page={PER_PAGE}&sort=full_name&direction=asc",
-                self.client.base_url()
-            ),
+            None => {
+                if installation {
+                    format!(
+                        "{}/installation/repositories?per_page={PER_PAGE}",
+                        self.client.base_url()
+                    )
+                } else {
+                    format!(
+                        "{}/user/repos?per_page={PER_PAGE}&sort=full_name&direction=asc",
+                        self.client.base_url()
+                    )
+                }
+            }
         };
-        let response = self.client.get_json::<Vec<ApiRepository>>(&url).await?;
-        let mut repositories = Vec::with_capacity(response.body.len());
-        for api in response.body {
-            repositories.push(map_repository(api)?);
-        }
+        let mut repositories = Vec::new();
+        let next_link = if installation {
+            let response = self
+                .client
+                .get_json::<InstallationRepositoriesResponse>(&url)
+                .await?;
+            for api in response.body.repositories {
+                repositories.push(map_repository(api)?);
+            }
+            response.next_link
+        } else {
+            let response = self.client.get_json::<Vec<ApiRepository>>(&url).await?;
+            for api in response.body {
+                repositories.push(map_repository(api)?);
+            }
+            response.next_link
+        };
         Ok(RepositoryPage {
-            has_next_page: response.next_link.is_some(),
-            next_cursor: response.next_link,
+            has_next_page: next_link.is_some(),
+            next_cursor: next_link,
             repositories,
         })
     }
@@ -258,6 +331,9 @@ impl GitHubProvider {
     }
 }
 
+/// `GET /installation/repositories` returns an object, not the
+/// bare array `GET /user/repos` returns. Only the `repositories`
+/// array is modelled; `total_count` is ignored.
 #[derive(serde::Deserialize)]
 struct InstallationRepositoriesResponse {
     repositories: Vec<ApiRepository>,

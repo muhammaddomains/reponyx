@@ -3,6 +3,7 @@ import {
   addPatAccount,
   completePairing,
   createBrokerSetupState,
+  deletePatAccount,
   getBrokerStatus,
   listAccounts,
   listBrokerInstallations,
@@ -300,6 +301,27 @@ export default function Accounts() {
                     }}
                   >
                     Remove
+                  </Button>
+                  <Button
+                    variant="danger"
+                    disabled={busy}
+                    onClick={() => {
+                      if (
+                        window.confirm(
+                          `Delete the account ${account.username}? The stored token is deleted and the account is removed from RepoNyx, including its repositories, schedules and jobs. Local files on disk are kept.`,
+                        )
+                      ) {
+                        void run(
+                          () => deletePatAccount(account.id),
+                          () =>
+                            setNotice(
+                              `Deleted the account ${account.username}.`,
+                            ),
+                        );
+                      }
+                    }}
+                  >
+                    Delete account
                   </Button>
                 </>
               )}

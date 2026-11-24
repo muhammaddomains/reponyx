@@ -11,7 +11,7 @@ use chrono::Utc;
 use common::{mount_sequence, next_link, provider_for, repo_json};
 use reponyx_github_provider::GitHubProvider;
 use reponyx_github_provider::client::GitHubClient;
-use reponyx_github_provider::credentials::static_installation_token;
+use reponyx_github_provider::credentials::static_pat;
 use serde_json::json;
 use std::time::Duration;
 use wiremock::matchers::{method, path};
@@ -109,7 +109,8 @@ async fn rate_limit_state_is_exposed_to_the_caller() {
 #[tokio::test]
 async fn wait_beyond_the_cap_returns_rate_limit_exceeded() {
     let server = MockServer::start().await;
-    let client = GitHubClient::new(&server.uri(), static_installation_token(common::TOKEN))
+    // A PAT source, so discovery reads the mocked `/user/repos`.
+    let client = GitHubClient::new(&server.uri(), static_pat(common::TOKEN, "octocat"))
         .unwrap()
         .with_max_rate_limit_wait(Duration::from_secs(0));
     let provider = GitHubProvider::with_client(client);

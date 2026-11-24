@@ -10,7 +10,7 @@
 //! in order.
 
 use reponyx_github_provider::GitHubProvider;
-use reponyx_github_provider::credentials::static_installation_token;
+use reponyx_github_provider::credentials::{static_installation_token, static_pat};
 use serde_json::json;
 use std::collections::VecDeque;
 use std::sync::{Arc, Mutex};
@@ -19,7 +19,16 @@ use wiremock::{Mock, MockServer, Request, Respond, ResponseTemplate};
 
 pub const TOKEN: &str = "test-token-do-not-use";
 
+/// A provider backed by a PAT source: the `/user` family of
+/// endpoints (`/user`, `/user/repos`) is the PAT path.
 pub fn provider_for(server: &MockServer) -> GitHubProvider {
+    GitHubProvider::new(&server.uri(), static_pat(TOKEN, "octocat")).unwrap()
+}
+
+/// A provider backed by an installation-token source: discovery
+/// reads `/installation/repositories` and validation reads the
+/// installation's account from its first accessible repository.
+pub fn installation_provider_for(server: &MockServer) -> GitHubProvider {
     GitHubProvider::new(&server.uri(), static_installation_token(TOKEN)).unwrap()
 }
 
@@ -110,6 +119,16 @@ pub fn installation_json(
 pub fn next_link(server: &MockServer, page: u32) -> String {
     format!(
         "<{}/user/repos?page={}&per_page=100&sort=full_name&direction=asc>; rel=\"next\"",
+        server.uri(),
+        page
+    )
+}
+
+/// A `Link` header pointing at the next installation-repositories
+/// page of the mock.
+pub fn next_installation_link(server: &MockServer, page: u32) -> String {
+    format!(
+        "<{}/installation/repositories?page={}&per_page=100>; rel=\"next\"",
         server.uri(),
         page
     )

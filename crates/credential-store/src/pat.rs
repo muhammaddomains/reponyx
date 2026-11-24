@@ -13,6 +13,10 @@
 //! - `remove_pat`: delete the stored PAT and mark the account
 //!   revoked (the account row and its local repositories stay —
 //!   nothing is auto-deleted).
+//! - `delete_pat_account`: delete the stored PAT and hard-delete
+//!   the account row. The row's children — repositories, schedules,
+//!   jobs, history — go with it via `ON DELETE CASCADE`; local
+//!   files on disk are NOT deleted.
 //! - `reconnect_pat_account`: re-validate the stored PAT and restore
 //!   a `token_expired` / `revoked` / `error` account to `connected`
 //!   via the explicit reconnect path (Phase 2 rules).
@@ -30,8 +34,8 @@ use reponyx_core::{
     Account, AccountStatus, AccountType, AuthenticationMethod, ErrorCode, Provider, RepoNyxError,
 };
 use reponyx_database::accounts::{
-    NewAccount, create_account, get_account, get_account_by_provider, mark_validated,
-    reconnect_account, set_account_status, set_pat_expiry,
+    NewAccount, create_account, delete_account, get_account, get_account_by_provider,
+    mark_validated, reconnect_account, set_account_status, set_pat_expiry,
 };
 use reponyx_github_provider::{
     GitHubProvider,
@@ -239,6 +243,29 @@ pub async fn remove_pat(
         return Ok(account);
     }
     set_account_status(pool, account.id, AccountStatus::Revoked).await
+}
+
+/// Delete a PAT account outright: delete the stored PAT (deleting
+/// a missing entry is a no-op, so this also works on an already
+/// revoked account) and hard-delete the account row. The row's
+/// children — repositories, schedules, jobs, history — go with it
+/// via `ON DELETE CASCADE`. Local files on disk are NOT deleted.
+pub async fn delete_pat_account(
+    pool: &SqlitePool,
+    store: &Arc<dyn CredentialStore>,
+    account_id: Uuid,
+) -> Result<bool, RepoNyxError> {
+    let account = get_account(pool, account_id)
+        .await?
+        .ok_or_else(|| RepoNyxError::new(ErrorCode::InvalidInput, "account not found"))?;
+    if account.authentication_method != AuthenticationMethod::FineGrainedPat {
+        return Err(RepoNyxError::new(
+            ErrorCode::InvalidInput,
+            "only PAT accounts can be deleted this way",
+        ));
+    }
+    store.delete(SERVICE_PAT, &account.id.to_string())?;
+    delete_account(pool, account.id).await
 }
 
 /// Reconnect a PAT account: validate the *stored* PAT and, on

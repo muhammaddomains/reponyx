@@ -147,6 +147,12 @@ export async function removePatAccount(accountId: string): Promise<Account> {
   );
 }
 
+export async function deletePatAccount(accountId: string): Promise<boolean> {
+  return z
+    .boolean()
+    .parse(await invokeCommand("delete_pat_account_command", { accountId }));
+}
+
 export async function reconnectPatAccount(accountId: string): Promise<Account> {
   return accountSchema.parse(
     await invokeCommand("reconnect_pat_account_command", { accountId }),

@@ -23,8 +23,8 @@ use reponyx_core::{
 };
 use reponyx_credential_store::{
     ACCOUNT_SETUP_TOKEN, CredentialStore, GITHUB_API_BASE, PatExpiryStatus, PatInput,
-    SERVICE_BROKER, SecretString, add_pat_account, pat_expiry_status, reconnect_pat_account,
-    remove_pat, replace_pat, validate_pat_account,
+    SERVICE_BROKER, SecretString, add_pat_account, delete_pat_account, pat_expiry_status,
+    reconnect_pat_account, remove_pat, replace_pat, validate_pat_account,
 };
 use reponyx_database::Database;
 use reponyx_database::accounts::{
@@ -363,6 +363,22 @@ pub async fn remove_pat_account_command(
     Ok(AccountDto::from(&account))
 }
 
+/// Delete a PAT account outright: the stored PAT is deleted and
+/// the account row (plus its repositories, schedules, jobs and
+/// history, via `ON DELETE CASCADE`) is removed. Local files on
+/// disk are kept.
+#[tauri::command]
+pub async fn delete_pat_account_command(
+    db: State<'_, Option<Database>>,
+    auth: State<'_, AuthState>,
+    account_id: String,
+) -> CommandResult<bool> {
+    let database = require_db(&db)?;
+    let id = parse_account_id(&account_id)?;
+    let deleted = delete_pat_account(&database.pool, &auth.store, id).await?;
+    Ok(deleted)
+}
+
 #[tauri::command]
 pub async fn reconnect_pat_account_command(
     db: State<'_, Option<Database>>,
@@ -580,10 +596,14 @@ pub async fn complete_pairing_command(
     // never sees the id generated here under `device_identifier`.
     set_setting(&database.pool, "device.identifier", &device_id).await?;
     // Validate against GitHub with the freshly minted token and
-    // create (or reconnect) the account row.
+    // create (or reconnect) the account row. An installation token
+    // cannot call `GET /user` (there is no user behind it — GitHub
+    // answers 403 whatever the App holds), so validation reads
+    // the installation's account from its first accessible
+    // repository instead.
     let source = BrokerTokenSource::new(&auth.broker_base_url, &installation_id, &device_token)?;
     let provider = GitHubProvider::new(&auth.github_api_base, Arc::new(source))?;
-    let info = provider.validate_auth().await?;
+    let info = provider.validate_installation(&installation_id).await?;
     let account =
         match get_account_by_provider(&database.pool, Provider::GitHub, &info.provider_account_id)
             .await?
@@ -603,7 +623,7 @@ pub async fn complete_pairing_command(
                         username: info.username,
                         display_name: info.display_name,
                         label: None,
-                        // `validate_auth` does not report whether the
+                        // `validate_installation` does not report whether the
                         // installation is for a user or an organization;
                         // default to personal (editable later, Phase 8).
                         account_type: AccountType::Personal,
@@ -664,7 +684,11 @@ pub async fn validate_github_app_account_command(
         device_token.expose(),
     )?;
     let provider = GitHubProvider::new(&auth.github_api_base, Arc::new(source))?;
-    let info = provider.validate_auth().await?;
+    // An installation token cannot call `GET /user` — see
+    // `complete_pairing_command` above.
+    let info = provider
+        .validate_installation(&installation.installation_id)
+        .await?;
     mark_validated(&database.pool, account.id).await?;
     Ok(ProviderAccountDto::from(info))
 }

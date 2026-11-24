@@ -119,6 +119,7 @@ pub fn run() {
             auth::add_pat_account_command,
             auth::replace_pat_account_command,
             auth::remove_pat_account_command,
+            auth::delete_pat_account_command,
             auth::reconnect_pat_account_command,
             auth::validate_pat_account_command,
             auth::get_pat_expiry_status_command,

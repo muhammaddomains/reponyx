@@ -6,6 +6,7 @@ vi.mock("@reponyx/api-client", () => ({
   addPatAccount: vi.fn(),
   completePairing: vi.fn(),
   createBrokerSetupState: vi.fn(),
+  deletePatAccount: vi.fn(),
   getBrokerStatus: vi.fn(),
   listAccounts: vi.fn(),
   listBrokerInstallations: vi.fn(),
@@ -21,10 +22,12 @@ vi.mock("@reponyx/api-client", () => ({
 
 import {
   createBrokerSetupState,
+  deletePatAccount,
   getBrokerStatus,
   listAccounts,
   listBrokerInstallations,
 } from "@reponyx/api-client";
+import type { Account } from "@reponyx/shared";
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -79,5 +82,50 @@ describe("Accounts page — GitHub App install", () => {
       name: "Install GitHub App",
     });
     expect(install).toBeDisabled();
+  });
+});
+
+describe("Accounts page — Delete account", () => {
+  const revokedPatAccount: Account = {
+    id: "00000000-0000-0000-0000-000000000001",
+    provider: "github",
+    providerAccountId: "42",
+    username: "octocat",
+    displayName: null,
+    label: null,
+    accountType: "personal",
+    authenticationMethod: "fine_grained_pat",
+    status: "revoked",
+    patExpiresAt: null,
+    patExpiryStatus: "unknown",
+    patExpiryDaysLeft: null,
+    lastValidatedAt: null,
+    createdAt: "2026-11-24T00:00:00Z",
+    updatedAt: "2026-11-24T00:00:00Z",
+  };
+
+  it("deletes the account after confirmation and shows a notice", async () => {
+    vi.mocked(listAccounts).mockResolvedValue([revokedPatAccount]);
+    vi.mocked(deletePatAccount).mockResolvedValue(true);
+    const confirm = vi.spyOn(window, "confirm").mockReturnValue(true);
+    render(<Accounts />);
+    fireEvent.click(
+      await screen.findByRole("button", { name: "Delete account" }),
+    );
+    expect(deletePatAccount).toHaveBeenCalledWith(revokedPatAccount.id);
+    expect(
+      await screen.findByText("Deleted the account octocat."),
+    ).toBeInTheDocument();
+    confirm.mockRestore();
+  });
+
+  it("does nothing when the confirmation is dismissed", async () => {
+    vi.mocked(listAccounts).mockResolvedValue([revokedPatAccount]);
+    vi.spyOn(window, "confirm").mockReturnValue(false);
+    render(<Accounts />);
+    fireEvent.click(
+      await screen.findByRole("button", { name: "Delete account" }),
+    );
+    expect(deletePatAccount).not.toHaveBeenCalled();
   });
 });

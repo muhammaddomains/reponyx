@@ -37,3 +37,4 @@ npm-debug.log
 #Key
 reponyx.key
 reponyx.key.pub
+reponyx-app.private-key.pem

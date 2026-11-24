@@ -23,7 +23,12 @@ vi.mock("@reponyx/api-client", () => ({
   updateRepository: vi.fn(),
 }));
 
-import { listAccounts, listRepositories, updateRepository } from "@reponyx/api-client";
+import {
+  deleteRepository,
+  listAccounts,
+  listRepositories,
+  updateRepository,
+} from "@reponyx/api-client";
 
 function repo(fullName: string): Repository {
   const [owner, name] = fullName.split("/");
@@ -147,6 +152,56 @@ describe("Repositories page (virtualized list)", () => {
     expect(
       await screen.findByRole("button", { name: /Show more \(249 remaining\)/ }),
     ).toBeInTheDocument();
+  });
+
+  it("removes all selected repositories with one confirm", async () => {
+    vi.mocked(listRepositories).mockResolvedValue({
+      items: [
+        repo("muhammaddomains/reponyx"),
+        repo("muhammaddomains/other"),
+        repo("muhammaddomains/third"),
+      ],
+      total: 3,
+    });
+    const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(true);
+    render(<Repositories />);
+    await screen.findByText("muhammaddomains/reponyx");
+    fireEvent.click(screen.getByLabelText("Select muhammaddomains/other"));
+    fireEvent.click(screen.getByLabelText("Select muhammaddomains/third"));
+    fireEvent.click(
+      screen.getByRole("button", { name: "Remove selected" }),
+    );
+    expect(
+      await screen.findByText("Removed 2 repositories. Local files were kept."),
+    ).toBeInTheDocument();
+    expect(vi.mocked(deleteRepository).mock.calls).toEqual([
+      ["id-other"],
+      ["id-third"],
+    ]);
+    // The selection is cleared, so the bulk toolbar goes away.
+    expect(
+      screen.queryByRole("button", { name: "Remove selected" }),
+    ).not.toBeInTheDocument();
+    confirmSpy.mockRestore();
+  });
+
+  it("removes nothing when the bulk remove confirm is dismissed", async () => {
+    vi.mocked(listRepositories).mockResolvedValue({
+      items: [repo("muhammaddomains/reponyx")],
+      total: 1,
+    });
+    const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(false);
+    render(<Repositories />);
+    await screen.findByText("muhammaddomains/reponyx");
+    fireEvent.click(screen.getByLabelText("Select muhammaddomains/reponyx"));
+    fireEvent.click(
+      screen.getByRole("button", { name: "Remove selected" }),
+    );
+    expect(vi.mocked(deleteRepository)).not.toHaveBeenCalled();
+    expect(
+      screen.queryByText(/Removed 1 repositories/),
+    ).not.toBeInTheDocument();
+    confirmSpy.mockRestore();
   });
 
   it("mode notice names the mode just picked, not the previous one", async () => {

@@ -102,6 +102,32 @@ describe("Agent page start/stop controls", () => {
     ).toBeInTheDocument();
   });
 
+  it("enables only Disable start at login while start at login is enabled", async () => {
+    vi.mocked(agentHealth).mockResolvedValue(healthy);
+    vi.mocked(autostartStatus).mockResolvedValue(true);
+    render(<Agent />);
+    await screen.findByText(/Start at login: enabled/);
+    expect(
+      screen.getByRole("button", { name: "Enable start at login" }),
+    ).toBeDisabled();
+    expect(
+      screen.getByRole("button", { name: "Disable start at login" }),
+    ).not.toBeDisabled();
+  });
+
+  it("enables only Enable start at login while start at login is disabled", async () => {
+    vi.mocked(agentHealth).mockResolvedValue(healthy);
+    vi.mocked(autostartStatus).mockResolvedValue(false);
+    render(<Agent />);
+    await screen.findByText(/Start at login: disabled/);
+    expect(
+      screen.getByRole("button", { name: "Enable start at login" }),
+    ).not.toBeDisabled();
+    expect(
+      screen.getByRole("button", { name: "Disable start at login" }),
+    ).toBeDisabled();
+  });
+
   it("shows the autostart result and the updated autostart state", async () => {
     vi.mocked(agentHealth).mockResolvedValue(healthy);
     vi.mocked(autostartStatus).mockResolvedValue(false);

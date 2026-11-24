@@ -273,6 +273,35 @@ export default function Repositories() {
     );
   }
 
+  async function handleBulkRemove() {
+    const ids = [...selected];
+    if (ids.length === 0) return;
+    // One confirm and one refresh for the whole selection: removing
+    // repos one row at a time meant a confirm + a busy refresh per
+    // repo, which felt slow even though each delete is a single
+    // SQL statement.
+    if (
+      !window.confirm(
+        `Remove ${ids.length} selected repositories from RepoNyx? Their local files on disk are kept — only the RepoNyx rows are deleted.`,
+      )
+    ) {
+      return;
+    }
+    await run(
+      async () => {
+        for (const id of ids) {
+          await deleteRepository(id);
+        }
+      },
+      () => {
+        setSelected(new Set());
+        setNotice(
+          `Removed ${ids.length} repositories. Local files were kept.`,
+        );
+      },
+    );
+  }
+
   async function handleDiscover() {
     if (!discoverAccountId) {
       setError("Pick an account to discover its repositories.");
@@ -462,6 +491,13 @@ export default function Repositories() {
               onClick={() => void handleBulkSyncEnabled(true)}
             >
               Resume selected
+            </Button>
+            <Button
+              variant="danger"
+              disabled={busy}
+              onClick={() => void handleBulkRemove()}
+            >
+              Remove selected
             </Button>
             <Button variant="ghost" onClick={() => setSelected(new Set())}>
               Clear

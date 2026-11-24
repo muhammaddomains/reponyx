@@ -222,7 +222,7 @@ export default function Agent() {
           Resume
         </Button>
         <Button
-          disabled={busy}
+          disabled={busy || autostart === true}
           variant="secondary"
           onClick={() =>
             run(registerAgentAutostart, async (message) => {
@@ -234,7 +234,7 @@ export default function Agent() {
           Enable start at login
         </Button>
         <Button
-          disabled={busy}
+          disabled={busy || autostart === false}
           variant="ghost"
           onClick={() =>
             run(unregisterAgentAutostart, async (message) => {

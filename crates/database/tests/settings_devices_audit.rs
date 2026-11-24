@@ -112,18 +112,27 @@ async fn devices_pairing_transitions() {
         .await
         .unwrap();
     assert_eq!(paired.pairing_status, DevicePairingStatus::Paired);
+    // A paired device may request a fresh pairing code (re-pair).
+    let pending_again = set_pairing_status(pool(&db), created.id, DevicePairingStatus::Pending)
+        .await
+        .unwrap();
+    assert_eq!(pending_again.pairing_status, DevicePairingStatus::Pending);
+    let paired_again = set_pairing_status(pool(&db), created.id, DevicePairingStatus::Paired)
+        .await
+        .unwrap();
+    assert_eq!(paired_again.pairing_status, DevicePairingStatus::Paired);
+    let revoked = set_pairing_status(pool(&db), created.id, DevicePairingStatus::Revoked)
+        .await
+        .unwrap();
+    assert_eq!(revoked.pairing_status, DevicePairingStatus::Revoked);
     assert_eq!(
         set_pairing_status(pool(&db), created.id, DevicePairingStatus::Pending)
             .await
             .unwrap_err()
             .code,
         ErrorCode::InvalidInput,
-        "paired cannot go back to pending"
+        "revoked is terminal"
     );
-    let revoked = set_pairing_status(pool(&db), created.id, DevicePairingStatus::Revoked)
-        .await
-        .unwrap();
-    assert_eq!(revoked.pairing_status, DevicePairingStatus::Revoked);
     assert_eq!(
         set_pairing_status(pool(&db), created.id, DevicePairingStatus::Paired)
             .await

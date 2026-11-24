@@ -614,3 +614,13 @@ export async function unregisterAgentAutostart(): Promise<string> {
     .string()
     .parse(await invokeCommand("unregister_agent_autostart_command"));
 }
+
+export async function autostartStatus(): Promise<boolean> {
+  return z
+    .boolean()
+    .parse(await invokeCommand("autostart_status_command"));
+}
+
+export async function stopAgent(): Promise<string> {
+  return z.string().parse(await invokeCommand("stop_agent_command"));
+}

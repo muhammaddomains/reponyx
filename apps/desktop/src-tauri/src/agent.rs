@@ -111,10 +111,11 @@ async fn forward_progress_stream(app: &AppHandle) -> Result<(), ()> {
 }
 
 /// Stop the background agent if it is running, so a database
-/// restore can replace the file it holds open. Returns `true`
-/// when an agent was running and has stopped. The agent is
-/// re-spawned on demand (the Agent page's "Ensure running", or the
-/// next sync enqueue), so stopping it here loses nothing.
+/// restore can replace the file it holds open. Also backs the
+/// Agent page's "Stop agent" button. Returns `true` when an agent
+/// was running and has stopped. The agent is re-spawned on demand
+/// (the Agent page's "Start agent", or the next sync enqueue), so
+/// stopping it here loses nothing.
 pub(crate) async fn stop_agent_if_running() -> CommandResult<bool> {
     let dir = data_dir();
     if !agent_reachable(&dir).await {
@@ -134,6 +135,27 @@ pub(crate) async fn stop_agent_if_running() -> CommandResult<bool> {
         code: "InternalError".into(),
         message: "background agent did not stop; the database restore was not staged".into(),
     })
+}
+
+/// Stop the agent on purpose (Agent page "Stop agent" button and
+/// the tray menu). The agent is re-spawned on demand, so this is
+/// safe to offer next to "Start agent".
+#[tauri::command]
+pub async fn stop_agent_command() -> CommandResult<String> {
+    if stop_agent_if_running().await? {
+        Ok("Background agent stopped.".into())
+    } else {
+        Ok("Background agent was not running.".into())
+    }
+}
+
+/// Whether start-at-login is currently enabled (Task Scheduler
+/// task or Registry Run key on Windows, systemd unit on Linux,
+/// LaunchAgent on macOS), so the Agent page can show the state
+/// instead of two blind Enable/Disable buttons.
+#[tauri::command]
+pub async fn autostart_status_command() -> CommandResult<bool> {
+    Ok(autostart_enabled())
 }
 
 #[tauri::command]
@@ -299,8 +321,79 @@ pub async fn unregister_agent_autostart_command() -> CommandResult<String> {
     unregister_autostart()
 }
 
+/// Per-user autostart, Registry Run key
+/// (`HKCU\Software\Microsoft\Windows\CurrentVersion\Run`).
+/// This is the fallback when Task Scheduler refuses the task: it
+/// needs no elevation, no service and no password, and the agent
+/// is a user-session process, so the Run key gives it exactly the
+/// same logon behaviour.
+const RUN_KEY: &str = r"HKCU\Software\Microsoft\Windows\CurrentVersion\Run";
+const RUN_VALUE_NAME: &str = "RepoNyxBackgroundAgent";
+
+#[cfg(windows)]
+fn task_scheduler_task_present() -> bool {
+    Command::new("schtasks")
+        .args(["/Query", "/TN", "RepoNyxBackgroundAgent"])
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false)
+}
+
+#[cfg(windows)]
+fn run_key_present() -> bool {
+    Command::new("reg")
+        .args(["query", RUN_KEY, "/v", RUN_VALUE_NAME])
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false)
+}
+
+#[cfg(windows)]
+fn register_run_key(agent_exe: &Path) -> Result<(), String> {
+    let value = format!("\"{}\"", agent_exe.display());
+    let output = Command::new("reg")
+        .args([
+            "add",
+            RUN_KEY,
+            "/v",
+            RUN_VALUE_NAME,
+            "/t",
+            "REG_SZ",
+            "/d",
+            &value,
+            "/f",
+        ])
+        .output()
+        .map_err(|e| format!("reg add failed: {e}"))?;
+    if output.status.success() {
+        Ok(())
+    } else {
+        Err(String::from_utf8_lossy(&output.stderr).trim().to_string())
+    }
+}
+
+#[cfg(windows)]
+fn unregister_run_key() -> bool {
+    Command::new("reg")
+        .args(["delete", RUN_KEY, "/v", RUN_VALUE_NAME, "/f"])
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false)
+}
+
 #[cfg(windows)]
 fn register_autostart(agent_exe: &Path) -> CommandResult<String> {
+    if task_scheduler_task_present() {
+        return Ok("Start at login is already enabled (Task Scheduler).".into());
+    }
+    if run_key_present() {
+        return Ok("Start at login is already enabled (Registry Run key).".into());
+    }
+    // No /RL flag: the task runs at logon with the user's normal
+    // token by default, which is all this user-session agent
+    // needs. The previous version passed /RL LIMITED and schtasks
+    // refused the task with "ERROR: Access is denied." when the
+    // app ran non-elevated.
     let output = Command::new("schtasks")
         .args([
             "/Create",
@@ -310,8 +403,6 @@ fn register_autostart(agent_exe: &Path) -> CommandResult<String> {
             &format!("\"{}\"", agent_exe.display()),
             "/SC",
             "ONLOGON",
-            "/RL",
-            "LIMITED",
             "/F",
         ])
         .output()
@@ -320,32 +411,51 @@ fn register_autostart(agent_exe: &Path) -> CommandResult<String> {
             message: format!("schtasks failed: {e}"),
         })?;
     if output.status.success() {
-        Ok("Registered RepoNyxBackgroundAgent (ONLOGON)".into())
-    } else {
-        Err(CommandError {
+        return Ok("Registered RepoNyxBackgroundAgent (ONLOGON, Task Scheduler)".into());
+    }
+    let scheduler_error = String::from_utf8_lossy(&output.stderr).trim().to_string();
+    // Fall back to the per-user Registry Run key so Enable still
+    // works on machines where Task Scheduler refuses the task.
+    match register_run_key(agent_exe) {
+        Ok(()) => Ok(format!(
+            "Task Scheduler refused the task ({scheduler_error}); start at login was enabled via the Registry Run key instead."
+        )),
+        Err(reg_error) => Err(CommandError {
             code: "InternalError".into(),
-            message: String::from_utf8_lossy(&output.stderr).into_owned(),
-        })
+            message: format!(
+                "could not enable start at login: Task Scheduler said '{scheduler_error}', Registry Run key said '{reg_error}'"
+            ),
+        }),
     }
 }
 
 #[cfg(windows)]
 fn unregister_autostart() -> CommandResult<String> {
-    let output = Command::new("schtasks")
+    let mut removed = Vec::new();
+    let task_gone = Command::new("schtasks")
         .args(["/Delete", "/TN", "RepoNyxBackgroundAgent", "/F"])
         .output()
-        .map_err(|e| CommandError {
-            code: "InternalError".into(),
-            message: format!("schtasks failed: {e}"),
-        })?;
-    if output.status.success() {
-        Ok("Unregistered RepoNyxBackgroundAgent".into())
-    } else {
-        Err(CommandError {
-            code: "InternalError".into(),
-            message: String::from_utf8_lossy(&output.stderr).into_owned(),
-        })
+        .map(|o| o.status.success())
+        .unwrap_or(false);
+    if task_gone {
+        removed.push("Task Scheduler");
     }
+    if unregister_run_key() {
+        removed.push("Registry Run key");
+    }
+    if removed.is_empty() {
+        Ok("Start at login was not enabled.".into())
+    } else {
+        Ok(format!(
+            "Disabled start at login (removed from {}).",
+            removed.join(" and ")
+        ))
+    }
+}
+
+#[cfg(windows)]
+fn autostart_enabled() -> bool {
+    task_scheduler_task_present() || run_key_present()
 }
 
 #[cfg(target_os = "linux")]
@@ -387,6 +497,17 @@ fn unregister_autostart() -> CommandResult<String> {
         let _ = std::fs::remove_file(unit);
     }
     Ok("Disabled reponyx-agent user service".into())
+}
+
+#[cfg(target_os = "linux")]
+fn autostart_enabled() -> bool {
+    std::env::var_os("HOME")
+        .map(|home| {
+            PathBuf::from(home)
+                .join(".config/systemd/user/reponyx-agent.service")
+                .is_file()
+        })
+        .unwrap_or(false)
 }
 
 #[cfg(target_os = "macos")]
@@ -436,6 +557,17 @@ fn unregister_autostart() -> CommandResult<String> {
         let _ = std::fs::remove_file(plist);
     }
     Ok("Removed com.reponyx.agent LaunchAgent".into())
+}
+
+#[cfg(target_os = "macos")]
+fn autostart_enabled() -> bool {
+    std::env::var_os("HOME")
+        .map(|home| {
+            PathBuf::from(home)
+                .join("Library/LaunchAgents/com.reponyx.agent.plist")
+                .is_file()
+        })
+        .unwrap_or(false)
 }
 
 // Silence unused when DB state is present for future expansion.

@@ -3,10 +3,12 @@ import { Badge, Button, Card } from "@reponyx/ui";
 import {
   agentHealth,
   ensureAgentRunning,
+  stopAgent,
   agentPause,
   agentResume,
   registerAgentAutostart,
   unregisterAgentAutostart,
+  autostartStatus,
   isTauriAvailable,
 } from "@reponyx/api-client";
 import type { AgentHealth } from "@reponyx/shared";
@@ -29,6 +31,8 @@ function commandMessage(error: unknown): string {
 export default function Agent() {
   const [health, setHealth] = useState<AgentHealth | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
+  const [autostart, setAutostart] = useState<boolean | null>(null);
   const [busy, setBusy] = useState(false);
   const tauri = isTauriAvailable();
 
@@ -43,19 +47,33 @@ export default function Agent() {
     }
   }, []);
 
+  const refreshAutostart = useCallback(async () => {
+    try {
+      setAutostart(await autostartStatus());
+    } catch {
+      setAutostart(null);
+    }
+  }, []);
+
   useEffect(() => {
     if (!tauri) return;
     void refresh();
+    // Start-at-login changes only when the user clicks
+    // Enable/Disable, so read it once — not on the 5 s health
+    // poll, which would spawn a schtasks/reg check every tick.
+    void refreshAutostart();
     const id = window.setInterval(() => void refresh(), 5000);
     return () => window.clearInterval(id);
-  }, [tauri, refresh]);
+  }, [tauri, refresh, refreshAutostart]);
 
-  async function run(action: () => Promise<unknown>) {
+  async function run<T>(action: () => Promise<T>, done?: (value: T) => void) {
     setBusy(true);
     setError(null);
+    setNotice(null);
     try {
-      await action();
+      const value = await action();
       await refresh();
+      done?.(value);
     } catch (e) {
       setError(commandMessage(e));
     } finally {
@@ -100,8 +118,22 @@ export default function Agent() {
         </Card>
       ) : null}
 
+      {notice ? (
+        <Card className="border-emerald-300 p-4 text-sm text-emerald-800 dark:border-emerald-900 dark:text-emerald-300">
+          {notice}
+        </Card>
+      ) : null}
+
       <Card className="space-y-3 p-4">
         <h2 className="text-sm font-medium text-zinc-500">Status</h2>
+        <p className="text-sm text-zinc-600 dark:text-zinc-400">
+          Start at login:{" "}
+          {autostart === null
+            ? "unknown"
+            : autostart
+              ? "enabled"
+              : "disabled"}
+        </p>
         {status ? (
           <dl className="grid grid-cols-2 gap-x-6 gap-y-2 text-sm sm:grid-cols-3">
             <div>
@@ -155,11 +187,24 @@ export default function Agent() {
           Refresh
         </Button>
         <Button
-          disabled={busy}
+          disabled={busy || reachable}
           variant="secondary"
-          onClick={() => run(ensureAgentRunning)}
+          onClick={() =>
+            run(ensureAgentRunning, (h) =>
+              setNotice(
+                h.reachable ? "Background agent started." : h.message,
+              ),
+            )
+          }
         >
           Start agent
+        </Button>
+        <Button
+          disabled={busy || !reachable}
+          variant="secondary"
+          onClick={() => run(stopAgent, (message) => setNotice(message))}
+        >
+          Stop agent
         </Button>
         <Button
           disabled={busy || !reachable}
@@ -178,14 +223,24 @@ export default function Agent() {
         <Button
           disabled={busy}
           variant="secondary"
-          onClick={() => run(registerAgentAutostart)}
+          onClick={() =>
+            run(registerAgentAutostart, async (message) => {
+              setNotice(message);
+              await refreshAutostart();
+            })
+          }
         >
           Enable start at login
         </Button>
         <Button
           disabled={busy}
           variant="ghost"
-          onClick={() => run(unregisterAgentAutostart)}
+          onClick={() =>
+            run(unregisterAgentAutostart, async (message) => {
+              setNotice(message);
+              await refreshAutostart();
+            })
+          }
         >
           Disable start at login
         </Button>
@@ -193,10 +248,11 @@ export default function Agent() {
 
       <Card className="p-4 text-sm text-zinc-600 dark:text-zinc-400">
         <p>
-          Autostart uses Windows Task Scheduler (ONLOGON), a systemd user
-          unit on Linux, or a LaunchAgent on macOS. The agent is a
-          user-session process and does not continue after logout (see
-          ADR-006).
+          Autostart uses Windows Task Scheduler (ONLOGON), falling back
+          to the Registry Run key when Task Scheduler refuses the
+          task; a systemd user unit on Linux; or a LaunchAgent on
+          macOS. The agent is a user-session process and does not
+          continue after logout (see ADR-006).
         </p>
       </Card>
     </div>

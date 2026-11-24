@@ -111,6 +111,8 @@ pub fn run() {
             agent::agent_enqueue_command,
             agent::agent_cancel_command,
             agent::ensure_agent_running_command,
+            agent::stop_agent_command,
+            agent::autostart_status_command,
             agent::register_agent_autostart_command,
             agent::unregister_agent_autostart_command,
             auth::list_accounts_command,

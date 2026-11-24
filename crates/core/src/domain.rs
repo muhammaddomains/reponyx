@@ -327,7 +327,12 @@ impl DevicePairingStatus {
     pub fn allowed_transitions(&self) -> &'static [DevicePairingStatus] {
         match self {
             Self::Pending => &[Self::Paired, Self::Revoked],
-            Self::Paired => &[Self::Revoked],
+            // Pending is allowed again: a paired device may request
+            // a fresh pairing code (re-pair), e.g. when its device
+            // token was lost from the credential store. Confirming
+            // mints a fresh device token; the setup token is still
+            // required to start the pairing.
+            Self::Paired => &[Self::Pending, Self::Revoked],
             Self::Revoked => &[],
         }
     }

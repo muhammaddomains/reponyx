@@ -484,6 +484,30 @@ pub async fn create_broker_setup_state_command(
     })
 }
 
+/// A revoked device can never be re-paired in place — revoked is
+/// terminal by design, so "Pair this device" used to fail with
+/// "device pairing status cannot move from revoked to pending".
+/// Register it again instead: a fresh device identifier, so the
+/// old identity stays revoked and the new one pairs from scratch.
+/// The broker request and the local row below both use the fresh
+/// id; confirming the pairing stores it as `device.identifier`
+/// for the agent, as usual.
+async fn fresh_device_identifier_if_revoked(
+    database: &Database,
+    device_id: &str,
+) -> CommandResult<String> {
+    let Some(device) = get_device_by_identifier(&database.pool, device_id).await? else {
+        return Ok(device_id.to_string());
+    };
+    if device.pairing_status != DevicePairingStatus::Revoked {
+        return Ok(device_id.to_string());
+    }
+    let new_id = Uuid::new_v4().to_string();
+    set_setting(&database.pool, "device_identifier", &new_id).await?;
+    set_setting(&database.pool, "device.identifier", &new_id).await?;
+    Ok(new_id)
+}
+
 /// Request a pairing code for an installation. Requires the
 /// broker setup token. Returns the code (show it to the user)
 /// and its expiry.
@@ -496,6 +520,7 @@ pub async fn start_pairing_command(
     let database = require_db(&db)?;
     let token = setup_token(&auth)?;
     let device_id = device_identifier(database).await?;
+    let device_id = fresh_device_identifier_if_revoked(database, &device_id).await?;
     let (code, expires_at) = broker_client(&auth)?
         .request_pairing_code(token.expose(), &installation_id, &device_name(), &device_id)
         .await?;

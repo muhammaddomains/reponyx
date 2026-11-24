@@ -4,9 +4,10 @@
 //! workspace). Menu actions talk to the background agent over IPC, and
 //! "Sync due now" materializes the due schedules (the same operation
 //! the Schedules page offers) and reports the result as a system
-//! notification. Pause/Resume are state-aware: a background task
+//! notification. Stop/Pause/Resume are state-aware: a background task
 //! polls agent health every 30 s and enables only the action that
-//! makes sense right now (neither when the agent is down).
+//! makes sense right now (none when the agent is down). Every action
+//! reports its outcome as a notification, so a click is never silent.
 
 use tauri::{
     AppHandle, Manager,
@@ -26,6 +27,7 @@ pub fn setup_tray(app: &AppHandle) -> tauri::Result<()> {
     let health = MenuItem::with_id(app, "health", "Agent status…", true, None::<&str>)?;
     let sync_now = MenuItem::with_id(app, "sync_now", "Sync due now", true, None::<&str>)?;
     let ensure = MenuItem::with_id(app, "ensure", "Start agent if needed", true, None::<&str>)?;
+    let stop = MenuItem::with_id(app, "stop", "Stop agent", true, None::<&str>)?;
     let pause = MenuItem::with_id(app, "pause", "Pause agent", true, None::<&str>)?;
     let resume = MenuItem::with_id(app, "resume", "Resume agent", true, None::<&str>)?;
     let quit = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
@@ -34,27 +36,30 @@ pub fn setup_tray(app: &AppHandle) -> tauri::Result<()> {
     let menu = Menu::with_items(
         app,
         &[
-            &show, &health, &sync_now, &ensure, &pause, &resume, &separator, &quit,
+            &show, &health, &sync_now, &ensure, &stop, &pause, &resume, &separator, &quit,
         ],
     )?;
 
-    // Keep Pause/Resume honest: poll agent health and enable only
-    // the action that applies. When the agent is down both are off
-    // ("Start agent if needed" is the way back); when paused only
-    // Resume is on; otherwise only Pause is on.
+    // Keep Stop/Pause/Resume honest: poll agent health and enable
+    // only the action that applies. When the agent is down all
+    // three are off ("Start agent if needed" is the way back);
+    // when paused only Resume is on; otherwise Stop and Pause are
+    // on.
     {
+        let stop = stop.clone();
         let pause = pause.clone();
         let resume = resume.clone();
         tauri::async_runtime::spawn(async move {
             loop {
-                let (pause_enabled, resume_enabled) =
+                let (stop_enabled, pause_enabled, resume_enabled) =
                     match crate::agent::agent_health_command().await {
                         Ok(view) => match view.status {
-                            Some(status) => (!status.paused, status.paused),
-                            None => (false, false),
+                            Some(status) => (true, !status.paused, status.paused),
+                            None => (false, false, false),
                         },
-                        Err(_) => (false, false),
+                        Err(_) => (false, false, false),
                     };
+                let _ = stop.set_enabled(stop_enabled);
                 let _ = pause.set_enabled(pause_enabled);
                 let _ = resume.set_enabled(resume_enabled);
                 tokio::time::sleep(HEALTH_POLL_INTERVAL).await;
@@ -125,18 +130,76 @@ pub fn setup_tray(app: &AppHandle) -> tauri::Result<()> {
             "ensure" => {
                 let handle = app.clone();
                 tauri::async_runtime::spawn(async move {
-                    let _ = crate::agent::ensure_agent_running_command().await;
-                    let _ = handle;
+                    use tauri_plugin_notification::NotificationExt;
+                    let outcome = crate::agent::ensure_agent_running_command().await;
+                    let (title, body) = match outcome {
+                        Ok(view) if view.reachable => (
+                            "Agent running",
+                            "The background agent is running.".to_string(),
+                        ),
+                        Ok(view) => ("Agent did not start", view.message),
+                        Err(e) => ("Agent did not start", e.message),
+                    };
+                    let _ = handle
+                        .notification()
+                        .builder()
+                        .title(title)
+                        .body(body)
+                        .show();
+                });
+            }
+            "stop" => {
+                let handle = app.clone();
+                tauri::async_runtime::spawn(async move {
+                    use tauri_plugin_notification::NotificationExt;
+                    let outcome = crate::agent::stop_agent_command().await;
+                    let (title, body) = match outcome {
+                        Ok(message) => ("Agent", message),
+                        Err(e) => ("Agent did not stop", e.message),
+                    };
+                    let _ = handle
+                        .notification()
+                        .builder()
+                        .title(title)
+                        .body(body)
+                        .show();
                 });
             }
             "pause" => {
-                tauri::async_runtime::spawn(async {
-                    let _ = crate::agent::agent_pause_command().await;
+                let handle = app.clone();
+                tauri::async_runtime::spawn(async move {
+                    use tauri_plugin_notification::NotificationExt;
+                    let outcome = crate::agent::agent_pause_command().await;
+                    let (title, body) = match outcome {
+                        Ok(()) => ("Agent paused", "Scheduled sync is paused.".to_string()),
+                        Err(e) => ("Agent did not pause", e.message),
+                    };
+                    let _ = handle
+                        .notification()
+                        .builder()
+                        .title(title)
+                        .body(body)
+                        .show();
                 });
             }
             "resume" => {
-                tauri::async_runtime::spawn(async {
-                    let _ = crate::agent::agent_resume_command().await;
+                let handle = app.clone();
+                tauri::async_runtime::spawn(async move {
+                    use tauri_plugin_notification::NotificationExt;
+                    let outcome = crate::agent::agent_resume_command().await;
+                    let (title, body) = match outcome {
+                        Ok(()) => (
+                            "Agent resumed",
+                            "Scheduled sync is running again.".to_string(),
+                        ),
+                        Err(e) => ("Agent did not resume", e.message),
+                    };
+                    let _ = handle
+                        .notification()
+                        .builder()
+                        .title(title)
+                        .body(body)
+                        .show();
                 });
             }
             "quit" => {

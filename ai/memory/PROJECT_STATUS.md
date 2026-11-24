@@ -76,6 +76,30 @@ accountType`, and the Agent page showed "[object Object]".
   -p reponyx-background-agent`. Release-workflow bundling of
   the agent is still an open packaging gap.
 
+## Auth Broker runs with the app; release ships all binaries (2026-11-23)
+
+The broker had no way to run together with the app and no place
+in a GitHub release: root `package.json` had no broker script,
+and `release.yml` shipped only the desktop, so GitHub App auth
+could not work from a release install.
+
+- Root scripts added: `broker` (`cargo run -p
+  reponyx-auth-broker`), `broker:build`, `agent:build`, and
+  `dev:all` (concurrently 10.0.7 runs broker + `tauri:dev`
+  together, `-k` so one exiting stops the other). The broker
+  needs its env vars in the shell (`REPONYX_BROKER_APP_ID`,
+  private key via `REPONYX_BROKER_PRIVATE_KEY_PATH`, setup
+  token); it exits with a clear error when one is missing.
+- Release workflow: builds agent + broker in release mode,
+  puts all three binaries in the portable ZIP, and uploads
+  `reponyx-agent-x64.zip` / `reponyx-auth-broker-x64.zip` as
+  their own assets; release notes list them.
+- `.env.example` documents the broker variables; README has a
+  "Running the Auth Broker" section.
+- Still open: the NSIS installer contains only the desktop.
+  Bundling agent/broker into it needs `bundle.resources` +
+  a resource-dir lookup in `resolve_agent_exe`.
+
 ## Completed tasks
 
 - **Phase 9 — LFS sync (actual, 2026-11-21, assistant,

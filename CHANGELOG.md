@@ -5,6 +5,27 @@ All notable changes to RepoNyx are documented here. Format follows
 
 ## [Unreleased]
 
+### Added — Auth Broker runs with the app; release ships all binaries (2026-11-23)
+
+- Root `package.json` now has `broker` (`cargo run -p
+  reponyx-auth-broker`), `broker:build`, `agent:build`, and `dev:all`
+  (concurrently 10.0.7: broker + desktop together). Before this the
+  broker had no script at all and had to be started by hand in a
+  separate shell.
+- The release workflow builds the agent and broker in release mode
+  and ships them: the portable ZIP now contains
+  `reponyx-desktop.exe` + `reponyx-agent.exe` +
+  `reponyx-auth-broker.exe`, and the agent/broker ship as their own
+  ZIPs too. Before this a GitHub release contained only the desktop
+  — no agent, no broker — so GitHub App auth could not work from a
+  release install.
+- `.env.example` documents the broker variables; README has a
+  "Running the Auth Broker" section.
+- Open follow-up: the NSIS installer still contains only the
+  desktop; bundling the agent/broker into it needs
+  `bundle.resources` + a resource-dir lookup in
+  `resolve_agent_exe`.
+
 ### Fixed — Windows first-run bugs (2026-11-23)
 
 Found from the user's screenshots + log of the first real Windows

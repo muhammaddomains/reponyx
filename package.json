@@ -10,6 +10,10 @@
   "scripts": {
     "build": "pnpm --filter @reponyx/desktop build",
     "dev": "pnpm --filter @reponyx/desktop dev",
+    "dev:all": "concurrently -k -n broker,desktop \"pnpm broker\" \"pnpm tauri:dev\"",
+    "broker": "cargo run -p reponyx-auth-broker",
+    "broker:build": "cargo build -p reponyx-auth-broker",
+    "agent:build": "cargo build -p reponyx-background-agent",
     "lint": "pnpm -r lint",
     "typecheck": "pnpm -r typecheck",
     "clean": "pnpm -r clean",
@@ -18,6 +22,7 @@
   },
   "devDependencies": {
     "@types/node": "^26.6.6",
+    "concurrently": "^10.0.7",
     "typescript": "^6.0.3"
   }
 }

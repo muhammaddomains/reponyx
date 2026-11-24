@@ -17,6 +17,12 @@
 //!   Only hashes of codes/tokens are stored — never the raw values,
 //!   and never the private key.
 //!
+//! The broker also reads a `.env` file from the working directory at
+//! startup (see `.env.example`), so `pnpm broker` / `pnpm dev:all`
+//! work without exporting variables first. Real OS environment
+//! variables always win: dotenv never overwrites a variable that is
+//! already set. `.env` is gitignored — never commit it.
+//!
 //! The broker logs method/path/status only — never tokens, codes,
 //! keys, or request bodies.
 
@@ -28,6 +34,13 @@ use tracing::info;
 
 #[tokio::main]
 async fn main() {
+    // Load `.env` from the working directory first, so the broker can
+    // run from `pnpm broker` / `pnpm dev:all` without exported
+    // variables. Real OS environment variables are never overwritten
+    // by the file (dotenv only fills in missing ones), and a missing
+    // file is not an error — `BrokerConfig::from_env` still enforces
+    // the required variables below.
+    dotenvy::dotenv().ok();
     let log_dir = std::env::var("REPONYX_BROKER_LOG_DIR").unwrap_or_else(|_| "logs".to_string());
     if let Err(err) = reponyx_logging::init_logging(std::path::Path::new(&log_dir)) {
         eprintln!(

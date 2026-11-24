@@ -4028,6 +4028,7 @@ version = "0.1.0"
 dependencies = [
  "axum",
  "chrono",
+ "dotenvy",
  "jsonwebtoken",
  "pkcs8",
  "rand",

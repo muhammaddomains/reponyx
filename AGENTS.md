@@ -85,7 +85,7 @@ cargo tauri build                          # apps/desktop; needs WebViewGTK dev 
 - `crates/{core,logging,git-engine,provider-abstractions,github-provider,database,credential-store,scheduler,sync-queue,ipc}` — Rust libs
   (all workspace members since 2026-11-21; `sync-queue` and `ipc`
   were added by the Phase 6/7 fixes)
-- `apps/auth-broker` — Auth Broker (holds the GitHub App private key; never a desktop dependency)
+- `apps/auth-broker` — Auth Broker (holds the GitHub App private key; never a desktop dependency). Reads a repo-root `.env` file at startup (dotenvy); real OS env vars win over the file.
 - `apps/background-agent` — background agent binary (landed 2026-11-21,
   workspace member since the Phase 6/7 fixes the same day; compiles;
   wired into the desktop via `agent.rs` / `tray.rs` / `/agent` route)

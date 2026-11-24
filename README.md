@@ -140,10 +140,13 @@ private key, mints installation tokens, and pairs devices. The desktop
 never sees the key — it talks to the broker on `http://127.0.0.1:8765`.
 
 ```bash
-# 1. Set the broker variables in your shell (see .env.example):
+# 1. Set the broker variables — either copy `.env.example` to `.env`
+#    in the repo root and fill it in, or export them in your shell:
 #    REPONYX_BROKER_APP_ID, REPONYX_BROKER_PRIVATE_KEY_PATH (or
 #    REPONYX_BROKER_PRIVATE_KEY), REPONYX_BROKER_SETUP_TOKEN
 #    (at least 16 characters; generate with: openssl rand -hex 32)
+#    The broker reads `.env` from the working directory at startup;
+#    real OS environment variables win over the file.
 # 2. Run the broker on its own:
 pnpm broker
 #    ... or together with the desktop app:
@@ -155,9 +158,11 @@ pnpm dev:all
 The broker stores its state (installations, pairing codes, device
 tokens, audit log) in SQLite under `REPONYX_BROKER_DATA_DIR`
 (default `broker-data`); only hashes are stored, never raw codes,
-tokens, or the private key. The background agent is built once with
-`pnpm agent:build` — the desktop starts it when the binary sits next
-to `reponyx-desktop.exe`. GitHub releases ship all three binaries:
+tokens, or the private key. The background agent runs with the app in
+`pnpm dev:all` (broker + agent + desktop together), or is built once
+with `pnpm agent:build` — the desktop starts it when the binary sits
+next to `reponyx-desktop.exe`. `pnpm build:all` builds all three
+binaries (broker, agent, desktop) in one go. GitHub releases ship all
 the portable ZIP contains desktop + agent + broker in one folder,
 and the agent/broker are also attached as their own ZIPs. The NSIS
 installer still contains only the desktop (bundling the other two

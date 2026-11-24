@@ -26,6 +26,21 @@ All notable changes to RepoNyx are documented here. Format follows
   `bundle.resources` + a resource-dir lookup in
   `resolve_agent_exe`.
 
+### Added — Broker reads `.env`; `dev:all` runs the agent; `build:all` (2026-11-23)
+
+- The Auth Broker now reads a `.env` file from the working
+  directory at startup (`dotenvy` 0.15, already in the lockfile
+  via sqlx — lockfile diff is one line). Real OS environment
+  variables always win over the file, and a missing file is
+  not an error. `.env` is gitignored.
+- `dev:all` now runs broker + agent + desktop together (new
+  `agent` script: `cargo run -p reponyx-background-agent`).
+  The desktop checks agent health before spawning one, so a
+  dev:all agent is never duplicated.
+- New `build:all` script: `broker:build && agent:build &&
+  tauri:build`, sequential because the three builds share one
+  cargo target-dir lock.
+
 ### Fixed — Windows first-run bugs (2026-11-23)
 
 Found from the user's screenshots + log of the first real Windows

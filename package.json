@@ -9,10 +9,12 @@
   },
   "scripts": {
     "build": "pnpm --filter @reponyx/desktop build",
+    "build:all": "pnpm broker:build && pnpm agent:build && pnpm tauri:build",
     "dev": "pnpm --filter @reponyx/desktop dev",
-    "dev:all": "concurrently -k -n broker,desktop \"pnpm broker\" \"pnpm tauri:dev\"",
+    "dev:all": "concurrently -k -n broker,agent,desktop \"pnpm broker\" \"pnpm agent\" \"pnpm tauri:dev\"",
     "broker": "cargo run -p reponyx-auth-broker",
     "broker:build": "cargo build -p reponyx-auth-broker",
+    "agent": "cargo run -p reponyx-background-agent",
     "agent:build": "cargo build -p reponyx-background-agent",
     "lint": "pnpm -r lint",
     "typecheck": "pnpm -r typecheck",

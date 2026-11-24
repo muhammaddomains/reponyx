@@ -90,6 +90,19 @@ could not work from a release install.
   needs its env vars in the shell (`REPONYX_BROKER_APP_ID`,
   private key via `REPONYX_BROKER_PRIVATE_KEY_PATH`, setup
   token); it exits with a clear error when one is missing.
+- Follow-up the same day (user's request): the broker now
+  also reads a `.env` file from the working directory
+  (`dotenvy` 0.15, `dotenv().ok()` before config load, so
+  `pnpm broker` / `pnpm dev:all` work without exported
+  variables; OS env vars always win, `.env` is gitignored).
+  `dev:all` now runs the agent too (`broker` + `agent` +
+  desktop) — the desktop's `ensure_agent_running_command`
+  checks health first, so it never spawns a duplicate. New
+  `build:all` runs `broker:build && agent:build &&
+  tauri:build` in sequence (one cargo target-dir lock).
+  Proven by a live smoke test: `.env`-only start serves
+  `/health`, an OS var beats a bad `.env` value, and no
+  `.env` + no vars still exits 2 with the same error.
 - Release workflow: builds agent + broker in release mode,
   puts all three binaries in the portable ZIP, and uploads
   `reponyx-agent-x64.zip` / `reponyx-auth-broker-x64.zip` as

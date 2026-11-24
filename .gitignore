@@ -8,7 +8,11 @@ node_modules/
 
 # Tauri / app data (local dev only)
 /logs/
+**/logs/
 *.log
+
+/broker-data/
+**/broker-data/
 
 # Env / secrets — NEVER commit credentials, private keys, or tokens.
 .env

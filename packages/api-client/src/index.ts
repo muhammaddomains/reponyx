@@ -114,7 +114,7 @@ export async function getDashboardCounts(): Promise<DashboardCounts> {
 }
 
 /** Phase 5 auth commands (Tauri `auth.rs`). Invoke argument names
- *  are snake_case, matching the Rust parameter names. */
+ *  are camelCase, matching Tauri's default argument case (the Rust parameter names are snake_case). */
 
 export async function listAccounts(): Promise<Account[]> {
   return z.array(accountSchema).parse(await invokeCommand("list_accounts_command"));
@@ -123,16 +123,16 @@ export async function listAccounts(): Promise<Account[]> {
 export async function addPatAccount(input: {
   pat: string;
   label?: string | null;
-  account_type: "personal" | "organization";
-  expires_at?: string | null;
+  accountType: "personal" | "organization";
+  expiresAt?: string | null;
 }): Promise<Account> {
   return accountSchema.parse(await invokeCommand("add_pat_account_command", input));
 }
 
 export async function replacePatAccount(input: {
-  account_id: string;
+  accountId: string;
   pat: string;
-  expires_at?: string | null;
+  expiresAt?: string | null;
 }): Promise<Account> {
   return accountSchema.parse(
     await invokeCommand("replace_pat_account_command", input),
@@ -141,13 +141,13 @@ export async function replacePatAccount(input: {
 
 export async function removePatAccount(accountId: string): Promise<Account> {
   return accountSchema.parse(
-    await invokeCommand("remove_pat_account_command", { account_id: accountId }),
+    await invokeCommand("remove_pat_account_command", { accountId }),
   );
 }
 
 export async function reconnectPatAccount(accountId: string): Promise<Account> {
   return accountSchema.parse(
-    await invokeCommand("reconnect_pat_account_command", { account_id: accountId }),
+    await invokeCommand("reconnect_pat_account_command", { accountId }),
   );
 }
 
@@ -155,7 +155,7 @@ export async function validatePatAccount(
   accountId: string,
 ): Promise<ProviderAccountInfo> {
   return providerAccountInfoSchema.parse(
-    await invokeCommand("validate_pat_account_command", { account_id: accountId }),
+    await invokeCommand("validate_pat_account_command", { accountId }),
   );
 }
 
@@ -164,7 +164,7 @@ export async function validateGithubAppAccount(
 ): Promise<ProviderAccountInfo> {
   return providerAccountInfoSchema.parse(
     await invokeCommand("validate_github_app_account_command", {
-      account_id: accountId,
+      accountId,
     }),
   );
 }
@@ -173,7 +173,7 @@ export async function getPatExpiryStatus(
   accountId: string,
 ): Promise<PatExpiry> {
   return patExpirySchema.parse(
-    await invokeCommand("get_pat_expiry_status_command", { account_id: accountId }),
+    await invokeCommand("get_pat_expiry_status_command", { accountId }),
   );
 }
 
@@ -195,7 +195,7 @@ export async function startPairing(
   installationId: string,
 ): Promise<PairingInfo> {
   return pairingInfoSchema.parse(
-    await invokeCommand("start_pairing_command", { installation_id: installationId }),
+    await invokeCommand("start_pairing_command", { installationId }),
   );
 }
 
@@ -203,7 +203,7 @@ export async function completePairing(
   pairingCode: string,
 ): Promise<Account> {
   return accountSchema.parse(
-    await invokeCommand("complete_pairing_command", { pairing_code: pairingCode }),
+    await invokeCommand("complete_pairing_command", { pairingCode }),
   );
 }
 
@@ -214,13 +214,13 @@ export async function revokeDevicePairing(
     .boolean()
     .parse(
       await invokeCommand("revoke_device_pairing_command", {
-        device_identifier: deviceIdentifier,
+        deviceIdentifier,
       }),
     );
 }
 
 /** Phase 7 scheduler commands (Tauri `schedules.rs`). Invoke
- *  argument names are snake_case, matching the Rust parameter names.
+ *  argument names are camelCase, matching Tauri's default argument case (the Rust parameter names are snake_case).
  *  The Schedules page (`apps/desktop/src/routes/Schedules.tsx`,
  *  Phase 8) is the typed UI for these calls. */
 
@@ -236,10 +236,10 @@ export async function createSchedule(
   return scheduleWithNextRunSchema.parse(
     await invokeCommand("create_schedule_command", {
       scope: input.scope,
-      account_id: input.accountId ?? null,
-      repository_id: input.repositoryId ?? null,
-      interval_type: input.intervalType,
-      interval_value: input.intervalValue ?? null,
+      accountId: input.accountId ?? null,
+      repositoryId: input.repositoryId ?? null,
+      intervalType: input.intervalType,
+      intervalValue: input.intervalValue ?? null,
       timezone: input.timezone,
       enabled: input.enabled,
     }),
@@ -248,16 +248,16 @@ export async function createSchedule(
 
 export async function updateSchedule(input: {
   id: string;
-  interval_type?: string | null;
-  interval_value?: string | null;
+  intervalType?: string | null;
+  intervalValue?: string | null;
   timezone?: string | null;
   enabled?: boolean | null;
 }): Promise<ScheduleWithNextRun> {
   return scheduleWithNextRunSchema.parse(
     await invokeCommand("update_schedule_command", {
       id: input.id,
-      interval_type: input.interval_type ?? null,
-      interval_value: input.interval_value ?? null,
+      intervalType: input.intervalType ?? null,
+      intervalValue: input.intervalValue ?? null,
       timezone: input.timezone ?? null,
       enabled: input.enabled ?? null,
     }),
@@ -269,15 +269,15 @@ export async function deleteSchedule(id: string): Promise<boolean> {
 }
 
 export async function previewNextRuns(input: {
-  schedule_id: string;
+  scheduleId: string;
   count: number;
-  display_timezone?: string | null;
+  displayTimezone?: string | null;
 }): Promise<NextRunPreview[]> {
   return z.array(nextRunPreviewSchema).parse(
     await invokeCommand("preview_next_runs_command", {
-      schedule_id: input.schedule_id,
+      scheduleId: input.scheduleId,
       count: input.count,
-      display_timezone: input.display_timezone ?? null,
+      displayTimezone: input.displayTimezone ?? null,
     }),
   );
 }
@@ -293,29 +293,29 @@ export async function effectiveSchedule(
 ): Promise<EffectiveSchedule | null> {
   return effectiveScheduleSchema.nullable().parse(
     await invokeCommand("effective_schedule_command", {
-      repository_id: repositoryId,
+      repositoryId,
     }),
   );
 }
 
 /** Phase 8 repository commands (Tauri `repositories.rs`). Invoke
- *  argument names are snake_case, matching the Rust parameter names.
+ *  argument names are camelCase, matching Tauri's default argument case (the Rust parameter names are snake_case).
  *  The Repositories page (`apps/desktop/src/routes/Repositories.tsx`)
  *  is the typed UI for these calls. */
 
 export async function listRepositories(input?: {
-  account_id?: string | null;
-  archive_status?: string | null;
-  sync_enabled?: boolean | null;
+  accountId?: string | null;
+  archiveStatus?: string | null;
+  syncEnabled?: boolean | null;
   search?: string | null;
   limit?: number | null;
   offset?: number | null;
 }): Promise<RepositoryPage> {
   return repositoryPageSchema.parse(
     await invokeCommand("list_repositories_command", {
-      account_id: input?.account_id ?? null,
-      archive_status: input?.archive_status ?? null,
-      sync_enabled: input?.sync_enabled ?? null,
+      accountId: input?.accountId ?? null,
+      archiveStatus: input?.archiveStatus ?? null,
+      syncEnabled: input?.syncEnabled ?? null,
       search: input?.search ?? null,
       limit: input?.limit ?? null,
       offset: input?.offset ?? null,
@@ -340,21 +340,21 @@ export async function discoverRepositories(
 ): Promise<DiscoveryOutcome> {
   return discoveryOutcomeSchema.parse(
     await invokeCommand("discover_repositories_command", {
-      account_id: accountId,
+      accountId,
     }),
   );
 }
 
 export async function updateRepository(input: {
   id: string;
-  sync_enabled?: boolean | null;
-  sync_mode?: string | null;
+  syncEnabled?: boolean | null;
+  syncMode?: string | null;
 }): Promise<Repository> {
   return repositorySchema.parse(
     await invokeCommand("update_repository_command", {
       id: input.id,
-      sync_enabled: input.sync_enabled ?? null,
-      sync_mode: input.sync_mode ?? null,
+      syncEnabled: input.syncEnabled ?? null,
+      syncMode: input.syncMode ?? null,
     }),
   );
 }
@@ -379,7 +379,7 @@ export async function openRepositoryInBrowser(id: string): Promise<void> {
 
 export async function listSyncJobs(input?: {
   status?: string | null;
-  repository_id?: string | null;
+  repositoryId?: string | null;
   limit?: number | null;
 }): Promise<SyncJob[]> {
   return z
@@ -387,7 +387,7 @@ export async function listSyncJobs(input?: {
     .parse(
       await invokeCommand("list_sync_jobs_command", {
         status: input?.status ?? null,
-        repository_id: input?.repository_id ?? null,
+        repositoryId: input?.repositoryId ?? null,
         limit: input?.limit ?? null,
       }),
     );
@@ -425,7 +425,7 @@ export async function listHistoryForRepository(
     .array(syncHistorySchema)
     .parse(
       await invokeCommand("list_history_for_repository_command", {
-        repository_id: repositoryId,
+        repositoryId,
         limit: limit ?? null,
       }),
     );
@@ -580,13 +580,13 @@ export async function agentEnqueue(
     .nullable()
     .parse(
       await invokeCommand("agent_enqueue_command", {
-        repository_id: repositoryId,
+        repositoryId,
       }),
     );
 }
 
 export async function agentCancelJob(jobId: string): Promise<void> {
-  await invokeCommand("agent_cancel_command", { job_id: jobId });
+  await invokeCommand("agent_cancel_command", { jobId });
 }
 
 export async function ensureAgentRunning(): Promise<AgentHealth> {

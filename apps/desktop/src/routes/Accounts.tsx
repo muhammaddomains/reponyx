@@ -263,9 +263,9 @@ export default function Accounts() {
                       run(
                         () =>
                           replacePatAccount({
-                            account_id: account.id,
+                            accountId: account.id,
                             pat: replacePat[account.id] ?? "",
-                            expires_at: null,
+                            expiresAt: null,
                           }),
                         () => {
                           setReplacePat((current) => ({
@@ -358,8 +358,8 @@ export default function Accounts() {
                   addPatAccount({
                     pat,
                     label: patLabel || null,
-                    account_type: patAccountType,
-                    expires_at: expiryDateToRfc3339(patExpires),
+                    accountType: patAccountType,
+                    expiresAt: expiryDateToRfc3339(patExpires),
                   }),
                 (account) => {
                   setPat("");

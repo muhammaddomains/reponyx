@@ -75,7 +75,10 @@ pub(crate) fn invalid_input(message: impl Into<String>) -> CommandError {
 pub(crate) fn database_unavailable() -> CommandError {
     CommandError {
         code: "DatabaseError".to_string(),
-        message: "database is unavailable".to_string(),
+        // The startup failure (e.g. a modified migration) is logged
+        // with its real reason — point there, or the UI can never
+        // say more than "unavailable".
+        message: "database is unavailable — the startup error is in the app log (RepoNyx/logs/reponyx.log.<date>)".to_string(),
     }
 }
 

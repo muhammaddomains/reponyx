@@ -122,9 +122,9 @@ export default function Repositories() {
   const refresh = useCallback(async () => {
     const [reposResult, accountsResult] = await Promise.allSettled([
       listRepositories({
-        account_id: accountFilter === "all" ? null : accountFilter,
-        archive_status: statusFilter === "all" ? null : statusFilter,
-        sync_enabled:
+        accountId: accountFilter === "all" ? null : accountFilter,
+        archiveStatus: statusFilter === "all" ? null : statusFilter,
+        syncEnabled:
           syncFilter === "all" ? null : syncFilter === "enabled",
         search: search.trim() ? search.trim() : null,
         limit: PAGE_SIZE,
@@ -148,9 +148,9 @@ export default function Repositories() {
     setLoadingMore(true);
     try {
       const page = await listRepositories({
-        account_id: accountFilter === "all" ? null : accountFilter,
-        archive_status: statusFilter === "all" ? null : statusFilter,
-        sync_enabled:
+        accountId: accountFilter === "all" ? null : accountFilter,
+        archiveStatus: statusFilter === "all" ? null : statusFilter,
+        syncEnabled:
           syncFilter === "all" ? null : syncFilter === "enabled",
         search: search.trim() ? search.trim() : null,
         limit: PAGE_SIZE,
@@ -261,7 +261,7 @@ export default function Repositories() {
     await run(
       async () => {
         for (const id of ids) {
-          await updateRepository({ id, sync_enabled: enabled });
+          await updateRepository({ id, syncEnabled: enabled });
         }
       },
       () => {
@@ -579,7 +579,7 @@ export default function Repositories() {
                               () =>
                                 updateRepository({
                                   id: repository.id,
-                                  sync_enabled: !repository.syncEnabled,
+                                  syncEnabled: !repository.syncEnabled,
                                 }),
                               () =>
                                 setNotice(
@@ -602,7 +602,7 @@ export default function Repositories() {
                               () =>
                                 updateRepository({
                                   id: repository.id,
-                                  sync_mode: e.target.value as SyncMode,
+                                  syncMode: e.target.value as SyncMode,
                                 }),
                               () =>
                                 setNotice(

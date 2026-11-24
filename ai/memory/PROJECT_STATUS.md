@@ -44,6 +44,38 @@ only (the gdk blocker); the real desktop compile check is the
 user's Windows build. Remaining honest gaps are listed in the
 fixes section. Work is on `main` going forward.
 
+## Windows first-run bugs (2026-11-23)
+
+First real Windows run (`target\debug\reponyx-desktop.exe`):
+every DB-backed page showed "DatabaseError: database is
+unavailable", Add PAT failed with `missing required key
+accountType`, and the Agent page showed "[object Object]".
+
+- **Invoke args are camelCase, not snake_case.** Tauri 2
+  defaults to `ArgumentCase::Camel` (proven in
+  `tauri-macros-2.7.6` source and by the live error); the
+  api-client sent snake_case keys, so all multi-word-arg
+  commands were broken. Fixed in `packages/api-client` +
+  page call sites; `api-client.test.ts` asserts the keys
+  against a mocked `invoke`.
+- **Agent page "[object Object]"**: it was the only page
+  without the `commandMessage` helper. Added it (covered by
+  `Agent.test.tsx`).
+- **Database failure**: the user's log showed `migration 1
+  was previously applied but has been modified`. The only
+  difference is the comment rename `-- Gitora V1` →
+  `-- RepoNyx V1` in `0001_init.sql` (`49a44bf` vs `main`);
+  sqlx checksums the whole file including comments, and the
+  user's DB was created by a pre-rename build. Machine fix:
+  delete `%APPDATA%\RepoNyx\data\reponyx.sqlite*` (DB empty)
+  and restart. `database_unavailable()` now points at the app
+  log. New rule: never modify an applied migration.
+- **Agent not running**: a desktop-only build never builds
+  `reponyx-agent.exe`, so `resolve_agent_exe` finds nothing
+  next to the desktop exe. Source-checkout fix: `cargo build
+  -p reponyx-background-agent`. Release-workflow bundling of
+  the agent is still an open packaging gap.
+
 ## Completed tasks
 
 - **Phase 9 — LFS sync (actual, 2026-11-21, assistant,

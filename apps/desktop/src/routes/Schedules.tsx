@@ -242,8 +242,8 @@ export default function Schedules() {
       () =>
         updateSchedule({
           id: editing.id,
-          interval_type: editing.intervalType,
-          interval_value: editing.intervalValue.trim(),
+          intervalType: editing.intervalType,
+          intervalValue: editing.intervalValue.trim(),
           timezone: editing.timezone.trim(),
           enabled: editing.enabled,
         }),
@@ -267,9 +267,9 @@ export default function Schedules() {
     setPreviewBusyId(schedule.id);
     try {
       const runs = await previewNextRuns({
-        schedule_id: schedule.id,
+        scheduleId: schedule.id,
         count: 5,
-        display_timezone: schedule.timezone,
+        displayTimezone: schedule.timezone,
       });
       setPreviews((current) => ({ ...current, [schedule.id]: runs }));
     } catch (e: unknown) {

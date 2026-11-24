@@ -5,6 +5,45 @@ All notable changes to RepoNyx are documented here. Format follows
 
 ## [Unreleased]
 
+### Fixed — Windows first-run bugs (2026-11-23)
+
+Found from the user's screenshots + log of the first real Windows
+run (`target\debug\reponyx-desktop.exe`):
+
+- Tauri 2 commands take **camelCase** argument names by default
+  (`tauri-macros` `ArgumentCase::Camel`); the api-client sent the
+  Rust snake_case parameter names, so every command with a
+  multi-word argument failed with `missing required key
+  <camelCase>` (first seen: `add_pat_account_command` missing
+  `accountType`). All invoke keys in `packages/api-client` are now
+  camelCase, the input types and the page call sites match, and
+  the wrong "snake_case, matching the Rust parameter names"
+  comments are corrected. Regression tests:
+  `apps/desktop/src/api-client.test.ts` mocks `invoke` and
+  asserts the keys.
+- The Agent page was the only page without the `commandMessage`
+  helper, so a backend error rendered as "[object Object]".
+  It now formats `{ code, message }` like the other pages
+  (`Agent.test.tsx` covers it).
+- `database is unavailable` now points at the app log, where the
+  startup error is recorded with its real reason.
+- Root cause of the database failure on the user's machine:
+  sqlx refused to open the DB because migration 1's checksum
+  changed — the only difference between the applied migration
+  and the current file is the rename of the comment `-- Gitora
+  V1` → `-- RepoNyx V1` (commit `49a44bf` vs `main`). The user's
+  DB was created by a pre-rename build. Fix on that machine:
+  delete `%APPDATA%\RepoNyx\data\reponyx.sqlite*` (the DB is
+  empty: no accounts, repos, or schedules yet) and restart.
+  Rule added to `AGENTS.md`: never modify an applied migration;
+  add a new one.
+- The agent binary is not built by a desktop-only build, so
+  "Start agent" cannot find `reponyx-agent.exe` next to the
+  desktop exe. On a source checkout run `cargo build -p
+  reponyx-background-agent` first. The release workflow does
+  not bundle the agent yet — open packaging gap, see
+  `docs/qa/windows-verification.md`.
+
 ### Fixed — Phase 10 Windows verification, VM part (2026-11-23)
 
 - Deleted the agent's dead duplicate `windows_task.rs` (zero

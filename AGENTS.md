@@ -97,6 +97,17 @@ Planned, not yet created: `crates/testing`.
 
 ## Hard rules
 
+- Tauri 2 commands take **camelCase** argument names by default
+  (`tauri-macros` `ArgumentCase::Camel`). The frontend must send
+  camelCase keys in every `invoke` call — never the Rust
+  snake_case parameter names (proven 2026-11-23: the
+  snake_case keys broke every multi-word-arg command on the
+  first Windows run). Response DTOs are camelCase too.
+- Never modify an applied SQL migration — sqlx checksums the
+  whole file including comments (proven 2026-11-23: the
+  `-- Gitora V1` → `-- RepoNyx V1` comment rename in
+  `0001_init.sql` broke the user's existing database).
+  Schema changes always go in a new migration file.
 - Git via argument arrays only; no shell; timeouts + cancellation; redact
   secrets from logs/process output; never put tokens in URLs or argv.
 - Never trust repo names as paths — validate in `git-engine` path module.

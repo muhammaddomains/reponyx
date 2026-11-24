@@ -11,6 +11,21 @@ import {
 } from "@reponyx/api-client";
 import type { AgentHealth } from "@reponyx/shared";
 
+/** Same shape as the other pages: Tauri rejects with the backend's
+ *  serialized error value ({ code, message }), not an Error — without
+ *  this, `String(error)` renders "[object Object]". */
+function commandMessage(error: unknown): string {
+  if (typeof error === "object" && error !== null) {
+    const record = error as { code?: unknown; message?: unknown };
+    if (typeof record.message === "string") {
+      return typeof record.code === "string"
+        ? `${record.code}: ${record.message}`
+        : record.message;
+    }
+  }
+  return error instanceof Error ? error.message : String(error);
+}
+
 export default function Agent() {
   const [health, setHealth] = useState<AgentHealth | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -24,7 +39,7 @@ export default function Agent() {
       setHealth(h);
     } catch (e) {
       setHealth(null);
-      setError(e instanceof Error ? e.message : String(e));
+      setError(commandMessage(e));
     }
   }, []);
 
@@ -42,7 +57,7 @@ export default function Agent() {
       await action();
       await refresh();
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
+      setError(commandMessage(e));
     } finally {
       setBusy(false);
     }

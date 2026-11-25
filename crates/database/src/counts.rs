@@ -2,11 +2,12 @@
 //! All counts are real queries against the live database; a fresh
 //! database returns zeros.
 
-use reponyx_core::DashboardCounts;
+use crate::common::map_error;
+use reponyx_core::{DashboardCounts, RepoNyxError};
 use sqlx::{Row, SqlitePool};
 
 /// Counts for the Overview dashboard.
-pub async fn dashboard_counts(pool: &SqlitePool) -> Result<DashboardCounts, sqlx::Error> {
+pub async fn dashboard_counts(pool: &SqlitePool) -> Result<DashboardCounts, RepoNyxError> {
     // Plain `query` (not `query!`): the compile-time-checked macro would
     // require a live database at build time. Counts are simple integers.
     let row = sqlx::query(
@@ -21,7 +22,8 @@ pub async fn dashboard_counts(pool: &SqlitePool) -> Result<DashboardCounts, sqlx
         "#,
     )
     .fetch_one(pool)
-    .await?;
+    .await
+    .map_err(map_error)?;
     Ok(DashboardCounts {
         accounts: row.get("accounts"),
         repositories: row.get("repositories"),

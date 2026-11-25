@@ -5,6 +5,19 @@ All notable changes to RepoNyx are documented here. Format follows
 
 ## [Unreleased]
 
+### Fixed — CI windows-build compile errors in the desktop crate (2026-11-25, found by run #83 on 7742d28)
+
+- `dashboard_counts` now returns `RepoNyxError` (via the crate's
+  `map_error` helper) instead of raw `sqlx::Error`, so the desktop
+  `get_dashboard_counts` command's `?` converts through the
+  existing `From<RepoNyxError> for CommandError`; `lib.rs` now
+  imports `require_db` from `auth.rs`. Both errors blocked the
+  windows-build job only — the desktop crate does not compile on
+  Linux, so no local check catches them.
+- `register_agent_autostart_command` no longer warns about an
+  unused `app` on Windows (the parameter is only used on
+  non-Windows builds); renamed to `_app`.
+
 ### Added — Unified lifecycle: desktop starts/stops agent + broker; installer bundles all three (2026-11-25, Phase 1 of the production audit)
 
 - The desktop now brings its services up with it and tears them

@@ -379,7 +379,7 @@ fn resolve_agent_exe(app: Option<&AppHandle>) -> Option<PathBuf> {
 /// logon. On Linux/macOS the entry still points at the agent
 /// (a GUI desktop app is not a systemd/launchd service).
 #[tauri::command]
-pub async fn register_agent_autostart_command(app: AppHandle) -> CommandResult<String> {
+pub async fn register_agent_autostart_command(_app: AppHandle) -> CommandResult<String> {
     #[cfg(windows)]
     {
         // The desktop's own executable: autostart launches the app,
@@ -393,7 +393,7 @@ pub async fn register_agent_autostart_command(app: AppHandle) -> CommandResult<S
     }
     #[cfg(not(windows))]
     {
-        let exe = resolve_agent_exe(Some(&app)).ok_or_else(|| CommandError {
+        let exe = resolve_agent_exe(Some(&_app)).ok_or_else(|| CommandError {
             code: "InternalError".into(),
             message: "reponyx-agent executable not found".into(),
         })?;

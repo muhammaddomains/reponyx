@@ -19,7 +19,7 @@ mod storage;
 mod synchronization;
 mod tray;
 mod commands {
-    use crate::auth::CommandResult;
+    use crate::auth::{CommandResult, require_db};
     use reponyx_core::{DashboardCounts, GitStatus};
     use reponyx_database::Database;
     use serde::Serialize;

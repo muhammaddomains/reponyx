@@ -24,6 +24,7 @@ pub mod rate_limit;
 pub mod recovery;
 pub mod retry;
 pub mod runner;
+pub mod storage_migrate;
 
 pub use config::QueueConfig;
 pub use credentials_resolve::{
@@ -38,3 +39,4 @@ pub use rate_limit::RateLimiter;
 pub use recovery::{RecoveryReport, recover_interrupted_jobs};
 pub use retry::{FailureClass, classify_error, compute_backoff, should_retry};
 pub use runner::{JobContext, JobRunResult, JobRunner, MockJobRunner, MockOutcome};
+pub use storage_migrate::{StorageMigrationReport, migrate_storage_root};

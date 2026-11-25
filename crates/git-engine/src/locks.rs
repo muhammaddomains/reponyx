@@ -215,6 +215,37 @@ impl Default for RepoLockManager {
     }
 }
 
+/// Remove stale git lock files left by a killed git process in a
+/// git directory: `index.lock`, `packed-refs.lock`, and any
+/// `refs/**/*.lock` (a killed fetch leaves those behind, and the
+/// next fetch fails with "cannot lock ref" until they are gone).
+///
+/// Only call after the git child was killed and reaped, while the
+/// per-repository lock is held — otherwise a live git process
+/// could be mid-write and its lock would be stolen. Best-effort:
+/// failures are ignored so the original error is never masked.
+/// The lock files themselves are never removed by health checks —
+/// only here, after a kill this process performed.
+pub fn remove_stale_git_locks(git_dir: &Path) {
+    let _ = std::fs::remove_file(git_dir.join("index.lock"));
+    let _ = std::fs::remove_file(git_dir.join("packed-refs.lock"));
+    // Walk refs/ for *.lock files (e.g. refs/heads/main.lock).
+    let mut stack = vec![git_dir.join("refs")];
+    while let Some(dir) = stack.pop() {
+        let Ok(entries) = std::fs::read_dir(&dir) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                stack.push(path);
+            } else if path.extension().is_some_and(|ext| ext == "lock") {
+                let _ = std::fs::remove_file(&path);
+            }
+        }
+    }
+}
+
 fn locked(path: &Path, reason: &str) -> RepoNyxError {
     RepoNyxError::new(
         ErrorCode::RepositoryLocked,
@@ -349,6 +380,36 @@ mod tests {
         let _guard = first.acquire(&repo, Duration::from_secs(5)).await.unwrap();
         let err = second.try_acquire(&repo).await.unwrap_err();
         assert_eq!(err.code, ErrorCode::RepositoryLocked);
+    }
+
+    #[test]
+    fn stale_git_locks_removed_only_lock_files() {
+        let dir = tempfile::tempdir().unwrap();
+        let git_dir = dir.path().join("repo.git");
+        std::fs::create_dir_all(git_dir.join("refs").join("heads")).unwrap();
+        std::fs::write(git_dir.join("index.lock"), "stale").unwrap();
+        std::fs::write(git_dir.join("packed-refs.lock"), "stale").unwrap();
+        std::fs::write(
+            git_dir.join("refs").join("heads").join("main.lock"),
+            "stale",
+        )
+        .unwrap();
+        std::fs::write(git_dir.join("HEAD"), "ref: refs/heads/main\n").unwrap();
+        std::fs::write(git_dir.join("packed-refs"), "refs\n").unwrap();
+        remove_stale_git_locks(&git_dir);
+        assert!(!git_dir.join("index.lock").exists());
+        assert!(!git_dir.join("packed-refs.lock").exists());
+        assert!(
+            !git_dir
+                .join("refs")
+                .join("heads")
+                .join("main.lock")
+                .exists()
+        );
+        assert!(git_dir.join("HEAD").exists());
+        assert!(git_dir.join("packed-refs").exists());
+        // Missing locks are not an error.
+        remove_stale_git_locks(&git_dir);
     }
 
     #[test]

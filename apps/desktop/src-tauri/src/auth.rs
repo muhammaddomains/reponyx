@@ -294,9 +294,10 @@ fn broker_client(auth: &AuthState) -> CommandResult<BrokerClient> {
 pub async fn list_accounts_command(
     db: State<'_, Option<Database>>,
 ) -> CommandResult<Vec<AccountDto>> {
-    let Some(database) = db.inner() else {
-        return Ok(vec![]);
-    };
+    // Audit B5: a dead database must fail loudly, never answer
+    // with a silent empty list that makes the Accounts page look
+    // like the user has no accounts at all.
+    let database = require_db(&db)?;
     let accounts = list_accounts(&database.pool).await?;
     Ok(accounts.iter().map(AccountDto::from).collect())
 }

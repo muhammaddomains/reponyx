@@ -14,14 +14,14 @@ use std::time::Duration;
 use tokio::sync::{Semaphore, broadcast};
 use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
-use tracing::{debug, error, info};
+use tracing::{debug, error, info, warn};
 use uuid::Uuid;
 
 use crate::config::QueueConfig;
 use crate::executor::{ExecutionOutcome, execute_claimed_job};
 use crate::progress::{QueueStats, SyncProgressEvent};
 use crate::rate_limit::RateLimiter;
-use crate::recovery::recover_interrupted_jobs;
+use crate::recovery::{RecoveryReport, recover_interrupted_jobs};
 use crate::runner::JobRunner;
 
 /// Live handle to a running pool.
@@ -46,18 +46,33 @@ pub struct WorkerPoolStats {
 pub struct WorkerPool;
 
 impl WorkerPool {
-    /// Recover abandoned jobs, then spawn `config.max_concurrency` workers.
+    /// Recover abandoned jobs, then spawn `config.max_concurrency` workers
+    /// plus the lease sweeper.
     pub async fn start(
         pool: SqlitePool,
         runner: Arc<dyn JobRunner>,
         config: QueueConfig,
     ) -> Result<QueueHandle, RepoNyxError> {
+        // A failed startup recovery must not take the agent down
+        // (audit AG-F3): log it and start anyway — the sweeper
+        // retries the same pass on its next tick.
         let recovery =
-            recover_interrupted_jobs(&pool, config.recovery_grace, config.max_attempts).await?;
+            match recover_interrupted_jobs(&pool, config.recovery_grace, config.max_attempts).await
+            {
+                Ok(report) => report,
+                Err(e) => {
+                    warn!(
+                        error = %e.message,
+                        "startup recovery failed; pool starting anyway, sweeper will retry"
+                    );
+                    RecoveryReport::default()
+                }
+            };
         info!(
             requeued = recovery.requeued,
             failed_only = recovery.failed_only,
             examined = recovery.examined,
+            errors = recovery.errors,
             "sync-queue recovery complete"
         );
 
@@ -79,7 +94,7 @@ impl WorkerPool {
         // each worker holds one permit for the whole job).
         let permits = Arc::new(Semaphore::new(config.max_concurrency));
 
-        let mut joins = Vec::with_capacity(config.max_concurrency);
+        let mut joins = Vec::with_capacity(config.max_concurrency + 1);
         for worker_id in 0..config.max_concurrency {
             let args = WorkerArgs {
                 pool: pool.clone(),
@@ -95,6 +110,21 @@ impl WorkerPool {
             joins.push(tokio::spawn(async move {
                 worker_loop(worker_id, args).await;
             }));
+        }
+
+        // Lease sweeper: startup recovery alone cannot reclaim a job
+        // stranded by a crash that happens *after* startup (audit
+        // B9). The sweeper re-runs the same pass every
+        // `sweep_interval`; a live job is never touched — workers
+        // renew their lease every `lease / 3`, so only a truly
+        // abandoned job's lease expires. Ends with the pool.
+        if !config.sweep_interval.is_zero() {
+            joins.push(tokio::spawn(sweep_loop(
+                pool.clone(),
+                config.clone(),
+                events.clone(),
+                cancel.child_token(),
+            )));
         }
 
         info!(
@@ -398,6 +428,44 @@ async fn heartbeat_loop(
                         debug!(job_id = %job_id, error = %e.message, "heartbeat failed; will retry next tick");
                     }
                 }
+            }
+        }
+    }
+}
+
+/// Re-run the recovery pass every `sweep_interval` while the pool
+/// is alive, so a job stranded by a crash *after* startup is
+/// reclaimed within one interval instead of staying `running`
+/// forever (audit B9). A failed pass is logged and retried on the
+/// next tick; the sweeper never takes the pool down with it.
+async fn sweep_loop(
+    pool: SqlitePool,
+    config: QueueConfig,
+    events: broadcast::Sender<SyncProgressEvent>,
+    cancel: CancellationToken,
+) {
+    loop {
+        tokio::select! {
+            _ = cancel.cancelled() => break,
+            _ = tokio::time::sleep(config.sweep_interval) => {}
+        }
+        match recover_interrupted_jobs(&pool, config.recovery_grace, config.max_attempts).await {
+            Ok(report) => {
+                if report.requeued > 0 || report.failed_only > 0 || report.errors > 0 {
+                    info!(
+                        requeued = report.requeued,
+                        failed_only = report.failed_only,
+                        errors = report.errors,
+                        "lease sweeper recovered stranded jobs"
+                    );
+                    let _ = events.send(SyncProgressEvent::Recovered {
+                        requeued: report.requeued,
+                        failed: report.failed_only,
+                    });
+                }
+            }
+            Err(e) => {
+                warn!(error = %e.message, "lease sweeper pass failed; will retry next tick");
             }
         }
     }

@@ -50,12 +50,11 @@ mod commands {
     pub async fn get_dashboard_counts(
         db: State<'_, Option<Database>>,
     ) -> CommandResult<DashboardCounts> {
-        Ok(match db.inner() {
-            Some(database) => reponyx_database::dashboard_counts(&database.pool)
-                .await
-                .unwrap_or_default(),
-            None => DashboardCounts::default(),
-        })
+        // Audit DB-M4: a failed count query must reach the
+        // Overview page's error banner, never silently render
+        // as all-zero counts.
+        let database = require_db(&db)?;
+        Ok(reponyx_database::dashboard_counts(&database.pool).await?)
     }
 }
 
@@ -97,8 +96,10 @@ pub fn run() {
     diagnostics::apply_pending_restore(&data_dir);
 
     // Open (and migrate) the database before the UI starts. A failure
-    // here must not crash the app: the UI reports zero counts and the
-    // error is logged; the database layer is retried on next launch.
+    // here must not crash the app: commands fail loudly via
+    // `require_db` so the UI shows the error instead of empty lists,
+    // and the error is logged; the database layer is retried on next
+    // launch.
     let db_path = data_dir.join("data").join("reponyx.sqlite");
     let db = tauri::async_runtime::block_on(async { open_database(&db_path).await });
     let db_state: Option<reponyx_database::Database> = match db {
@@ -249,22 +250,8 @@ pub fn run() {
 }
 
 /// Platform app-data directory for RepoNyx, without depending on Tauri's
-/// path resolver (needed before the app is built).
+/// path resolver (needed before the app is built). Single source of
+/// truth: `reponyx_database::paths` (audit DB-M3).
 fn dirs_data_dir() -> PathBuf {
-    if let Some(dir) = std::env::var_os("REPONYX_DATA_DIR") {
-        return PathBuf::from(dir);
-    }
-    #[cfg(target_os = "windows")]
-    {
-        if let Some(appdata) = std::env::var_os("APPDATA") {
-            return PathBuf::from(appdata).join("RepoNyx");
-        }
-    }
-    if let Some(home) = std::env::var_os("HOME") {
-        return PathBuf::from(home)
-            .join(".local")
-            .join("share")
-            .join("RepoNyx");
-    }
-    PathBuf::from(".reponyx-data")
+    reponyx_database::data_dir()
 }

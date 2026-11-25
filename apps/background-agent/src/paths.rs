@@ -1,31 +1,19 @@
 //! Shared data-directory resolution (must match the desktop app).
+//!
+//! Thin delegates to `reponyx_database::paths` — the rules live in
+//! exactly one place (audit DB-M3), so the agent and the desktop
+//! can never disagree about where the database is.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
-/// Same rules as `apps/desktop/src-tauri` so both processes share one DB.
 pub fn data_dir() -> PathBuf {
-    if let Some(dir) = std::env::var_os("REPONYX_DATA_DIR") {
-        return PathBuf::from(dir);
-    }
-    #[cfg(target_os = "windows")]
-    {
-        if let Some(appdata) = std::env::var_os("APPDATA") {
-            return PathBuf::from(appdata).join("RepoNyx");
-        }
-    }
-    if let Some(home) = std::env::var_os("HOME") {
-        return PathBuf::from(home)
-            .join(".local")
-            .join("share")
-            .join("RepoNyx");
-    }
-    PathBuf::from(".reponyx-data")
+    reponyx_database::data_dir()
 }
 
-pub fn db_path(data_dir: &std::path::Path) -> PathBuf {
-    data_dir.join("data").join("reponyx.sqlite")
+pub fn db_path(data_dir: &Path) -> PathBuf {
+    reponyx_database::db_path(data_dir)
 }
 
-pub fn log_dir(data_dir: &std::path::Path) -> PathBuf {
-    data_dir.join("logs")
+pub fn log_dir(data_dir: &Path) -> PathBuf {
+    reponyx_database::log_dir(data_dir)
 }

@@ -53,6 +53,16 @@ pub enum SyncProgressEvent {
         job_id: Uuid,
         repository_id: Uuid,
     },
+    /// A non-fatal problem worth showing the user: the job itself
+    /// succeeded, but part of the work was skipped. Audit G5: a
+    /// repository with LFS pointers used to sync "successfully"
+    /// while its large files were silently missing because
+    /// git-lfs was not installed — now the UI gets a warning.
+    JobWarning {
+        job_id: Uuid,
+        repository_id: Uuid,
+        message: String,
+    },
     Stats(QueueStats),
     Recovered {
         requeued: usize,

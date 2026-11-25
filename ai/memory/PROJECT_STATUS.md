@@ -83,6 +83,48 @@ workflow; a mid-job quit can still orphan git children until
 Phase 2's process-group kill (G2). Next: Phase 2 crash recovery
 & data integrity (incl. the broker flake test fix).
 
+## Phase 2 crash recovery & data integrity (2026-11-25)
+
+Built the same day Phase 1 was pushed, on the user's one-word
+"phase 2". Closes blockers B5–B10: partial clones move aside and
+re-clone (never deleted) with stale-lock cleanup and working-clone
+verification; the queue sweeps stranded jobs every 60 s and
+recovery is per-job fault-isolated (one bad job no longer aborts
+the pass; a startup recovery failure no longer takes the agent
+down); cancelling a sync kills the whole git process tree
+(process groups via `nix` on Unix, `taskkill /T` on Windows);
+`open_database` writes a `VACUUM INTO` pre-migration backup
+(newest 3) and runs `PRAGMA integrity_check` before migrating,
+failing loudly with the path and the restore instruction; the
+Accounts command requires the DB (`require_db`) and list
+skips bad rows; dashboard counts propagate errors; one
+data-directory rule lives in `reponyx-database` and all three
+processes delegate to it; `storage.root` changes move the
+archives under the repo lock with a summary; a fetch against a
+missing archive enqueues the re-clone; missing git-lfs surfaces
+as a `job_warning` on the Synchronization page.
+Verified 2026-11-25: `cargo fmt --check` OK, clippy (workspace
+excl. desktop) clean, `cargo test --workspace --exclude
+reponyx-desktop` 449 passed / 0 failed (64 suites; the broker
+flake recurred once in a full-suite run — see below), typecheck
+clean, frontend tests 73 passed / 0 failed, `pnpm -r lint`
+clean, vite build OK, Semgrep (exact CI command) 0 findings,
+`cargo audit` clean (nix 0.32 added for the process-group kill).
+Honest limits: desktop Rust is compile-checked only by CI
+windows-build; the storage migration and the LFS warning are
+verified by unit/integration tests only, not on Windows yet.
+Correction: during Phase 2 verification the agent deleted the
+whole `crates/database/tests/` directory (13 integration-test
+files) while removing a probe test file — caught by the test
+count dropping 433 → 369, restored from HEAD, count back to
+449. The broker flake test (`broker_logs_never_contain_a_token`)
+still failed once in a full-suite run after the first
+(`current_thread`) fix, so the test was rewritten: the capture
+is now the process-global default and the mint uses a unique
+installation id — deterministic by construction, not by thread
+luck; it must survive repeated full-suite runs before the flake
+is called fixed.
+
 ## Windows first-run bugs (2026-11-23)
 
 First real Windows run (`target\debug\reponyx-desktop.exe`):

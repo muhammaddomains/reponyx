@@ -8,9 +8,9 @@
 //! theirs) and `ui.theme` is applied by the frontend on startup.
 //! `sync.concurrency` is read by the queue at agent start
 //! (clamped 1..=10 there too); `storage.root` takes effect after
-//! the agent restarts, and existing archives stay at the old
-//! location — the page says so, rather than pretending a move
-//! happens. `notifications.enabled` is read by the frontend's sync
+//! the agent restarts, and changing it moves the existing archives
+//! to the new root (audit ST-M1) — the migration summary comes back
+//! in the command result. `notifications.enabled` is read by the frontend's sync
 //! notification hook (on unless explicitly set to `false`).
 //!
 //! The desktop crate cannot be compiled on this VM (missing
@@ -91,6 +91,28 @@ pub async fn set_setting_command(
     let database = require_db(&db)?;
     let value = value.trim().to_string();
     validate_setting(key.trim(), &value)?;
-    let saved = set_setting(&database.pool, key.trim(), &value).await?;
+    let key = key.trim();
+    // Audit ST-M1: changing `storage.root` moves the existing
+    // archives to the new root. The setting is saved first, so a
+    // failed move never loses the new root; the migration then
+    // reports what moved and what stayed behind.
+    let old_root = if key == "storage.root" {
+        setting_value(database, "storage.root").await?
+    } else {
+        None
+    };
+    let saved = set_setting(&database.pool, key, &value).await?;
+    if key == "storage.root" {
+        let new_root = std::path::Path::new(&saved.value);
+        let old_root = old_root
+            .map(std::path::PathBuf::from)
+            .unwrap_or_else(crate::dirs_data_dir);
+        if old_root != new_root {
+            let report =
+                reponyx_sync_queue::migrate_storage_root(&database.pool, &old_root, new_root).await;
+            tracing::info!(summary = %report.summary(), "storage root migrated");
+            return Ok(format!("Storage root saved. {}", report.summary()));
+        }
+    }
     Ok(saved.value)
 }

@@ -55,22 +55,10 @@ impl From<AgentStatus> for AgentStatusView {
 }
 
 pub(crate) fn data_dir() -> PathBuf {
-    if let Some(dir) = std::env::var_os("REPONYX_DATA_DIR") {
-        return PathBuf::from(dir);
-    }
-    #[cfg(target_os = "windows")]
-    {
-        if let Some(appdata) = std::env::var_os("APPDATA") {
-            return PathBuf::from(appdata).join("RepoNyx");
-        }
-    }
-    if let Some(home) = std::env::var_os("HOME") {
-        return PathBuf::from(home)
-            .join(".local")
-            .join("share")
-            .join("RepoNyx");
-    }
-    PathBuf::from(".reponyx-data")
+    // Single source of truth: `reponyx_database::paths` (audit
+    // DB-M3). The desktop, the agent, and the broker must all
+    // resolve the same directory or they open different databases.
+    reponyx_database::data_dir()
 }
 
 fn client() -> Result<IpcClient, CommandError> {

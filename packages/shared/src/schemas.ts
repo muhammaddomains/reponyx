@@ -403,4 +403,10 @@ export const syncProgressEventSchema = z.discriminatedUnion("type", [
     job_id: z.string(),
     repository_id: z.string(),
   }),
+  z.object({
+    type: z.literal("job_warning"),
+    job_id: z.string(),
+    repository_id: z.string(),
+    message: z.string(),
+  }),
 ]);

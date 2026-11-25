@@ -35,7 +35,7 @@ pub use credentials::{Credential, CredentialHelper, reject_embedded_credentials}
 pub use detect::{GitInfo, LfsInfo, detect_git, detect_lfs, lfs_status, parse_git_version};
 pub use health::{HealthStatus, RepositoryDiagnosis, verify_repository};
 pub use locks::{RepoLockGuard, RepoLockManager};
-pub use mirror::{FetchSummary, MirrorInfo, mirror_clone, mirror_fetch};
+pub use mirror::{FetchSummary, MirrorInfo, mirror_clone, mirror_fetch, move_aside_partial_dest};
 pub use options::{DEFAULT_LOCK_TIMEOUT, DEFAULT_TIMEOUT, SyncOptions};
 pub use paths::{
     RepositoryLayout, owner_segment, validate_path_component, validate_repository_path,
@@ -43,5 +43,6 @@ pub use paths::{
 pub use progress::{ProgressEvent, parse_progress_line};
 pub use refs::{BranchInfo, RefKind, TagInfo, head_sha, list_branches, list_tags};
 pub use working::{
-    Divergence, WorkingState, WorkingStatus, divergence, working_fetch, working_status,
+    Divergence, WorkingState, WorkingStatus, divergence, is_valid_working_clone,
+    verify_working_clone, working_fetch, working_status,
 };

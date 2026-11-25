@@ -65,6 +65,77 @@ All notable changes to RepoNyx are documented here. Format follows
   instead of an empty list. New test: broker-down still renders
   the accounts.
 
+### Fixed — Crash recovery & data integrity (2026-11-25, Phase 2 of the production audit)
+
+- Partial clone is no longer a dead end (audit B8): a mirror or
+  working clone that fails midway is moved aside to
+  `<dest>.partial-<unix-secs>` (never deleted) and the clone
+  retries cleanly; a valid archive still errors with "already
+  exists — delete this folder to re-clone, or run a fetch
+  instead". Stale `index.lock` / `packed-refs.lock` / `refs/**`
+  locks are cleaned up before clone and fetch, and the working
+  clone is verified with `rev-parse` before its path is saved.
+- Stranded jobs are reclaimed (audit B9): the queue re-runs
+  recovery every 60 s (new `sweep_interval`, 0 disables), so a
+  job left `running` by a crash is re-queued within a minute
+  instead of sitting forever; a startup recovery failure now
+  logs a warning and the agent starts anyway (it used to take
+  the whole agent down), and one job's recovery failure no
+  longer aborts the whole pass — it is logged, counted in
+  `RecoveryReport.errors`, and the pass continues.
+- Cancelling a sync now kills the whole git process tree
+  (audit B10/G2): git children are spawned in their own process
+  group (`process_group(0)`) and the group is killed with
+  `SIGKILL` via the `nix` crate (Unix) or `taskkill /T /F`
+  (Windows) — `child.kill()` alone left `git-remote-https`,
+  `index-pack`, and `git-lfs` orphans holding locks. New test:
+  cancelling a clone kills the child and its descendants.
+- The database now fails loudly instead of silently empty
+  (audit B5/B6/B7, DB-B1): `open_database` writes a `VACUUM
+  INTO` pre-migration backup (newest 3 kept under
+  `<db-parent>/backups/`) and runs `PRAGMA integrity_check`
+  before migrating — a corrupt file now errors naming the
+  database path and the backup to restore, instead of opening
+  an empty database; a missing file logs a loud warning. The
+  Accounts command uses `require_db` (a dead database errors
+  instead of returning an empty list), one unreadable account
+  row is skipped with a warning instead of blanking the whole
+  list, and dashboard counts propagate errors to the Overview
+  page's error banner instead of rendering as all-zero.
+- One data-directory rule (audit DB-M3): `crates/database` now
+  owns `data_dir()` / `db_path()` / `log_dir()` and the agent,
+  the desktop, and the desktop's agent module all delegate to
+  it — the three copies can no longer drift into two
+  databases. Both processes log the resolved database path on
+  every start.
+- Changing `storage.root` moves the archives (audit ST-M1): the
+  new `migrate_storage_root` renames each existing mirror /
+  working side under the new root under the cross-process repo
+  lock, updates `local_path` for moved sides, and reports what
+  moved, what had no archive, and what failed (failures keep
+  the old path — nothing is deleted). The Settings page shows
+  the migration summary in its notice.
+- A fetch against a missing archive re-clones instead of
+  failing forever (audit ST-M2): the runner enqueues the
+  matching clone job(s) and fails with "archive missing;
+  re-clone enqueued" — the retry policy lets a later fetch
+  succeed once the clone lands.
+- Missing git-lfs is now a visible warning (audit G5): when a
+  repository has LFS pointers but git-lfs is not installed, the
+  sync emits a `job_warning` event and the Synchronization page
+  shows it in amber under the job ("large files were not
+  downloaded — pointer files only") instead of reporting a
+  silent success with placeholder files.
+- The broker log test is deterministic by construction
+  (`broker_logs_never_contain_a_token` installs the capturing
+  subscriber as the process-global default, so every thread's
+  log lines land in the buffer, and mints for a unique
+  installation id so the assertion names this test's own mint
+  line; the earlier thread-local capture and the
+  `current_thread` fix both still flaked in full-suite runs);
+  the process-group kill uses `nix` safe wrappers instead of
+  raw `libc` calls, so Semgrep reports 0 findings.
+
 ### Added — Auth Broker runs with the app; release ships all binaries (2026-11-23)
 
 - Root `package.json` now has `broker` (`cargo run -p

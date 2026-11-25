@@ -78,13 +78,30 @@ pub async fn working_fetch(
     if let Some(helper) = &opts.credential {
         helper.install(&mut cmd);
     }
-    let out = run_git_command_streaming(
+    let out = match run_git_command_streaming(
         &cmd,
         opts.timeout,
         opts.cancel.as_ref(),
         opts.progress.clone(),
     )
-    .await?;
+    .await
+    {
+        Ok(out) => out,
+        Err(e) => {
+            if matches!(
+                e.code,
+                ErrorCode::OperationCancelled | ErrorCode::OperationTimedOut
+            ) {
+                // We killed git (and its whole process tree), so no
+                // git process can still hold a lock. A killed fetch
+                // leaves ref locks behind — remove them now, while
+                // the per-repository lock is held, so the next
+                // fetch does not fail with "cannot lock ref".
+                crate::locks::remove_stale_git_locks(&git_dir);
+            }
+            return Err(e);
+        }
+    };
     if !out.success {
         return Err(map_git_failure(&cmd, &out));
     }
@@ -145,6 +162,37 @@ pub async fn divergence(
         ahead,
         behind,
     })
+}
+
+/// True when `path` looks like a usable working clone: a `.git`
+/// directory (or gitdir file) whose HEAD file exists. A clone
+/// killed mid-checkout has a `.git` but no HEAD — that is partial,
+/// not valid. Filesystem check only; it never runs git.
+pub fn is_valid_working_clone(path: &Path) -> bool {
+    match crate::refs::git_dir_of(path) {
+        Some(git_dir) => git_dir.join("HEAD").is_file(),
+        None => false,
+    }
+}
+
+/// Verify a working clone after a clone: `.git` + HEAD present and
+/// git itself can read the repository. Unlike the mirror check
+/// this does not count refs — a working clone with zero commits
+/// still has an unborn HEAD and is valid.
+pub async fn verify_working_clone(git: &Path, work_path: &Path) -> Result<(), RepoNyxError> {
+    if !is_valid_working_clone(work_path) {
+        return Err(RepoNyxError::new(
+            ErrorCode::RepositoryCorrupted,
+            "Cloned directory is not a valid working clone",
+        )
+        .with_details(format!("path={}", work_path.display())));
+    }
+    let cmd = crate::commands::build_rev_parse_git_dir(git, work_path);
+    let out = run_git_command(&cmd, REF_TIMEOUT, never_cancel()).await?;
+    if !out.success {
+        return Err(map_git_failure(&cmd, &out));
+    }
+    Ok(())
 }
 
 /// Require `path` to be a working clone (a `.git` directory or file).

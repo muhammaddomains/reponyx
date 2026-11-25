@@ -14,7 +14,7 @@ use crate::options::SyncOptions;
 use crate::process::{map_git_failure, run_git_command_streaming};
 use crate::refs::{head_sha, list_branches, list_ref_names, list_tags};
 use reponyx_core::{ErrorCode, RepoNyxError};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 /// What a successful mirror clone produced.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -45,9 +45,16 @@ pub struct FetchSummary {
 /// The destination's parent directories are created, the
 /// per-repository lock is held for the whole operation, and the
 /// result is verified (bare repository, HEAD present, refs listed).
-/// A destination that already exists and is not empty is rejected
-/// before Git runs. On failure the (possibly partial) destination is
-/// left in place for diagnosis — RepoNyx never deletes it.
+///
+/// A destination that already exists and holds a **valid** archive
+/// is rejected — RepoNyx never clobbers a good mirror. A
+/// destination that exists but is **partial** (a clone killed or
+/// crashed mid-way) is moved aside to
+/// `<dest>.partial-<timestamp>` and the clone proceeds, so a crash
+/// no longer leaves the repository stuck forever (audit B8: the
+/// old code rejected every re-clone with "already exists" and
+/// `local_path` was never set). The moved-aside data is kept for
+/// diagnosis, never deleted.
 pub async fn mirror_clone(
     git: &Path,
     url: &str,
@@ -62,18 +69,6 @@ pub async fn mirror_clone(
             "Mirror destination must not be empty",
         ));
     }
-    if dest.exists()
-        && dest
-            .read_dir()
-            .map(|mut d| d.next().is_some())
-            .unwrap_or(false)
-    {
-        return Err(RepoNyxError::new(
-            ErrorCode::InvalidInput,
-            "Mirror destination already exists and is not empty",
-        )
-        .with_details(format!("dest={}", dest.display())));
-    }
     if let Some(parent) = dest.parent()
         && !parent.as_os_str().is_empty()
     {
@@ -84,6 +79,35 @@ pub async fn mirror_clone(
     }
 
     let _lock = locks.acquire(dest, opts.lock_timeout).await?;
+
+    if dest.exists()
+        && dest
+            .read_dir()
+            .map(|mut d| d.next().is_some())
+            .unwrap_or(false)
+    {
+        match verify_mirror(git, dest).await {
+            Ok(_) => {
+                return Err(RepoNyxError::new(
+                    ErrorCode::InvalidInput,
+                    "Mirror destination already exists and holds a valid archive",
+                )
+                .with_details(format!(
+                    "dest={} — delete this folder to re-clone, or run a fetch instead",
+                    dest.display()
+                )));
+            }
+            Err(_) => {
+                if let Some(moved) = move_aside_partial_dest(dest)? {
+                    tracing::warn!(
+                        from = %dest.display(),
+                        to = %moved.display(),
+                        "moved aside a partial mirror clone; re-cloning"
+                    );
+                }
+            }
+        }
+    }
 
     let mut cmd = build_clone_mirror_progress(git, url, dest);
     if let Some(helper) = &opts.credential {
@@ -104,11 +128,12 @@ pub async fn mirror_clone(
                 ErrorCode::OperationCancelled | ErrorCode::OperationTimedOut
             ) {
                 // We killed git (and waited for it), so no git process
-                // can still hold the index lock; the transport helper
-                // never touches the index. Remove the leftover so the
+                // can still hold a lock; the transport helper never
+                // touches the refs. Remove the leftovers so the
                 // destination diagnoses as incomplete/corrupt instead
-                // of locked forever.
-                remove_leftover_index_lock(dest);
+                // of locked forever — and so the next clone can move
+                // it aside instead of failing on a stale ref lock.
+                crate::locks::remove_stale_git_locks(dest);
             }
             return Err(e);
         }
@@ -155,8 +180,8 @@ pub async fn mirror_fetch(
                 ErrorCode::OperationCancelled | ErrorCode::OperationTimedOut
             ) {
                 // Same cleanup as mirror_clone: we killed git, so a
-                // leftover index.lock is ours to remove.
-                remove_leftover_index_lock(mirror_path);
+                // leftover lock is ours to remove.
+                crate::locks::remove_stale_git_locks(mirror_path);
             }
             return Err(e);
         }
@@ -185,21 +210,52 @@ pub async fn mirror_fetch(
     })
 }
 
-/// Remove an `index.lock` a killed git left behind in a bare mirror.
-///
-/// Only called after the git child was killed and reaped (cancel or
-/// timeout), while the per-repository lock is still held — so no
-/// other RepoNyx operation and no live git process can hold it; the
-/// transport helper never touches the index. Without this, a
-/// cancelled clone can leave the destination reporting `Locked`
-/// forever (the health check never removes the file itself), and the
-/// next diagnosis never reaches the incomplete/corrupt states.
-/// Best-effort: a failed removal must not mask the original error.
-fn remove_leftover_index_lock(mirror_path: &Path) {
-    let lock = mirror_path.join("index.lock");
-    if lock.exists() {
-        let _ = std::fs::remove_file(&lock);
+/// Move a partial (invalid) clone destination aside so a re-clone
+/// can proceed: `<dest>.partial-<unix-seconds>` (with a counter
+/// when that name is taken). The partial data is kept for
+/// diagnosis, never deleted. Returns the path it was moved to, or
+/// `None` when the destination does not exist. Used by the mirror
+/// clone here and by the working clone in the queue runner.
+pub fn move_aside_partial_dest(dest: &Path) -> Result<Option<PathBuf>, RepoNyxError> {
+    if !dest.exists() {
+        return Ok(None);
     }
+    let secs = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    let base = dest.to_string_lossy();
+    for attempt in 0..100 {
+        let suffix = if attempt == 0 {
+            format!(".partial-{secs}")
+        } else {
+            format!(".partial-{secs}-{attempt}")
+        };
+        let target = PathBuf::from(format!("{base}{suffix}"));
+        if target.exists() {
+            continue;
+        }
+        match std::fs::rename(dest, &target) {
+            Ok(()) => return Ok(Some(target)),
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(e) => {
+                return Err(RepoNyxError::new(
+                    ErrorCode::GitCloneFailed,
+                    "Cannot move aside the partial clone destination",
+                )
+                .with_details(format!(
+                    "{} -> {}: {e}",
+                    dest.display(),
+                    target.display()
+                )));
+            }
+        }
+    }
+    Err(RepoNyxError::new(
+        ErrorCode::GitCloneFailed,
+        "Cannot move aside the partial clone destination (no free name)",
+    )
+    .with_details(format!("dest={}", dest.display())))
 }
 
 /// Verify a mirror is a bare repository with readable refs.
@@ -244,16 +300,44 @@ mod tests {
     }
 
     #[test]
-    fn leftover_index_lock_removal_only_removes_the_lock() {
+    fn move_aside_partial_renames_and_keeps_data() {
         let dir = tempfile::tempdir().unwrap();
-        let mirror = dir.path().join("mirror.git");
-        std::fs::create_dir(&mirror).unwrap();
-        std::fs::write(mirror.join("index.lock"), "stale").unwrap();
-        std::fs::write(mirror.join("HEAD"), "ref: refs/heads/main\n").unwrap();
-        remove_leftover_index_lock(&mirror);
-        assert!(!mirror.join("index.lock").exists());
-        assert!(mirror.join("HEAD").exists());
-        // Missing lock file is not an error.
-        remove_leftover_index_lock(&mirror);
+        let dest = dir.path().join("repo.git");
+        std::fs::create_dir(&dest).unwrap();
+        std::fs::write(dest.join("half-object"), "partial").unwrap();
+        let moved = move_aside_partial_dest(&dest).unwrap().unwrap();
+        assert!(!dest.exists());
+        assert!(moved.join("half-object").exists());
+        assert!(
+            moved
+                .file_name()
+                .unwrap()
+                .to_string_lossy()
+                .starts_with("repo.git.partial-")
+        );
+        // A missing destination is a no-op.
+        assert!(move_aside_partial_dest(&dest).unwrap().is_none());
+    }
+
+    #[test]
+    fn move_aside_partial_avoids_name_collision() {
+        let dir = tempfile::tempdir().unwrap();
+        let dest = dir.path().join("repo.git");
+        std::fs::create_dir(&dest).unwrap();
+        // Pre-create the first candidate name: the move must pick
+        // the next one instead of failing or overwriting.
+        let secs = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+        std::fs::create_dir(dir.path().join(format!("repo.git.partial-{secs}"))).unwrap();
+        let moved = move_aside_partial_dest(&dest).unwrap().unwrap();
+        assert!(
+            moved
+                .file_name()
+                .unwrap()
+                .to_string_lossy()
+                .starts_with(&format!("repo.git.partial-{secs}-"))
+        );
     }
 }

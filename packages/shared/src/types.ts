@@ -473,4 +473,10 @@ export type SyncProgressEvent =
       will_retry: boolean;
       next_attempt?: number | null;
     }
-  | { type: "job_cancelled"; job_id: string; repository_id: string };
+  | { type: "job_cancelled"; job_id: string; repository_id: string }
+  | {
+      type: "job_warning";
+      job_id: string;
+      repository_id: string;
+      message: string;
+    };

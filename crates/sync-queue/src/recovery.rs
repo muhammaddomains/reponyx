@@ -31,9 +31,22 @@ pub struct RecoveryReport {
     pub requeued: usize,
     pub failed_only: usize,
     pub skipped_fresh: usize,
+    /// Jobs that could not be recovered because their own rows
+    /// failed to update (bad row, transient DB lock). One bad job
+    /// never aborts the pass — it is counted here and the pass
+    /// moves on to the next job (audit AG-F3).
+    pub errors: usize,
 }
 
 /// Scan `running` jobs and recover abandoned ones.
+///
+/// Per-job fault-isolated: a failure to complete or requeue one
+/// job is logged and counted (`errors`), never returned — a single
+/// bad row or a transient DB lock used to fail the whole pass,
+/// and the pool start with it, taking the entire agent down
+/// (audit AG-F3). Only listing the running jobs can still fail
+/// the pass (the database itself is unreachable); the caller
+/// decides what that means.
 pub async fn recover_interrupted_jobs(
     pool: &SqlitePool,
     grace: Duration,
@@ -77,7 +90,7 @@ pub async fn recover_interrupted_jobs(
         );
 
         // Mark the abandoned attempt failed with history.
-        let _ = complete_job_with_history(
+        if let Err(e) = complete_job_with_history(
             pool,
             job.id,
             JobOutcome {
@@ -94,7 +107,12 @@ pub async fn recover_interrupted_jobs(
                 ),
             },
         )
-        .await?;
+        .await
+        {
+            warn!(job_id = %job.id, error = %e.message, "could not fail the abandoned job; skipping it this pass");
+            report.errors += 1;
+            continue;
+        }
 
         if job.attempt_count >= max_attempts as i32 {
             // Budget already exhausted: fail only, do not requeue.
@@ -115,7 +133,10 @@ pub async fn recover_interrupted_jobs(
                 report.requeued += 1;
                 info!(job_id = %job.id, "abandoned job failed; retry already queued");
             }
-            Err(e) => return Err(e),
+            Err(e) => {
+                warn!(job_id = %job.id, error = %e.message, "could not requeue the abandoned job; it stays failed this pass");
+                report.errors += 1;
+            }
         }
     }
 

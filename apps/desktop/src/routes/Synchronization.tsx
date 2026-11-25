@@ -93,6 +93,13 @@ export default function Synchronization() {
   const [progressByJob, setProgressByJob] = useState<
     Record<string, JobProgress>
   >({});
+  // Non-fatal warnings (e.g. git-lfs missing) arrive as job_warning
+  // events. They survive the job completing — the job itself
+  // succeeded, so the warning is the only trace — and are pruned
+  // when the job leaves the list on refresh.
+  const [warningsByJob, setWarningsByJob] = useState<Record<string, string>>(
+    {},
+  );
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -132,6 +139,14 @@ export default function Synchronization() {
       throw jobsResult.reason;
     }
     setJobs(jobsResult.value);
+    setWarningsByJob((current) => {
+      const visible = new Set(jobsResult.value.map((job) => job.id));
+      const next: Record<string, string> = {};
+      for (const [id, message] of Object.entries(current)) {
+        if (visible.has(id)) next[id] = message;
+      }
+      return next;
+    });
   }, [filter]);
 
   // Repository names only for the jobs actually on screen — the
@@ -172,6 +187,12 @@ export default function Synchronization() {
           setProgressByJob((current) => ({
             ...current,
             [progressEvent.job_id]: progressEvent,
+          }));
+          break;
+        case "job_warning":
+          setWarningsByJob((current) => ({
+            ...current,
+            [progressEvent.job_id]: progressEvent.message,
           }));
           break;
         case "job_completed":
@@ -433,6 +454,11 @@ export default function Synchronization() {
                 <p className="text-sm text-red-800 dark:text-red-300">
                   {job.errorCode ? `${job.errorCode}: ` : ""}
                   {job.errorMessage ?? "Unknown error."}
+                </p>
+              )}
+              {warningsByJob[job.id] && (
+                <p className="text-sm text-amber-800 dark:text-amber-300">
+                  {warningsByJob[job.id]}
                 </p>
               )}
               {job.status === "running" && progressByJob[job.id] && (

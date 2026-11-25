@@ -397,18 +397,6 @@ impl GitJobRunner {
         opts: SyncOptions,
     ) -> Result<(), RepoNyxError> {
         let dest = &layout.working_path;
-        if dest.exists()
-            && dest
-                .read_dir()
-                .map(|mut d| d.next().is_some())
-                .unwrap_or(false)
-        {
-            return Err(RepoNyxError::new(
-                ErrorCode::InvalidInput,
-                "Working clone destination already exists and is not empty",
-            )
-            .with_details(format!("dest={}", dest.display())));
-        }
         if let Some(parent) = dest.parent() {
             std::fs::create_dir_all(parent).map_err(|e| {
                 RepoNyxError::new(
@@ -419,8 +407,38 @@ impl GitJobRunner {
             })?;
         }
 
-        // Per-repo lock (same guarantee as mirror_clone).
+        // Per-repo lock (same guarantee as mirror_clone), held for
+        // the whole operation — including the exists check, so two
+        // concurrent clones of one repo cannot both pass it.
         let _guard = self.locks.acquire(dest, opts.lock_timeout).await?;
+
+        if dest.exists()
+            && dest
+                .read_dir()
+                .map(|mut d| d.next().is_some())
+                .unwrap_or(false)
+        {
+            // Same rule as mirror_clone (audit B8): a valid working
+            // clone is never clobbered; a partial one (killed
+            // mid-checkout) is moved aside and the clone proceeds.
+            if reponyx_git_engine::is_valid_working_clone(dest) {
+                return Err(RepoNyxError::new(
+                    ErrorCode::InvalidInput,
+                    "Working clone destination already exists and holds a valid checkout",
+                )
+                .with_details(format!(
+                    "dest={} — delete this folder to re-clone, or run a fetch instead",
+                    dest.display()
+                )));
+            }
+            if let Some(moved) = reponyx_git_engine::move_aside_partial_dest(dest)? {
+                tracing::warn!(
+                    from = %dest.display(),
+                    to = %moved.display(),
+                    "moved aside a partial working clone; re-cloning"
+                );
+            }
+        }
 
         let mut cmd = build_clone_working(git, &repo.clone_url, dest);
         if let Some(helper) = &opts.credential {
@@ -439,10 +457,31 @@ impl GitJobRunner {
         };
         let output = run_git_command(&cmd, opts.timeout, cancel_rx).await;
         watcher.abort();
-        let output = output?;
+        let output = match output {
+            Ok(output) => output,
+            Err(e) => {
+                if matches!(
+                    e.code,
+                    ErrorCode::OperationCancelled | ErrorCode::OperationTimedOut
+                ) {
+                    // Git was killed as a whole process tree; remove
+                    // the locks it left in the half-checked-out
+                    // `.git`, so the next clone can move it aside
+                    // instead of failing on a stale lock (audit G3).
+                    if let Some(git_dir) = reponyx_git_engine::refs::git_dir_of(dest) {
+                        reponyx_git_engine::locks::remove_stale_git_locks(&git_dir);
+                    }
+                }
+                return Err(e);
+            }
+        };
         if !output.success {
             return Err(map_git_failure(&cmd, &output));
         }
+
+        // A working clone reports success only when it verifies
+        // (mirror clones have had this check all along; audit G3).
+        reponyx_git_engine::verify_working_clone(git, dest).await?;
 
         set_local_path(&ctx.pool, repo.id, Some(dest)).await?;
         Ok(())
@@ -456,7 +495,57 @@ impl GitJobRunner {
         layout: &RepositoryLayout,
         opts: SyncOptions,
     ) -> Result<(), RepoNyxError> {
-        let path = resolve_existing_path(repo, layout)?;
+        // A fetch against a missing archive used to fail forever
+        // (audit ST-M2): nothing ever re-created the clone, so
+        // every retry failed the same way. Enqueue the clone(s)
+        // for this repo's mode and fail with a clear message; the
+        // retry policy lets a later fetch succeed once the clone
+        // lands.
+        let path = match resolve_existing_path(repo, layout) {
+            Ok(path) => path,
+            Err(e) if e.code == ErrorCode::RepositoryNotFound => {
+                match repo.sync_mode {
+                    SyncMode::Mirror => {
+                        self.enqueue_followup_job(ctx, repo, JobType::MirrorClone, "mirror-clone")
+                            .await;
+                    }
+                    SyncMode::Working => {
+                        self.enqueue_followup_job(
+                            ctx,
+                            repo,
+                            JobType::WorkingClone,
+                            "working-clone",
+                        )
+                        .await;
+                    }
+                    SyncMode::Both => {
+                        if !layout.mirror_path.is_dir() {
+                            self.enqueue_followup_job(
+                                ctx,
+                                repo,
+                                JobType::MirrorClone,
+                                "mirror-clone",
+                            )
+                            .await;
+                        }
+                        if !layout.working_path.is_dir() {
+                            self.enqueue_followup_job(
+                                ctx,
+                                repo,
+                                JobType::WorkingClone,
+                                "working-clone",
+                            )
+                            .await;
+                        }
+                    }
+                }
+                return Err(RepoNyxError::new(
+                    ErrorCode::RepositoryNotFound,
+                    format!("archive missing for {}; re-clone enqueued", repo.full_name),
+                ));
+            }
+            Err(e) => return Err(e),
+        };
         debug!(path = %path.display(), mode = ?repo.sync_mode, "fetch");
 
         match repo.sync_mode {
@@ -578,6 +667,28 @@ impl GitJobRunner {
         };
         let has_pointers = match has_lfs_pointers(git, &path).await {
             Ok(has) => has,
+            Err(e) if e.code == ErrorCode::GitLfsFailed => {
+                // Audit G5: git-lfs is not installed, so LFS objects
+                // cannot be fetched — the clone still "succeeds" with
+                // pointer files instead of real content. That used to
+                // be invisible (a debug log). Warn loudly and tell
+                // the UI, which shows it next to the job.
+                tracing::warn!(
+                    repo = %repo.full_name,
+                    "LFS step skipped: git-lfs is not installed; large files will stay as pointer files"
+                );
+                if let Some(progress) = &ctx.progress {
+                    let _ = progress.send(SyncProgressEvent::JobWarning {
+                        job_id: ctx.job.id,
+                        repository_id: repo.id,
+                        message: format!(
+                            "git-lfs is not installed, so the large files in {} were not downloaded (pointer files only). Install git-lfs and sync again.",
+                            repo.full_name
+                        ),
+                    });
+                }
+                return;
+            }
             Err(e) => {
                 debug!(repo = %repo.full_name, error = %e, "LFS step skipped: pointer check failed");
                 return;

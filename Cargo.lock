@@ -4115,6 +4115,7 @@ dependencies = [
  "sqlx",
  "tempfile",
  "tokio",
+ "tracing",
  "uuid",
 ]
 
@@ -4151,6 +4152,7 @@ version = "0.1.0"
 dependencies = [
  "fs2",
  "libc",
+ "nix",
  "reponyx-core",
  "reponyx-logging",
  "serde",

@@ -131,10 +131,24 @@ pub async fn list_accounts(pool: &SqlitePool) -> Result<Vec<Account>, RepoNyxErr
         .fetch_all(pool)
         .await
         .map_err(map_error)?;
-    rows.iter()
-        .map(row_to_account)
-        .collect::<Result<_, _>>()
-        .map_err(map_error)
+    // Per-row fault isolation (audit DB-M2): one bad row — a
+    // corrupt enum, UUID, or timestamp — used to fail the whole
+    // list via `.collect::<Result>()`, blanking the Accounts page
+    // even though the other accounts were fine. A bad row is now
+    // logged and skipped; the healthy accounts still load.
+    let mut accounts = Vec::with_capacity(rows.len());
+    for row in &rows {
+        match row_to_account(row) {
+            Ok(account) => accounts.push(account),
+            Err(e) => {
+                let id = row
+                    .try_get::<String, _>("id")
+                    .unwrap_or_else(|_| "<unknown>".to_string());
+                tracing::warn!(account_id = %id, error = %e, "skipping unreadable account row");
+            }
+        }
+    }
+    Ok(accounts)
 }
 
 pub async fn count_accounts(pool: &SqlitePool) -> Result<i64, RepoNyxError> {
@@ -283,4 +297,46 @@ pub async fn delete_account(pool: &SqlitePool, id: Uuid) -> Result<bool, RepoNyx
         .await
         .map_err(map_error)?;
     Ok(result.rows_affected() > 0)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    async fn open_test_db() -> (tempfile::TempDir, crate::Database) {
+        let dir = tempfile::tempdir().unwrap();
+        let db = crate::open_database(&dir.path().join("reponyx.sqlite"))
+            .await
+            .unwrap();
+        (dir, db)
+    }
+
+    fn new_account(username: &str) -> NewAccount {
+        NewAccount {
+            provider: Provider::GitHub,
+            provider_account_id: format!("prov-{username}"),
+            username: username.to_string(),
+            display_name: None,
+            label: None,
+            account_type: AccountType::Personal,
+            authentication_method: AuthenticationMethod::FineGrainedPat,
+        }
+    }
+
+    /// One bad row must not poison the whole list (audit DB-M2):
+    /// the corrupt row is skipped and the healthy account loads.
+    #[tokio::test]
+    async fn list_accounts_skips_an_unreadable_row() {
+        let (_dir, db) = open_test_db().await;
+        let pool = &db.pool;
+        create_account(pool, new_account("good")).await.unwrap();
+        create_account(pool, new_account("bad")).await.unwrap();
+        sqlx::query("UPDATE accounts SET connection_status = 'bogus' WHERE username = 'bad'")
+            .execute(pool)
+            .await
+            .unwrap();
+        let accounts = list_accounts(pool).await.unwrap();
+        assert_eq!(accounts.len(), 1);
+        assert_eq!(accounts[0].username, "good");
+    }
 }

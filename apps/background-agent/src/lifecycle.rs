@@ -67,6 +67,7 @@ pub async fn run_agent() -> Result<(), Box<dyn std::error::Error>> {
     );
 
     let database = open_database(&db_path(&data)).await?;
+    tracing::info!(path = %db_path(&data).display(), "database opened");
     let pool = database.pool.clone();
 
     // A real sync cannot run without a storage root (the V1 seed is

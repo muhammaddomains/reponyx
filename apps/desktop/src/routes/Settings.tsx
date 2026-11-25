@@ -138,8 +138,11 @@ export default function Settings() {
     setNotice(null);
     setSaving(key);
     try {
-      await setSetting(key, value);
-      setNotice(`${label} saved.`);
+      const result = await setSetting(key, value);
+      // `storage.root` returns the migration summary ("Storage root
+      // saved. Moved 3 archive(s)..."); other keys return the saved
+      // value, so the generic notice is used for those.
+      setNotice(key === "storage.root" ? result : `${label} saved.`);
       await refresh();
     } catch (e: unknown) {
       setError(commandMessage(e));
@@ -448,10 +451,9 @@ export default function Settings() {
                 {settings.storageRoot
                   ? "Where new archives are stored."
                   : "Not set explicitly — using the default data directory."}{" "}
-                Changing it does not move existing archives; they stay
-                where they are, and new syncs go to the new root after
-                the agent restarts. See the Storage page for what is
-                stored where.
+                Changing it moves existing archives to the new root; new
+                syncs go to the new root after the agent restarts. See the
+                Storage page for what is stored where.
               </p>
               <Button
                 variant="secondary"

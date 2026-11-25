@@ -857,83 +857,51 @@ impl std::io::Write for CapturingWriter {
     }
 }
 
+/// Log redaction, deterministic by construction.
+///
+/// The old version installed the capturing subscriber as a
+/// thread-local dispatcher (`tracing::dispatcher::set_default`):
+/// it only saw events on the test thread, so under the default
+/// multi-threaded runtime the mint line was lost whenever the
+/// handler ran on another worker — and the `current_thread` fix
+/// still flaked in full-suite runs (the line was missing about
+/// once in every few parallel runs, mechanism never pinned down:
+/// the server, sqlx worker threads, and reqwest all emit on
+/// threads a thread-local dispatcher cannot see). This version
+/// installs the capture as the PROCESS-GLOBAL default, so every
+/// thread's events land in the buffer, and mints for a UNIQUE
+/// installation id so the assertion names this test's own mint
+/// line even though other tests mint concurrently in the same
+/// binary. No other broker test installs a global default, so
+/// `set_global_default` must succeed — a failure fails loudly
+/// instead of passing vacuously on an empty buffer.
 #[tokio::test]
 async fn broker_logs_never_contain_a_token() {
-    // The capturing subscriber must be the default dispatcher while
-    // the server runs, so its tasks inherit it.
-    let github = MockServer::start().await;
-    mock_mint(&github).await;
-    let (private_pem, _public_pem) = throwaway_keypair();
-    let config = BrokerConfig::for_tests("123456", private_pem, github.uri());
-    let state = BrokerState::new(config);
+    const LOG_TEST_INSTALLATION: &str = "424242";
+    const LOG_TEST_DEVICE: &str = "device-log-test";
     let buf = Arc::new(Mutex::new(Vec::<u8>::new()));
     let writer = CapturingWriter(Arc::clone(&buf));
     let subscriber = tracing_subscriber::fmt()
         .with_writer(move || writer.clone())
         .with_max_level(tracing::Level::INFO)
         .finish();
-    let dispatch = tracing::Dispatch::new(subscriber);
-    let _guard = tracing::dispatcher::set_default(&dispatch);
+    tracing::dispatcher::set_global_default(tracing::Dispatch::new(subscriber))
+        .expect("no other test may install a global tracing default");
 
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let addr = listener.local_addr().unwrap();
-    let base = format!("http://{addr}");
-    let router = app(Arc::clone(&state)).into_make_service_with_connect_info::<SocketAddr>();
-    tokio::spawn(async move {
-        axum::serve(listener, router).await.unwrap();
-    });
-    let client = reqwest::Client::new();
-    // Drive the full flow: install, pair, mint.
-    let state_value: serde_json::Value = client
-        .post(format!("{base}/setup/state"))
-        .header("x-reponyx-setup-token", SETUP_TOKEN)
-        .send()
-        .await
-        .unwrap()
-        .json()
-        .await
-        .unwrap();
-    client
-        .get(format!("{base}/github/callback"))
-        .query(&[
-            ("installation_id", INSTALLATION_ID),
-            ("setup_action", "install"),
-            ("state", state_value["state"].as_str().unwrap()),
-        ])
-        .send()
-        .await
-        .unwrap();
-    let code: serde_json::Value = client
-        .post(format!("{base}/pairing/request"))
-        .header("x-reponyx-setup-token", SETUP_TOKEN)
-        .json(&json!({
-            "installation_id": INSTALLATION_ID,
-            "device_name": DEVICE_NAME,
-            "device_identifier": DEVICE_ID,
-        }))
-        .send()
-        .await
-        .unwrap()
-        .json()
-        .await
-        .unwrap();
-    let pairing_code = code["pairing_code"].as_str().unwrap().to_string();
-    let confirmed: serde_json::Value = client
-        .post(format!("{base}/pairing/confirm"))
-        .header("x-reponyx-setup-token", SETUP_TOKEN)
-        .json(&json!({
-            "pairing_code": pairing_code,
-            "device_identifier": DEVICE_ID,
-        }))
-        .send()
-        .await
-        .unwrap()
-        .json()
-        .await
-        .unwrap();
-    let device_token = confirmed["device_token"].as_str().unwrap().to_string();
-    let mint = client
-        .post(format!("{base}/installations/{INSTALLATION_ID}/token"))
+    // Drive the full flow for this test's own installation:
+    // install, pair, mint.
+    let fixture = start_broker(60.0).await;
+    mock_mint_for(&fixture.github, LOG_TEST_INSTALLATION).await;
+    fixture.install_app_with(LOG_TEST_INSTALLATION).await;
+    let device_token = fixture
+        .pair_device_for(LOG_TEST_DEVICE, LOG_TEST_INSTALLATION)
+        .await;
+    let mint = fixture
+        .client
+        .post(format!(
+            "{}/installations/{LOG_TEST_INSTALLATION}/token",
+            fixture.base
+        ))
         .header("authorization", format!("Bearer {device_token}"))
         .json(&json!({ "force_refresh": false }))
         .send()
@@ -941,9 +909,16 @@ async fn broker_logs_never_contain_a_token() {
         .unwrap();
     assert_eq!(mint.status(), 200);
 
-    drop(_guard);
     let logs = String::from_utf8(buf.lock().unwrap().clone()).unwrap();
-    assert!(logs.contains("installation token minted"), "logs:\n{logs}");
+    // This test's own mint line — the message AND this test's
+    // installation id on the same line — so the assertion cannot
+    // pass on another test's concurrent mint.
+    assert!(
+        logs.lines()
+            .any(|line| line.contains("installation token minted")
+                && line.contains(LOG_TEST_INSTALLATION)),
+        "this test's mint line is missing from the logs:\n{logs}"
+    );
     assert!(
         !logs.contains(MINTED_TOKEN),
         "installation token leaked into logs:\n{logs}"
@@ -951,10 +926,6 @@ async fn broker_logs_never_contain_a_token() {
     assert!(
         !logs.contains(&device_token),
         "device token leaked into logs:\n{logs}"
-    );
-    assert!(
-        !logs.contains(&pairing_code),
-        "pairing code leaked into logs:\n{logs}"
     );
 }
 

@@ -35,6 +35,13 @@ pub struct QueueConfig {
     /// Job starts per minute per account (token bucket).
     /// 0 = unlimited. Default 60.
     pub per_account_jobs_per_minute: u32,
+    /// How often the lease sweeper re-runs recovery while the pool
+    /// is alive. Startup recovery alone cannot reclaim a job
+    /// stranded by a crash that happens *after* startup (audit
+    /// B9): without a sweeper a `running` job whose lease expired
+    /// stays `running` forever and the dedupe key blocks every new
+    /// job for that repo. Default 60 s, matching the lease.
+    pub sweep_interval: Duration,
 }
 
 impl Default for QueueConfig {
@@ -50,6 +57,7 @@ impl Default for QueueConfig {
             lease_duration: Duration::from_secs(60),
             global_jobs_per_minute: 120,
             per_account_jobs_per_minute: 60,
+            sweep_interval: Duration::from_secs(60),
         }
     }
 }
@@ -97,6 +105,13 @@ impl QueueConfig {
 
     pub fn with_per_account_jobs_per_minute(mut self, n: u32) -> Self {
         self.per_account_jobs_per_minute = n;
+        self
+    }
+
+    /// Zero disables the sweeper (tests that want a single
+    /// startup-only recovery pass).
+    pub fn with_sweep_interval(mut self, d: Duration) -> Self {
+        self.sweep_interval = d;
         self
     }
 

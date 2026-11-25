@@ -356,6 +356,78 @@ async fn graceful_shutdown_stops_workers() {
         .expect("join timed out");
 }
 
+#[tokio::test]
+async fn sweeper_reclaims_a_job_stranded_after_startup() {
+    let (_dir, db) = open_db().await;
+    let p = pool(&db);
+    let repo_id = seed_repo(p).await;
+
+    let runner = MockJobRunner::always_ok();
+    let config = QueueConfig::default()
+        .with_concurrency(1)
+        .with_sweep_interval(Duration::from_millis(200));
+    let handle = WorkerPool::start(p.clone(), runner, config).await.unwrap();
+
+    // Strand a job AFTER startup: create it and claim it directly
+    // (the worker polls every 250 ms, so the direct claim wins),
+    // then backdate its lease so the sweeper treats it as
+    // abandoned. Without the sweeper this job would stay `running`
+    // forever and the dedupe key would block every new job for
+    // the repo (audit B9).
+    let mut claimed = None;
+    for _ in 0..10 {
+        create_job(
+            p,
+            NewJob {
+                repository_id: repo_id,
+                job_type: JobType::Fetch,
+                priority: 0,
+            },
+        )
+        .await
+        .unwrap();
+        if let Some(job) = claim_next_job(p, "test-worker", Duration::from_secs(60))
+            .await
+            .unwrap()
+        {
+            claimed = Some(job);
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+    let claimed = claimed.expect("could not claim a job for stranding");
+    sqlx::query("UPDATE sync_jobs SET started_at = ?, lease_expires_at = ? WHERE id = ?")
+        .bind("2020-01-01T00:00:00Z")
+        .bind("2020-01-01T00:00:00Z")
+        .bind(claimed.id.to_string())
+        .execute(p)
+        .await
+        .unwrap();
+
+    // The sweeper (200 ms tick) must requeue it: the stranded row
+    // becomes failed and a new pending retry appears, which the
+    // worker then runs to completion — so the queue drains.
+    wait_for_drain(p, 10).await;
+    let failed = list_jobs(
+        p,
+        JobFilter {
+            repository_id: Some(repo_id),
+            status: Some(JobStatus::Failed),
+            ..Default::default()
+        },
+    )
+    .await
+    .unwrap();
+    assert_eq!(failed.len(), 1);
+    assert_eq!(failed[0].id, claimed.id);
+    assert_eq!(failed[0].error_code.as_deref(), Some("CrashRecovered"));
+
+    handle.shutdown();
+    tokio::time::timeout(Duration::from_secs(5), handle.join())
+        .await
+        .expect("join timed out");
+}
+
 async fn wait_for_drain(p: &SqlitePool, secs: u64) {
     let deadline = tokio::time::Instant::now() + Duration::from_secs(secs);
     loop {

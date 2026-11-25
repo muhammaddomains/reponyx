@@ -18,6 +18,7 @@ pub mod diagnostics;
 pub mod history;
 pub mod installations;
 pub mod jobs;
+pub mod paths;
 pub mod pool;
 pub mod repositories;
 pub mod schedules;
@@ -34,4 +35,5 @@ pub use diagnostics::{
     DiagnosticsCounts, backup_database, diagnostics_counts, is_safe_for_diagnostics,
     validate_backup_file,
 };
+pub use paths::{data_dir, db_path, log_dir};
 pub use pool::{Database, open_database};

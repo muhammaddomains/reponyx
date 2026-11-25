@@ -20,6 +20,69 @@ pub struct ProcessOutput {
     pub stderr: String,
 }
 
+/// Kill a git child **and its descendants**.
+///
+/// `child.kill()` alone only kills the direct child: `git clone` /
+/// `git fetch` spawn `git-remote-https`, `index-pack` and (for LFS
+/// repos) `git-lfs` as separate processes, and those orphans keep
+/// their locks and keep writing after the parent is gone — the
+/// lock is released while an orphan still writes (audit G2).
+///
+/// Unix: every git child is spawned in its own process group
+/// (`process_group(0)`, so the child is its own group leader)
+/// and the whole group is killed with `kill(-pgid, SIGKILL)`.
+/// The group kill only runs when the child really is a group
+/// leader (`getpgid(pid) == pid`), so a failed `setpgid` can never
+/// turn this into a kill of the agent's own process group.
+/// Windows: `taskkill /PID <pid> /T /F` kills the process tree.
+/// Either way the direct child is killed and reaped afterwards,
+/// so a failed tree kill still leaves no zombie.
+async fn kill_process_tree(child: &mut tokio::process::Child) {
+    if let Some(pid) = child.id() {
+        #[cfg(unix)]
+        {
+            // Safe wrappers from `nix` — no `unsafe` in this
+            // crate's code, so Semgrep's unsafe-usage rule stays
+            // quiet and the kill stays auditable in one place.
+            use nix::sys::signal::{Signal, kill};
+            use nix::unistd::{Pid, getpgid};
+            let pid = Pid::from_raw(pid as i32);
+            let is_group_leader = getpgid(Some(pid)).is_ok_and(|pgid| pgid == pid);
+            if is_group_leader {
+                let _ = kill(Pid::from_raw(-pid.as_raw()), Signal::SIGKILL);
+            }
+        }
+        #[cfg(windows)]
+        {
+            let _ = std::process::Command::new("taskkill")
+                .args(["/PID", &pid.to_string(), "/T", "/F"])
+                .output();
+        }
+    }
+    let _ = child.kill().await;
+    let _ = child.wait().await;
+}
+
+/// Spawn a git child in its own process group (Unix) so
+/// [`kill_process_tree`] can kill the whole tree. On Windows the
+/// group is provided by `taskkill /T` at kill time instead.
+///
+/// Uses tokio's built-in `process_group(0)` (`setpgid(0, 0)` in
+/// the child): the child becomes its own group leader, so its
+/// pgid equals its pid. (An earlier `pre_exec` + `setsid` version
+/// of this did not take effect under tokio's spawn path, and the
+/// orphan test caught it.)
+fn spawn_in_own_group(cmd: &mut tokio::process::Command) {
+    #[cfg(unix)]
+    {
+        cmd.process_group(0);
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = cmd;
+    }
+}
+
 /// Run a [`GitCommand`] with a timeout. `cancel` is a watch channel;
 /// sending `true` kills the child process. Output is redacted via
 /// `reponyx_logging::redact_secrets` before it is returned or logged.
@@ -42,6 +105,7 @@ pub async fn run_git_command(
     if let Some(dir) = &cmd.current_dir {
         command.current_dir(dir);
     }
+    spawn_in_own_group(&mut command);
 
     let mut child = command.spawn().map_err(|e| {
         RepoNyxError::new(ErrorCode::GitCloneFailed, "Failed to start git process")
@@ -65,8 +129,7 @@ pub async fn run_git_command(
                 changed = cancel.changed() => {
                     match changed {
                         Ok(()) if *cancel.borrow() => {
-                            let _ = child.kill().await;
-                            let _ = child.wait().await;
+                            kill_process_tree(&mut child).await;
                             stdout_reader.abort();
                             stderr_reader.abort();
                             return Err(RepoNyxError::new(
@@ -103,8 +166,7 @@ pub async fn run_git_command(
         Ok(Ok(s)) => s,
         Ok(Err(e)) => return Err(e),
         Err(_) => {
-            let _ = child.kill().await;
-            let _ = child.wait().await;
+            kill_process_tree(&mut child).await;
             stdout_reader.abort();
             stderr_reader.abort();
             return Err(RepoNyxError::new(
@@ -157,6 +219,7 @@ pub async fn run_git_command_streaming(
     if let Some(dir) = &cmd.current_dir {
         command.current_dir(dir);
     }
+    spawn_in_own_group(&mut command);
 
     let mut child = command.spawn().map_err(|e| {
         RepoNyxError::new(ErrorCode::GitCloneFailed, "Failed to start git process")
@@ -176,8 +239,7 @@ pub async fn run_git_command_streaming(
     let run = async {
         tokio::select! {
             _ = cancelled => {
-                let _ = child.kill().await;
-                let _ = child.wait().await;
+                kill_process_tree(&mut child).await;
                 stdout_reader.abort();
                 stderr_reader.abort();
                 Err(RepoNyxError::new(
@@ -201,8 +263,7 @@ pub async fn run_git_command_streaming(
         Ok(Ok(s)) => s,
         Ok(Err(e)) => return Err(e),
         Err(_) => {
-            let _ = child.kill().await;
-            let _ = child.wait().await;
+            kill_process_tree(&mut child).await;
             stdout_reader.abort();
             stderr_reader.abort();
             return Err(RepoNyxError::new(
@@ -401,5 +462,52 @@ mod tests {
             .expect("git --version should run");
         assert!(out.success);
         assert!(out.stdout.contains("git version"));
+    }
+
+    /// Cancelling a shell that spawned its own child must kill the
+    /// child too (audit G2): `sh` starts `sleep`, the run is
+    /// cancelled, and the `sleep` process must be gone afterwards —
+    /// not left holding locks and writing as an orphan.
+    #[tokio::test]
+    async fn cancel_kills_the_whole_process_tree() {
+        let dir = tempfile::tempdir().unwrap();
+        let pid_file = dir.path().join("sleep.pid");
+        // The shell backgrounds `sleep`, records its pid, then waits
+        // for it — so the sleep outlives nothing but the kill.
+        let script = format!("sleep 30 & echo $! > {}; wait", pid_file.to_string_lossy());
+        let (tx, rx) = tokio::sync::watch::channel(false);
+        let cmd = GitCommand::new("sh", vec!["-c".into(), script]);
+        // Cancel from the same task: after 500 ms the shell and its
+        // sleep are running, so the cancel has a live tree to kill.
+        let err = tokio::select! {
+            r = run_git_command(&cmd, Duration::from_secs(60), rx) => r,
+            _ = async {
+                tokio::time::sleep(Duration::from_millis(500)).await;
+                let _ = tx.send(true);
+                std::future::pending::<()>().await
+            } => unreachable!("the run always finishes first after cancel"),
+        }
+        .unwrap_err();
+        assert_eq!(err.code, ErrorCode::OperationCancelled);
+        let pid: i32 = std::fs::read_to_string(&pid_file)
+            .unwrap()
+            .trim()
+            .parse()
+            .unwrap();
+        // A killed child of a dead shell is reparented to init and
+        // may linger briefly as a zombie: `kill(pid, 0)` reports a
+        // zombie as existing, so read the state from /proc instead.
+        // `Z` is dead (awaiting reap); any other state is alive.
+        // A missing /proc entry is gone entirely.
+        let state = std::fs::read_to_string(format!("/proc/{pid}/stat"))
+            .ok()
+            .and_then(|stat| {
+                stat.rfind(')')
+                    .and_then(|close| stat[close + 2..].chars().next())
+            });
+        assert!(
+            state.is_none() || state == Some('Z'),
+            "orphaned sleep (pid {pid}) survived the cancel (state {state:?})"
+        );
     }
 }

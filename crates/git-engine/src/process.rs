@@ -499,12 +499,28 @@ mod tests {
         // zombie as existing, so read the state from /proc instead.
         // `Z` is dead (awaiting reap); any other state is alive.
         // A missing /proc entry is gone entirely.
-        let state = std::fs::read_to_string(format!("/proc/{pid}/stat"))
-            .ok()
-            .and_then(|stat| {
-                stat.rfind(')')
-                    .and_then(|close| stat[close + 2..].chars().next())
-            });
+        //
+        // SIGKILL cannot be caught or ignored, so the sleep WILL
+        // die — but the kernel may need a scheduling slice to act
+        // on it, and a single read races that window: CI run #84
+        // caught it still `R` on a loaded runner. Poll until it
+        // is gone or a zombie instead of asserting on one sample;
+        // the loop only fails if the group kill genuinely missed
+        // the process (a real bug), never on scheduling timing.
+        let proc_state = |pid: i32| {
+            std::fs::read_to_string(format!("/proc/{pid}/stat"))
+                .ok()
+                .and_then(|stat| {
+                    stat.rfind(')')
+                        .and_then(|close| stat[close + 2..].chars().next())
+                })
+        };
+        let deadline = std::time::Instant::now() + Duration::from_secs(5);
+        let mut state = proc_state(pid);
+        while state.is_some() && state != Some('Z') && std::time::Instant::now() < deadline {
+            tokio::time::sleep(Duration::from_millis(50)).await;
+            state = proc_state(pid);
+        }
         assert!(
             state.is_none() || state == Some('Z'),
             "orphaned sleep (pid {pid}) survived the cancel (state {state:?})"

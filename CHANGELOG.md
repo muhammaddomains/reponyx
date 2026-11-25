@@ -7,6 +7,15 @@ All notable changes to RepoNyx are documented here. Format follows
 
 ### Fixed — CI windows-build compile errors in the desktop crate (2026-11-25, found by run #83 on 7742d28)
 
+- `cancel_kills_the_whole_process_tree` no longer asserts on a
+  single `/proc` sample after the cancel: on a loaded runner the
+  orphaned `sleep` could still read as running (`R`) in the
+  window between SIGKILL delivery and the kernel reaping it (CI
+  run #84 caught exactly that). The test now polls the state for
+  up to 5 s until the process is gone or a zombie; SIGKILL is
+  uncatchable, so the loop only fails if the group kill genuinely
+  missed the process.
+
 - `dashboard_counts` now returns `RepoNyxError` (via the crate's
   `map_error` helper) instead of raw `sqlx::Error`, so the desktop
   `get_dashboard_counts` command's `?` converts through the

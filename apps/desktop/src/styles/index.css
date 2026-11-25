@@ -1,5 +1,13 @@
 @import "tailwindcss";
 
+/* The shared @reponyx/ui package lives outside the Vite root, so
+   Tailwind's automatic content detection never scans it — classes
+   used only there (e.g. the ConfirmDialog overlay: fixed, inset-0,
+   z-50, bg-black/50, max-w-md) were silently never generated, and
+   the dialog rendered as an unpositioned block at the bottom of the
+   page. Register it explicitly. */
+@source "../../../../packages/ui/src";
+
 @custom-variant dark (&:where(.dark, .dark *));
 
 :root {

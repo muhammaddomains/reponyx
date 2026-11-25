@@ -10,7 +10,7 @@ use reponyx_ipc::protocol::AgentStatus;
 use reponyx_ipc::{IpcClient, agent_reachable};
 use serde::Serialize;
 use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::process::{Child, Command};
 use std::time::Duration;
 use tauri::{AppHandle, Emitter, State};
 use uuid::Uuid;
@@ -245,10 +245,29 @@ pub async fn ensure_agent_running_command() -> CommandResult<AgentHealthView> {
     if let Some(health) = live_health(&dir).await {
         return Ok(health);
     }
-    spawn_agent_process()?;
+    let mut child = spawn_agent_process()?;
     // Wait briefly for the socket to come up.
     for _ in 0..20 {
         tokio::time::sleep(Duration::from_millis(250)).await;
+        // If the spawned agent died on startup, say so instead of
+        // waiting out the clock: the usual cause is that another
+        // agent already owns the named pipe (Windows allows only one
+        // agent on it — the second one's bind fails with Access
+        // denied and it exits at once). In that case the other agent
+        // is the one to use, so probe it once more before giving up:
+        // a flapping probe can fail here and succeed a moment later.
+        if let Ok(Some(status)) = child.try_wait() {
+            if let Some(health) = live_health(&dir).await {
+                return Ok(health);
+            }
+            return Ok(AgentHealthView {
+                reachable: false,
+                status: None,
+                message: format!(
+                    "agent process exited during startup ({status}) — another agent is probably already running; stop it and try again"
+                ),
+            });
+        }
         if agent_reachable(&dir).await {
             if let Ok(health) = agent_health_command().await {
                 if health.reachable {
@@ -267,7 +286,7 @@ pub async fn ensure_agent_running_command() -> CommandResult<AgentHealthView> {
     })
 }
 
-fn spawn_agent_process() -> Result<(), CommandError> {
+fn spawn_agent_process() -> Result<Child, CommandError> {
     let exe = resolve_agent_exe().ok_or_else(|| CommandError {
         code: "InternalError".into(),
         message: "reponyx-agent executable not found (set REPONYX_AGENT_EXE or install the agent binary on PATH)".into(),
@@ -289,11 +308,13 @@ fn spawn_agent_process() -> Result<(), CommandError> {
             .stdout(std::process::Stdio::null())
             .stderr(std::process::Stdio::null());
     }
+    // Keep the handle so the caller can tell a spawn that died on
+    // startup (e.g. the pipe is already held) from one that is still
+    // coming up. Dropping it does not kill the process.
     cmd.spawn().map_err(|e| CommandError {
         code: "InternalError".into(),
         message: format!("failed to spawn {}: {e}", exe.display()),
-    })?;
-    Ok(())
+    })
 }
 
 fn resolve_agent_exe() -> Option<PathBuf> {

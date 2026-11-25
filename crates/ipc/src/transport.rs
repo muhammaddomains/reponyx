@@ -91,7 +91,22 @@ pub async fn listen(data_dir: &Path) -> Result<Listener, TransportError> {
         let _server = ServerOptions::new()
             .first_pipe_instance(true)
             .create(&path)
-            .map_err(TransportError::Io)?;
+            .map_err(|e| {
+                // `first_pipe_instance` fails with Access denied when
+                // an instance of the pipe already exists — i.e. another
+                // agent is already running and owns the pipe. That is
+                // the normal single-instance conflict, not a permissions
+                // problem, so name it instead of surfacing the raw OS
+                // error ("io error: Access is denied. (os error 5)").
+                if e.kind() == io::ErrorKind::PermissionDenied {
+                    TransportError::Other(
+                        "named pipe already in use (Access is denied) — another reponyx-agent is probably already running; only one agent can own the pipe"
+                            .into(),
+                    )
+                } else {
+                    TransportError::Io(e)
+                }
+            })?;
         Ok(Listener { path })
     }
 }

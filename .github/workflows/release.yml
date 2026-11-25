@@ -6,6 +6,13 @@ name: Release
 # the updater artifacts (latest.json), the portable ZIP (desktop +
 # agent + broker in one folder) and the agent/broker ZIPs attached.
 #
+# The `test` job runs first and gates the release (audit E2): a tag
+# must never ship untested code, even if CI was skipped or its run
+# is still pending. CI also runs on tags, but this gate lives inside
+# the release workflow itself, so the release cannot start without
+# it. The test job runs on Windows — the release platform — so the
+# desktop crate is compiled for real, not just checked on Linux.
+#
 # How to trigger it:
 #   git tag v0.1.0
 #   git push origin v0.1.0
@@ -34,7 +41,55 @@ permissions:
   contents: write
 
 jobs:
+  # The release gate (audit E2): the full Rust suite, the frontend
+  # suite, and the desktop crate compile, on the release platform.
+  # The `release` job does not start unless this passes.
+  test:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v6
+        with:
+          run_install: false
+
+      - name: Install Node
+        uses: actions/setup-node@v7
+        with:
+          node-version: 26
+          cache: pnpm
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install frontend dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Desktop build
+        run: pnpm --filter @reponyx/desktop build
+
+      # The desktop crate references the agent and broker binaries
+      # (bundle.resources), and tauri-build validates those paths
+      # even during `cargo check` — same as CI's windows-build job.
+      - name: Build agent and broker (release)
+        run: cargo build --release -p reponyx-background-agent -p reponyx-auth-broker
+
+      - name: Check desktop crate
+        run: cargo check -p reponyx-desktop
+
+      - name: Rust tests
+        run: cargo test --workspace --exclude reponyx-desktop
+
+      - name: Typecheck
+        run: pnpm -r typecheck
+
+      - name: Frontend tests
+        run: pnpm --filter @reponyx/desktop test
+
   release:
+    needs: test
     runs-on: windows-latest
     steps:
       - name: Checkout
@@ -109,7 +164,7 @@ jobs:
 
             ## Notes
 
-            - The auto-updater artifacts (`latest.json`) are included, but the update flow has not been tested end to end yet.
+            - The auto-updater artifacts (`latest.json`) are included, and the app can check for updates from Settings → Advanced → Updates. The end-to-end update flow (install v0.1.0 → publish a newer release → update in place) has not been proven on a real machine yet — see `docs/qa/updater-e2e.md` for the procedure; until it passes, treat the updater as wired, not proven.
             - If Windows SmartScreen warns ("Windows protected your PC"), click **More info** → **Run anyway** (new binary from an individual developer).
           releaseDraft: true
           prerelease: false

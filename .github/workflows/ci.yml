@@ -13,7 +13,10 @@ name: CI
 #   `cargo check -p reponyx-desktop` — plus the vite build. This is
 #   the first real compile of the desktop Tauri wiring (agent.rs,
 #   tray.rs, repositories.rs, synchronization.rs); the full installer
-#   build happens in the Release workflow, not here.
+#   build happens in the Release workflow, not here. The agent and
+#   broker release binaries are built first because the desktop's
+#   bundle.resources reference them and tauri-build validates those
+#   paths even during `cargo check`.
 #
 # What intentionally does NOT run here:
 # - `cargo tauri build` (installer packaging) is release-only.
@@ -109,5 +112,13 @@ jobs:
       # WebView2 is preinstalled on GitHub-hosted Windows runners, so
       # the desktop crate compiles here. This is the check that
       # catches desktop Rust errors before they reach a user's machine.
+      # The agent and broker release binaries must exist first: the
+      # desktop's bundle.resources reference them (tauri.conf.json)
+      # and tauri-build validates those paths even during `cargo
+      # check`. The Release workflow builds them before tauri-action
+      # for the same reason.
+      - name: Build agent and broker (release)
+        run: cargo build --release -p reponyx-background-agent -p reponyx-auth-broker
+
       - name: Check desktop crate
         run: cargo check -p reponyx-desktop

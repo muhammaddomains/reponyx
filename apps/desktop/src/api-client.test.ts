@@ -17,6 +17,7 @@ vi.mock("@tauri-apps/api/core", () => ({ invoke: invokeMock }));
 import {
   addPatAccount,
   agentCancelJob,
+  clearSetting,
   createBrokerSetupState,
   createSchedule,
   removePatAccount,
@@ -127,5 +128,14 @@ describe("Tauri invoke argument names are camelCase", () => {
     expect(invokeMock).toHaveBeenCalledWith("agent_cancel_command", {
       jobId: "job-1",
     });
+  });
+
+  it("clearSetting sends the key to clear_setting_command", async () => {
+    invokeMock.mockResolvedValue("Storage root reset to the default.");
+    const result = await clearSetting("storage.root");
+    expect(invokeMock).toHaveBeenCalledWith("clear_setting_command", {
+      key: "storage.root",
+    });
+    expect(result).toBe("Storage root reset to the default.");
   });
 });

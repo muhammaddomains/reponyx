@@ -20,8 +20,9 @@
 //! build works, and the CI windows-build job compiles this crate.
 
 use crate::auth::{CommandResult, invalid_input, require_db};
+use crate::storage::canonical_or_raw;
 use reponyx_database::Database;
-use reponyx_database::settings::{get_setting, set_setting};
+use reponyx_database::settings::{delete_setting, get_setting, set_setting};
 use serde::Serialize;
 use tauri::State;
 
@@ -54,6 +55,19 @@ async fn setting_value(database: &Database, key: &str) -> CommandResult<Option<S
 /// maps the error into a command error.
 fn validate_setting(key: &str, value: &str) -> CommandResult<()> {
     reponyx_database::config::validate_setting_value(key, value)
+        .map_err(|e| invalid_input(e.message.clone()))?;
+    Ok(())
+}
+
+/// The disk checks for `storage.root`: the value must name a real,
+/// writable directory that is not a drive root and does not hold (or
+/// sit inside) the data directory. Runs before the value is stored,
+/// so a bad path never lands in the settings table. The config
+/// import deliberately does not run these — a config file is
+/// cross-machine, and its root may not exist on the importing
+/// machine; it keeps the portable absolute-path check.
+fn validate_storage_root_on_disk(value: &str) -> CommandResult<()> {
+    reponyx_database::validate_storage_root(value, &crate::dirs_data_dir())
         .map_err(|e| invalid_input(e.message.clone()))?;
     Ok(())
 }
@@ -92,6 +106,13 @@ pub async fn set_setting_command(
     let value = value.trim().to_string();
     validate_setting(key.trim(), &value)?;
     let key = key.trim();
+    // Audit Phase 4: a storage root is checked against the disk
+    // before it is stored — a relative path, a missing folder, a
+    // drive root, the data directory, or a read-only folder must
+    // never land in the settings table.
+    if key == "storage.root" {
+        validate_storage_root_on_disk(&value)?;
+    }
     // Audit ST-M1: changing `storage.root` moves the existing
     // archives to the new root. The setting is saved first, so a
     // failed move never loses the new root; the migration then
@@ -107,7 +128,10 @@ pub async fn set_setting_command(
         let old_root = old_root
             .map(std::path::PathBuf::from)
             .unwrap_or_else(crate::dirs_data_dir);
-        if old_root != new_root {
+        // Compare canonical paths: re-saving the same folder under a
+        // different spelling (a symlink, a `..`, a trailing slash)
+        // must not trigger a pointless migration.
+        if canonical_or_raw(&old_root) != canonical_or_raw(new_root) {
             let report =
                 reponyx_sync_queue::migrate_storage_root(&database.pool, &old_root, new_root).await;
             tracing::info!(summary = %report.summary(), "storage root migrated");
@@ -115,4 +139,41 @@ pub async fn set_setting_command(
         }
     }
     Ok(saved.value)
+}
+
+/// Clear the `storage.root` setting, restoring the default (the data
+/// directory). The archives migrate back with it, exactly as when
+/// the root is changed — clearing without moving would strand them
+/// under the old root while new syncs went to the default. Only
+/// `storage.root` can be cleared; the other settings have no
+/// meaningful "unset" (their absence already means the default).
+#[tauri::command]
+pub async fn clear_setting_command(
+    db: State<'_, Option<Database>>,
+    key: String,
+) -> CommandResult<String> {
+    let database = require_db(&db)?;
+    let key = key.trim();
+    if key != "storage.root" {
+        return Err(invalid_input("only storage.root can be cleared"));
+    }
+    let old_root = setting_value(database, "storage.root").await?;
+    let cleared = delete_setting(&database.pool, key).await?;
+    if !cleared {
+        return Ok("Storage root is already the default.".to_string());
+    }
+    let old_root = old_root
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(crate::dirs_data_dir);
+    let new_root = crate::dirs_data_dir();
+    if canonical_or_raw(&old_root) != canonical_or_raw(&new_root) {
+        let report =
+            reponyx_sync_queue::migrate_storage_root(&database.pool, &old_root, &new_root).await;
+        tracing::info!(summary = %report.summary(), "storage root reset to default");
+        return Ok(format!(
+            "Storage root reset to the default. {}",
+            report.summary()
+        ));
+    }
+    Ok("Storage root reset to the default.".to_string())
 }

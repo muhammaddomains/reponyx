@@ -217,6 +217,7 @@ pub fn run() {
             config::import_config_command,
             settings::get_settings_command,
             settings::set_setting_command,
+            settings::clear_setting_command,
         ])
         .build(tauri::generate_context!())
         .expect("error while building RepoNyx")

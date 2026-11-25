@@ -29,6 +29,7 @@ mod common;
 pub use config::{
     ConfigFile, ConfigRepository, ConfigSchedule, ConfigSetting, ImportReport, SkippedRef,
     apply_config_import, build_config_export, parse_config_file, validate_setting_value,
+    validate_storage_root,
 };
 pub use counts::dashboard_counts;
 pub use diagnostics::{

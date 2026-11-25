@@ -5,6 +5,54 @@ All notable changes to RepoNyx are documented here. Format follows
 
 ## [Unreleased]
 
+## [0.1.0] — first release (date set when the `v0.1.0` tag is cut)
+
+### Added — Release readiness (2026-11-25, Phase 4 of the production audit)
+
+- **CI test gate on tags (E2):** `ci.yml` now runs on `v*` tags
+  as well as pushes and pull requests, and `release.yml` has a
+  `test` job (Windows: full Rust suite, frontend suite, desktop
+  crate compile) that gates the `release` job — a tag can no
+  longer ship untested code, even if CI was skipped or is still
+  running.
+- **CI installer + portable ZIP build:** a new `windows-installer`
+  job in CI runs the full `tauri build` (NSIS + MSI) and builds
+  the portable ZIP, uploading both plus `latest.json` as
+  artifacts. It signs with a throwaway keypair generated in the
+  job (the real key never reaches CI). That proves the packaging
+  and updater-artifact generation end to end; it does **not**
+  prove the update flow, because the throwaway key does not
+  match the public key baked into the app.
+- **Updater wired (E3):** Settings → Advanced → Updates now
+  checks for updates (`check()` from `@tauri-apps/plugin-updater`),
+  shows the release notes, and downloads + installs
+  (`download()` then `install()`; installing restarts the app).
+  Before this, the plugin was configured and registered but
+  nothing ever called it. The minisign public key in
+  `tauri.conf.json` was verified to decode as a well-formed
+  Ed25519 key (key id `d54eef67f4ed1092`). The end-to-end
+  procedure (install v0.1.0 → publish v0.1.1 → update in place)
+  is documented in `docs/qa/updater-e2e.md`; it needs a real
+  Windows machine and the real signing key, so until it passes
+  the updater is "wired, not proven" and the release notes say so.
+- **`storage.root` validated against the disk:** the Settings
+  page now rejects a root that is relative, missing, not a
+  directory, not writable (a probe file is created and removed —
+  permissions bits alone lie on Windows), a drive root, or the
+  data directory / containing it / inside it. The check runs on
+  the canonical path, so a symlink or `..` cannot smuggle a bad
+  root past it. Re-saving the same folder under a different
+  spelling no longer triggers a pointless archive migration.
+  Clearing the field no longer silently saves the data directory
+  (that value is now rejected) — a "Reset to default" button
+  clears the setting instead, migrating archives back to the
+  data directory.
+- **Signing secrets (E4) still unverified from code:** whether
+  `TAURI_SIGNING_PRIVATE_KEY` (+ password) are set in the repo
+  secrets can only be confirmed by the user — see the release
+  checklist. The first release build will fail at signing if
+  they are missing.
+
 ### Added — Security hardening (2026-11-25, Phase 3 of the production audit)
 
 - **Device tokens expire (A1):** a token minted by pairing lives

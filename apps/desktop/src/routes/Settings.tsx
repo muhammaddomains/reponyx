@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import {
+  clearSetting,
   createDatabaseBackup,
   deleteDatabaseBackup,
   exportConfig,
@@ -20,6 +21,12 @@ import type {
 } from "@reponyx/shared";
 import { Button, Card, ConfirmDialog } from "@reponyx/ui";
 import { applyTheme, parseTheme } from "../lib/theme";
+import {
+  checkForUpdates,
+  downloadAndInstall,
+  updateErrorMessage,
+  type Update,
+} from "../lib/updater";
 
 function formatBytes(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;
@@ -64,7 +71,10 @@ const inputClass =
  *  for newly discovered repositories (`sync.default_mode`) and how
  *  many syncs run at once (`sync.concurrency`, takes effect when
  *  the agent next starts). Storage: the archive root
- *  (`storage.root`). Advanced is read-only information.
+ *  (`storage.root`). Advanced is read-only information, plus the
+ *  manual update check (Phase 4, audit E3): the updater is
+ *  configured in tauri.conf.json but nothing called it before, so
+ *  the Settings page is where an update is found and installed.
  *  Diagnostics & backup (Phase 9) exports a redacted support file
  *  and manages consistent database snapshots. Import & export
  *  (Phase 9) moves settings, repository sync choices, and
@@ -83,6 +93,13 @@ export default function Settings() {
     useState<ConfigExport | null>(null);
   const [lastImport, setLastImport] = useState<ImportReport | null>(null);
   const [diagBusy, setDiagBusy] = useState(false);
+  // Update check (Phase 4): the found update is held here until it
+  // is installed or dismissed — it owns a Rust-side resource, so it
+  // is closed when a new check replaces it or the page unmounts.
+  const [updateBusy, setUpdateBusy] = useState(false);
+  const [updateStatus, setUpdateStatus] = useState<string | null>(null);
+  const [foundUpdate, setFoundUpdate] = useState<Update | null>(null);
+  const [updateProgress, setUpdateProgress] = useState<string | null>(null);
 
   // Pending destructive confirmation. The action only runs from the
   // dialog's OK button — never from `window.confirm`, which the
@@ -170,6 +187,101 @@ export default function Settings() {
       return;
     }
     void save("sync.concurrency", String(parsed), "Concurrent syncs");
+  }
+
+  // The found update owns a Rust-side resource: it is closed when a
+  // new check replaces it, and when the page unmounts.
+  useEffect(() => {
+    return () => {
+      void foundUpdate?.close().catch(() => {
+        // Already closed or the backend is gone — nothing to do.
+      });
+    };
+  }, [foundUpdate]);
+
+  async function handleCheckForUpdates() {
+    setError(null);
+    setNotice(null);
+    setUpdateStatus(null);
+    setUpdateProgress(null);
+    setUpdateBusy(true);
+    try {
+      const result = await checkForUpdates();
+      if (result.status === "up-to-date") {
+        setFoundUpdate(null);
+        setUpdateStatus("You're up to date.");
+      } else if (result.status === "available") {
+        setFoundUpdate(result.update);
+        setUpdateStatus(
+          `Version ${result.update.version} is available (you're on ${result.update.currentVersion}).`,
+        );
+      } else {
+        setFoundUpdate(null);
+        setUpdateStatus(`Update check failed: ${result.message}`);
+      }
+    } catch (e: unknown) {
+      setError(updateErrorMessage(e));
+    } finally {
+      setUpdateBusy(false);
+    }
+  }
+
+  async function handleDownloadAndInstall() {
+    if (!foundUpdate) return;
+    setError(null);
+    setNotice(null);
+    setUpdateBusy(true);
+    try {
+      let downloaded = 0;
+      let total: number | undefined;
+      await downloadAndInstall(foundUpdate, (event) => {
+        if (event.event === "Started") {
+          total = event.data.contentLength;
+          setUpdateProgress("Download started…");
+        } else if (event.event === "Progress") {
+          downloaded += event.data.chunkLength;
+          setUpdateProgress(
+            total !== undefined
+              ? `Downloaded ${formatBytes(downloaded)} of ${formatBytes(total)}…`
+              : `Downloaded ${formatBytes(downloaded)}…`,
+          );
+        } else {
+          setUpdateProgress("Download finished — installing…");
+        }
+      });
+      // Installing restarts the app, so this line is not expected
+      // to run.
+      setNotice("Update installed — restarting.");
+    } catch (e: unknown) {
+      setError(updateErrorMessage(e));
+    } finally {
+      setUpdateBusy(false);
+    }
+  }
+
+  function handleResetStorageRoot() {
+    setPendingConfirm({
+      title: "Reset storage root to the default?",
+      message:
+        "Existing archives move back to the data directory, and new syncs go there after the agent restarts.",
+      confirmLabel: "Reset",
+      action: () => {
+        void (async () => {
+          setError(null);
+          setNotice(null);
+          setSaving("storage.root");
+          try {
+            const result = await clearSetting("storage.root");
+            setNotice(result);
+            await refresh();
+          } catch (e: unknown) {
+            setError(commandMessage(e));
+          } finally {
+            setSaving(null);
+          }
+        })();
+      },
+    });
   }
 
   async function handleExportDiagnostics() {
@@ -452,22 +564,33 @@ export default function Settings() {
                   ? "Where new archives are stored."
                   : "Not set explicitly — using the default data directory."}{" "}
                 Changing it moves existing archives to the new root; new
-                syncs go to the new root after the agent restarts. See the
-                Storage page for what is stored where.
+                syncs go to the new root after the agent restarts. The
+                folder must already exist, be writable, and must not be
+                a drive root or the data directory. See the Storage page
+                for what is stored where.
               </p>
-              <Button
-                variant="secondary"
-                disabled={saving === "storage.root"}
-                onClick={() =>
-                  void save(
-                    "storage.root",
-                    storageRoot.trim() || settings.dataDir,
-                    "Storage root",
-                  )
-                }
-              >
-                Save
-              </Button>
+              <div className="flex flex-wrap items-center gap-3">
+                <Button
+                  variant="secondary"
+                  disabled={
+                    saving === "storage.root" || storageRoot.trim() === ""
+                  }
+                  onClick={() =>
+                    void save("storage.root", storageRoot.trim(), "Storage root")
+                  }
+                >
+                  Save
+                </Button>
+                {settings.storageRoot && (
+                  <Button
+                    variant="secondary"
+                    disabled={saving === "storage.root"}
+                    onClick={handleResetStorageRoot}
+                  >
+                    Reset to default
+                  </Button>
+                )}
+              </div>
             </div>
           </Card>
 
@@ -490,6 +613,46 @@ export default function Settings() {
                 </dd>
               </div>
             </dl>
+            <div className="space-y-2 border-t border-zinc-200 pt-3 dark:border-zinc-800">
+              <h3 className="text-sm font-semibold">Updates</h3>
+              <p className="text-sm text-zinc-500">
+                Checks GitHub releases for a newer version. Downloading
+                and installing restarts the app.
+              </p>
+              <div className="flex flex-wrap items-center gap-3">
+                <Button
+                  variant="secondary"
+                  disabled={updateBusy}
+                  onClick={() => void handleCheckForUpdates()}
+                >
+                  Check for updates
+                </Button>
+                {foundUpdate && (
+                  <Button
+                    variant="secondary"
+                    disabled={updateBusy}
+                    onClick={() => void handleDownloadAndInstall()}
+                  >
+                    Download & install {foundUpdate.version}
+                  </Button>
+                )}
+              </div>
+              {updateStatus && (
+                <p className="text-sm text-zinc-600 dark:text-zinc-400">
+                  {updateStatus}
+                </p>
+              )}
+              {foundUpdate?.body && (
+                <p className="whitespace-pre-wrap text-sm text-zinc-600 dark:text-zinc-400">
+                  {foundUpdate.body}
+                </p>
+              )}
+              {updateProgress && (
+                <p className="text-sm text-zinc-600 dark:text-zinc-400">
+                  {updateProgress}
+                </p>
+              )}
+            </div>
           </Card>
 
           <Card className="space-y-4 p-4">

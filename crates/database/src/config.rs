@@ -36,6 +36,7 @@ use reponyx_core::{IntervalType, Provider, RepoNyxError, Schedule, ScheduleScope
 use serde::{Deserialize, Serialize};
 use sqlx::SqlitePool;
 use std::collections::HashMap;
+use std::path::{Component, Path};
 use uuid::Uuid;
 
 /// The config file format marker. A file with any other marker is
@@ -176,6 +177,62 @@ pub fn validate_setting_value(key: &str, value: &str) -> Result<(), RepoNyxError
         },
         _ => Err(invalid(format!("unknown setting: {key}"))),
     }
+}
+
+/// Validate a `storage.root` value against the disk, for the Settings
+/// page (same-machine only). The portable check in
+/// [`validate_setting_value`] stays absolute-path-only on purpose: a
+/// config file is cross-machine, and its root may not exist on the
+/// machine importing it.
+///
+/// The checks run on the canonical path (symlinks and `..` resolved),
+/// but the value itself is stored verbatim — the canonical form on
+/// Windows carries a `\\?\` prefix the Settings page should not show.
+/// Rejects:
+/// - a relative path;
+/// - a path that does not exist, or is not a directory;
+/// - a drive root (`D:\`, `/`) — archive containment would be
+///   meaningless there;
+/// - the data directory, or any path containing it / contained by it
+///   — the archive tree must never hold the database, and the
+///   database directory must never sit inside the archive tree;
+/// - a directory that is not writable. Permissions bits alone lie on
+///   Windows, so this is a probe: a file is created and removed.
+///   (A read-only directory the process can still write to — for
+///   example when running as root or Administrator — passes, because
+///   the probe is the truth, not the bits.)
+pub fn validate_storage_root(value: &str, data_dir: &Path) -> Result<(), RepoNyxError> {
+    let path = Path::new(value);
+    if !path.is_absolute() {
+        return Err(invalid("storage.root must be an absolute path"));
+    }
+    let canonical = std::fs::canonicalize(path)
+        .map_err(|_| invalid(format!("storage.root does not exist: {value}")))?;
+    if !canonical.is_dir() {
+        return Err(invalid(format!("storage.root is not a directory: {value}")));
+    }
+    if !canonical
+        .components()
+        .any(|c| matches!(c, Component::Normal(_)))
+    {
+        return Err(invalid(format!(
+            "storage.root must not be a drive root: {value}"
+        )));
+    }
+    let data_canonical = std::fs::canonicalize(data_dir).unwrap_or_else(|_| data_dir.to_path_buf());
+    if canonical.starts_with(&data_canonical) || data_canonical.starts_with(&canonical) {
+        return Err(invalid(
+            "storage.root must not be the data directory, contain it, or sit inside it",
+        ));
+    }
+    let probe = canonical.join(format!(".reponyx-write-test-{}", std::process::id()));
+    if let Err(e) = std::fs::write(&probe, b"") {
+        return Err(invalid(format!(
+            "storage.root is not writable: {value} ({e})"
+        )));
+    }
+    let _ = std::fs::remove_file(&probe);
+    Ok(())
 }
 
 // -- Export -----------------------------------------------------------
@@ -596,5 +653,59 @@ mod tests {
         assert!(validate_setting_value("notifications.enabled", "yes").is_err());
         assert!(validate_setting_value("notifications.enabled", "1").is_err());
         assert!(validate_setting_value("notifications.enabled", "").is_err());
+    }
+
+    #[test]
+    fn storage_root_validation_checks_the_disk() {
+        let data = tempfile::tempdir().unwrap();
+        let data_dir = data.path();
+        let s = |p: &std::path::Path| p.to_str().unwrap().to_string();
+
+        // Relative paths are refused.
+        assert!(validate_storage_root("relative/path", data_dir).is_err());
+        // A missing directory is refused.
+        assert!(validate_storage_root(&s(&data_dir.join("nope")), data_dir).is_err());
+        // A file is not a directory.
+        let file = data_dir.join("file.txt");
+        std::fs::write(&file, b"x").unwrap();
+        assert!(validate_storage_root(&s(&file), data_dir).is_err());
+        // A drive root is refused (Unix: `/`).
+        assert!(validate_storage_root("/", data_dir).is_err());
+        // The data directory itself is refused.
+        assert!(validate_storage_root(&s(data_dir), data_dir).is_err());
+        // A directory inside the data directory is refused.
+        let inside = data_dir.join("sub");
+        std::fs::create_dir(&inside).unwrap();
+        assert!(validate_storage_root(&s(&inside), data_dir).is_err());
+        // A directory containing the data directory is refused.
+        assert!(validate_storage_root(&s(data_dir.parent().unwrap()), data_dir).is_err());
+        // A `..` that resolves back to the data directory is refused.
+        assert!(validate_storage_root(&s(&data_dir.join("sub").join("..")), data_dir).is_err());
+        // A writable sibling directory passes, and the probe file is
+        // removed again.
+        let good = tempfile::tempdir().unwrap();
+        assert!(validate_storage_root(&s(good.path()), data_dir).is_ok());
+        assert_eq!(
+            std::fs::read_dir(good.path()).unwrap().count(),
+            0,
+            "the writability probe must not leave a file behind"
+        );
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn storage_root_follows_a_symlink_to_its_target() {
+        use std::os::unix::fs::symlink;
+        let data = tempfile::tempdir().unwrap();
+        let target = tempfile::tempdir().unwrap();
+        let link = data.path().join("link");
+        symlink(target.path(), &link).unwrap();
+        // The link points at a writable directory outside the data
+        // dir, so it passes; the canonical check saw the target.
+        assert!(validate_storage_root(link.to_str().unwrap(), data.path()).is_ok());
+        // And a link to the data dir itself is refused.
+        let bad_link = target.path().join("bad");
+        symlink(data.path(), &bad_link).unwrap();
+        assert!(validate_storage_root(bad_link.to_str().unwrap(), data.path()).is_err());
     }
 }

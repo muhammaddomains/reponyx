@@ -508,6 +508,12 @@ export async function setSetting(key: string, value: string): Promise<string> {
     .parse(await invokeCommand("set_setting_command", { key, value }));
 }
 
+/** Clear the `storage.root` setting, restoring the default (the data
+ *  directory). The backend moves the archives back with it. */
+export async function clearSetting(key: string): Promise<string> {
+  return z.string().parse(await invokeCommand("clear_setting_command", { key }));
+}
+
 /** Phase 9 diagnostics + database backup commands (Tauri
  *  `diagnostics.rs`). The export is a redacted JSON file with no
  *  credentials; a restore is staged and applied at the next

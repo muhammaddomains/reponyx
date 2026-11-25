@@ -145,7 +145,7 @@ pub(crate) async fn effective_storage_root(
 
 /// Canonicalize a path for comparison; the raw path when it does
 /// not exist (a missing archive has nothing to canonicalize).
-fn canonical_or_raw(path: &Path) -> PathBuf {
+pub(crate) fn canonical_or_raw(path: &Path) -> PathBuf {
     std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf())
 }
 

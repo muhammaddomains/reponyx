@@ -192,6 +192,83 @@ is a documented accepted trade-off and was NOT changed; the
 user's live device token (created before this change) expires 90
 days after its creation — re-pairing is the renewal path.
 
+## Phase 4 release readiness (2026-11-25)
+
+Built the same day Phase 3 was pushed, on the user's "start next
+phase 4". Closes audit E2 and E3; CHANGELOG v0.1.0 prepared; E4
+(signing secrets) is NOT verifiable from code and still needs the
+user's confirmation before the first release.
+
+- **CI test gate on tags (E2):** `ci.yml` now runs on `v*` tags
+  as well as pushes and pull requests, and `release.yml` has a
+  `test` job (Windows: full Rust suite, frontend suite, desktop
+  crate compile) that gates the `release` job — a tag can no
+  longer ship untested code, even if CI was skipped or is still
+  running.
+- **CI installer + portable ZIP build:** a new `windows-installer`
+  job in CI runs the full `tauri build` (NSIS + MSI) and builds
+  the portable ZIP, uploading both plus `latest.json` as
+  artifacts. It signs with a throwaway keypair generated in the
+  job (`tauri signer generate --ci`, empty password); the real
+  key never reaches CI. That proves packaging and updater-artifact
+  generation, not the update flow — the throwaway key does not
+  match the public key baked into the app.
+- **Updater wired (E3):** Settings → Advanced → Updates now
+  checks for updates (`check()` from `@tauri-apps/plugin-updater`),
+  shows the release notes, and downloads + installs (`download()`
+  then `install()`; installing restarts the app). Before this,
+  the plugin was configured (endpoint + minisign public key) and
+  registered in the backend, but nothing ever called it. The
+  public key in `tauri.conf.json` was verified to decode as a
+  well-formed minisign Ed25519 key (key id `d54eef67f4ed1092`).
+  There is deliberately no automatic check on startup yet: an
+  update found at startup would have nowhere visible to go (no
+  global notice surface — that is Phase 5), so checks are manual
+  until then. The end-to-end procedure (install v0.1.0 → publish
+  v0.1.1 → update in place) is documented in
+  `docs/qa/updater-e2e.md`; it needs a real Windows machine and
+  the real signing key, so until it passes the updater is "wired,
+  not proven" and the release notes say so.
+- **`storage.root` validated against the disk:** the Settings
+  page now rejects a root that is relative, missing, not a
+  directory, not writable (a probe file is created and removed —
+  permissions bits alone lie on Windows), a drive root, or the
+  data directory / containing it / inside it
+  (`validate_storage_root` in `crates/database/src/config.rs`,
+  checks on the canonical path). The config import keeps the
+  portable absolute-path check on purpose — a config file is
+  cross-machine, and its root may not exist on the importing
+  machine. Re-saving the same folder under a different spelling
+  (symlink, `..`, trailing slash) no longer triggers a pointless
+  migration (canonical comparison in `set_setting_command`).
+  Clearing the field no longer silently saves the data directory
+  (that value is now rejected) — a "Reset to default" button
+  clears the setting via a new `clear_setting_command` instead,
+  migrating archives back to the data directory.
+- **CHANGELOG v0.1.0:** the whole `[Unreleased]` history is the
+  first release, so it is now `## [0.1.0]` (date set when the
+  `v0.1.0` tag is cut), with a fresh empty `[Unreleased]` above
+  it and the Phase 4 entries at the top of the 0.1.0 section.
+- **Not in this phase (Phase 5):** E5–E8 (agent/broker build
+  ordering in the release draft, SBOM/attestation, the unused
+  CSP origin `https://api.reponyx.com`, CHANGELOG-tag check) and
+  the remaining polish minors.
+
+Verified 2026-11-25: `cargo fmt --check` OK, clippy (workspace
+excl. desktop) clean, full workspace suite **462 passed / 0
+failed** (baseline 460; +2 new storage-root tests incl. a
+Unix-only symlink test), typecheck clean, frontend tests **78
+passed / 0 failed** (baseline 73; +4 updater tests, +1
+clearSetting invoke test), `pnpm -r lint` clean, vite build OK,
+Semgrep (exact CI command) **0 findings**, `cargo audit` clean
+(0 vulnerabilities, 7 no-fix warnings). The desktop crate
+(`settings.rs` changes + the new command) is compile-checked
+only by CI's windows-build job. Honest limits: the updater E2E
+has not run anywhere yet (needs the first release + Windows);
+the CI installer job has not run yet either (first run is on the
+push of this commit); E4 is open until the user confirms the
+repo secrets.
+
 ## Windows first-run bugs (2026-11-23)
 
 First real Windows run (`target\debug\reponyx-desktop.exe`):

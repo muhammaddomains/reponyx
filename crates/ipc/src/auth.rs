@@ -5,6 +5,7 @@ use reponyx_core::{ErrorCode, RepoNyxError};
 use reponyx_credential_store::{CredentialStore, SecretString};
 use sha2::{Digest, Sha256};
 use std::sync::Arc;
+use subtle::ConstantTimeEq;
 use thiserror::Error;
 
 /// Service name for the desktop↔agent shared secret.
@@ -67,10 +68,12 @@ pub fn ensure_shared_secret(
     }
 }
 
-/// Constant-time-ish compare of the presented token to the stored secret.
-/// Uses SHA-256 digests so the comparison is always fixed-length.
+/// Constant-time compare of the presented token to the stored secret.
+/// The SHA-256 digests are fixed-length, and the comparison itself is
+/// constant-time (audit A2): the old `==` on the digests
+/// short-circuited at the first differing byte.
 pub fn token_matches(presented: &str, expected: &str) -> bool {
-    let a = Sha256::digest(presented.as_bytes());
-    let b = Sha256::digest(expected.as_bytes());
-    a.as_slice() == b.as_slice()
+    let a: [u8; 32] = Sha256::digest(presented.as_bytes()).into();
+    let b: [u8; 32] = Sha256::digest(expected.as_bytes()).into();
+    a.ct_eq(&b).into()
 }

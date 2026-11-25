@@ -45,12 +45,22 @@ struct Fixture {
 }
 
 async fn start_broker(mint_per_minute: f64) -> Fixture {
+    start_broker_with(mint_per_minute, |_| {}).await
+}
+
+/// Like [`start_broker`], but the caller may tweak the config first
+/// (short token TTLs, low rate limits, short lockouts for tests).
+async fn start_broker_with(
+    mint_per_minute: f64,
+    configure: impl FnOnce(&mut BrokerConfig),
+) -> Fixture {
     let github = MockServer::start().await;
     let (private_pem, public_pem) = throwaway_keypair();
     let mut config = BrokerConfig::for_tests("123456", private_pem, github.uri());
     // Short TTL so the expired-state test does not wait 10 minutes.
     config.state_ttl = Duration::from_secs(2);
     config.mint_per_minute_per_device = mint_per_minute;
+    configure(&mut config);
     let state = BrokerState::new(config);
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
@@ -64,6 +74,31 @@ async fn start_broker(mint_per_minute: f64) -> Fixture {
         github,
         public_pem,
     }
+}
+
+/// Mock GitHub's installations list for the given ids. Scoped: the
+/// mock is removed when the returned guard is dropped, so a test
+/// that needs "GitHub has no installations" afterwards still works.
+/// The callback (audit B3) verifies the installation against this
+/// list, so every install in a test needs its id listed here.
+async fn mock_installations_scoped(
+    github: &MockServer,
+    installation_ids: &[&str],
+) -> wiremock::MockGuard {
+    let body: Vec<serde_json::Value> = installation_ids
+        .iter()
+        .map(|id| {
+            json!({
+                "id": id.parse::<u64>().unwrap(),
+                "account": { "login": "octocat" },
+            })
+        })
+        .collect();
+    Mock::given(method("GET"))
+        .and(path("/app/installations"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(body))
+        .mount_as_scoped(github)
+        .await
 }
 
 /// Mock GitHub's token-minting endpoint for one installation.
@@ -90,7 +125,11 @@ async fn mock_mint(github: &MockServer) {
 impl Fixture {
     /// Install the GitHub App for one installation via the real
     /// state + callback flow. Returns the recorded installation id.
+    /// The callback verifies the installation against GitHub (audit
+    /// B3), so the mock installations list carries this id for the
+    /// duration of the call.
     async fn install_app_with(&self, installation_id: &str) -> String {
+        let _installations = mock_installations_scoped(&self.github, &[installation_id]).await;
         let state: serde_json::Value = self
             .client
             .post(format!("{}/setup/state", self.base))
@@ -267,6 +306,9 @@ async fn callback_records_installation_and_state_is_single_use() {
         .await
         .unwrap();
     let state_value = state["state"].as_str().unwrap();
+    // The 888 callback must verify against GitHub too (audit B3):
+    // hold the installations mock for both calls.
+    let _installations = mock_installations_scoped(&fixture.github, &["888"]).await;
     let callback = format!(
         "{}/github/callback?installation_id=888&setup_action=install&state={state_value}",
         fixture.base
@@ -450,9 +492,9 @@ async fn pairing_wrong_device_is_rejected_and_locks_out() {
     assert_eq!(response.status(), 400);
     let status: serde_json::Value = fixture
         .client
-        .get(format!("{}/pairing/status", fixture.base))
+        .post(format!("{}/pairing/status", fixture.base))
         .header("x-reponyx-setup-token", SETUP_TOKEN)
-        .query(&[("code", pairing_code.as_str())])
+        .json(&json!({ "code": pairing_code.as_str() }))
         .send()
         .await
         .unwrap()
@@ -563,9 +605,20 @@ async fn mint_uses_a_real_signed_jwt_and_caches() {
     // The broker presented a real RS256 JWT to GitHub: three parts,
     // signature verifiable with the throwaway public key, claims
     // correct (iss = App id, 9-minute lifetime, iat backdated).
-    let requests = fixture.github.received_requests().await.unwrap();
-    assert_eq!(requests.len(), 1);
-    let auth = requests[0]
+    // (The install callback also calls GET /app/installations to
+    // verify the installation — audit B3 — so count only the mint
+    // requests, not every GitHub request.)
+    let mint_path = "/app/installations/777/access_tokens";
+    let mint_requests: Vec<_> = fixture
+        .github
+        .received_requests()
+        .await
+        .unwrap()
+        .into_iter()
+        .filter(|request| request.url.path() == mint_path)
+        .collect();
+    assert_eq!(mint_requests.len(), 1);
+    let auth = mint_requests[0]
         .headers
         .get("authorization")
         .unwrap()
@@ -598,7 +651,15 @@ async fn mint_uses_a_real_signed_jwt_and_caches() {
         .await
         .unwrap();
     assert_eq!(second.status(), 200);
-    assert_eq!(fixture.github.received_requests().await.unwrap().len(), 1);
+    let mint_count = fixture
+        .github
+        .received_requests()
+        .await
+        .unwrap()
+        .iter()
+        .filter(|request| request.url.path() == mint_path)
+        .count();
+    assert_eq!(mint_count, 1);
 
     // force_refresh bypasses the cache.
     let third = fixture
@@ -613,7 +674,15 @@ async fn mint_uses_a_real_signed_jwt_and_caches() {
         .await
         .unwrap();
     assert_eq!(third.status(), 200);
-    assert_eq!(fixture.github.received_requests().await.unwrap().len(), 2);
+    let mint_count = fixture
+        .github
+        .received_requests()
+        .await
+        .unwrap()
+        .iter()
+        .filter(|request| request.url.path() == mint_path)
+        .count();
+    assert_eq!(mint_count, 2);
 }
 
 #[tokio::test]
@@ -654,6 +723,11 @@ async fn mint_allows_any_installation_paired_to_the_same_device() {
     // pairing, so the mint gate must be the installation's paired
     // device — not the installation the token was confirmed for.
     // Pairing 777, then 888, then validating 777 used to 403.
+    //
+    // (Phase 3, audit A1: re-pairing revokes the previous token, so
+    // only the LATEST token is live. The gate check therefore uses
+    // the token confirmed for 888 to mint for 777 — the desktop
+    // holds exactly that token after the second pairing.)
     let fixture = start_broker(30.0).await;
     fixture.install_app().await;
     fixture.install_app_with("888").await;
@@ -661,17 +735,8 @@ async fn mint_allows_any_installation_paired_to_the_same_device() {
     mock_mint_for(&fixture.github, "888").await;
     let token_for_777 = fixture.pair_device(DEVICE_ID).await;
     let token_for_888 = fixture.pair_device_for(DEVICE_ID, "888").await;
-    // The token confirmed for 777 mints for 888 (same device).
-    let response = fixture
-        .client
-        .post(format!("{}/installations/888/token", fixture.base))
-        .header("authorization", format!("Bearer {token_for_777}"))
-        .json(&json!({ "force_refresh": false }))
-        .send()
-        .await
-        .unwrap();
-    assert_eq!(response.status(), 200);
-    // And the other way round.
+    // The token confirmed for 888 mints for 777 (same device):
+    // the gate is the installation's paired device.
     let response = fixture
         .client
         .post(format!(
@@ -684,6 +749,29 @@ async fn mint_allows_any_installation_paired_to_the_same_device() {
         .await
         .unwrap();
     assert_eq!(response.status(), 200);
+    // And for 888 itself.
+    let response = fixture
+        .client
+        .post(format!("{}/installations/888/token", fixture.base))
+        .header("authorization", format!("Bearer {token_for_888}"))
+        .json(&json!({ "force_refresh": false }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+    // The token from the first pairing was revoked by the re-pair.
+    let response = fixture
+        .client
+        .post(format!(
+            "{}/installations/{}/token",
+            fixture.base, INSTALLATION_ID
+        ))
+        .header("authorization", format!("Bearer {token_for_777}"))
+        .json(&json!({ "force_refresh": false }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 401);
     // But a token from a different device still cannot mint for 777.
     let other_token = fixture.pair_device_for("device-other", "888").await;
     let response = fixture
@@ -970,4 +1058,309 @@ async fn provider_validates_through_the_real_broker() {
             .count(),
         1
     );
+}
+
+// -- Phase 3 (production audit): security hardening -----------------
+
+#[tokio::test]
+async fn device_token_expires_and_requires_repairing() {
+    // A 1-second token TTL: mint works, then the token is expired.
+    let fixture = start_broker_with(30.0, |config| {
+        config.device_token_ttl = Duration::from_secs(1);
+    })
+    .await;
+    fixture.install_app().await;
+    mock_mint(&fixture.github).await;
+    let device_token = fixture.pair_device(DEVICE_ID).await;
+    let url = format!("{}/installations/{}/token", fixture.base, INSTALLATION_ID);
+    let mint = fixture
+        .client
+        .post(&url)
+        .header("authorization", format!("Bearer {device_token}"))
+        .json(&json!({ "force_refresh": true }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(mint.status(), 200);
+    tokio::time::sleep(Duration::from_millis(1200)).await;
+    let expired = fixture
+        .client
+        .post(&url)
+        .header("authorization", format!("Bearer {device_token}"))
+        .json(&json!({ "force_refresh": true }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(expired.status(), 401);
+    let body: serde_json::Value = expired.json().await.unwrap();
+    assert!(
+        body["error"]["message"]
+            .as_str()
+            .unwrap()
+            .contains("expired"),
+        "expired token must say so: {}",
+        body["error"]["message"]
+    );
+}
+
+#[tokio::test]
+async fn repairing_revokes_the_previous_device_token() {
+    let fixture = start_broker(30.0).await;
+    fixture.install_app().await;
+    mock_mint(&fixture.github).await;
+    let first_token = fixture.pair_device(DEVICE_ID).await;
+    // Pair the same device again: a new code, a new token.
+    let second_token = fixture.pair_device(DEVICE_ID).await;
+    assert_ne!(first_token, second_token);
+    let url = format!("{}/installations/{}/token", fixture.base, INSTALLATION_ID);
+    // The old token no longer mints…
+    let old = fixture
+        .client
+        .post(&url)
+        .header("authorization", format!("Bearer {first_token}"))
+        .json(&json!({ "force_refresh": true }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(old.status(), 401);
+    // …the new one does.
+    let new = fixture
+        .client
+        .post(&url)
+        .header("authorization", format!("Bearer {second_token}"))
+        .json(&json!({ "force_refresh": true }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(new.status(), 200);
+}
+
+#[tokio::test]
+async fn reinstall_preserves_pairing() {
+    let fixture = start_broker(30.0).await;
+    fixture.install_app().await;
+    mock_mint(&fixture.github).await;
+    let device_token = fixture.pair_device(DEVICE_ID).await;
+    // Re-install the same installation (new state + callback).
+    fixture.install_app().await;
+    // The pairing survived: the same device token still mints.
+    let mint = fixture
+        .client
+        .post(format!(
+            "{}/installations/{}/token",
+            fixture.base, INSTALLATION_ID
+        ))
+        .header("authorization", format!("Bearer {device_token}"))
+        .json(&json!({ "force_refresh": true }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(mint.status(), 200);
+    // And the installations list still names the paired device.
+    let installations: serde_json::Value = fixture
+        .client
+        .get(format!("{}/installations", fixture.base))
+        .header("x-reponyx-setup-token", SETUP_TOKEN)
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(installations[0]["paired_device"], DEVICE_ID);
+}
+
+#[tokio::test]
+async fn setup_token_lockout_after_repeated_failures() {
+    let fixture = start_broker_with(30.0, |config| {
+        config.setup_auth_max_failures = 3;
+        config.setup_auth_lockout = Duration::from_secs(2);
+    })
+    .await;
+    let url = format!("{}/installations", fixture.base);
+    // Two wrong presentations: 401 each.
+    for _ in 0..2 {
+        let response = fixture
+            .client
+            .get(&url)
+            .header("x-reponyx-setup-token", "wrong-token")
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(response.status(), 401);
+    }
+    // The third trips the lockout: 429, not 401.
+    let locked = fixture
+        .client
+        .get(&url)
+        .header("x-reponyx-setup-token", "wrong-token")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(locked.status(), 429);
+    assert!(locked.headers().contains_key("retry-after"));
+    // Even the correct token is locked out while the window runs.
+    let still_locked = fixture
+        .client
+        .get(&url)
+        .header("x-reponyx-setup-token", SETUP_TOKEN)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(still_locked.status(), 429);
+    // After the window, the correct token works again.
+    tokio::time::sleep(Duration::from_millis(2100)).await;
+    let ok = fixture
+        .client
+        .get(&url)
+        .header("x-reponyx-setup-token", SETUP_TOKEN)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(ok.status(), 200);
+}
+
+#[tokio::test]
+async fn callback_rejects_installation_not_in_github_list() {
+    let fixture = start_broker(30.0).await;
+    // GitHub lists only installation 999; the callback claims 777.
+    let _installations = mock_installations_scoped(&fixture.github, &["999"]).await;
+    let state: serde_json::Value = fixture
+        .client
+        .post(format!("{}/setup/state", fixture.base))
+        .header("x-reponyx-setup-token", SETUP_TOKEN)
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    let state_value = state["state"].as_str().unwrap();
+    let response = fixture
+        .client
+        .get(format!("{}/github/callback", fixture.base))
+        .query(&[
+            ("installation_id", INSTALLATION_ID),
+            ("setup_action", "install"),
+            ("state", state_value),
+        ])
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 400);
+    let body: serde_json::Value = response.json().await.unwrap();
+    assert!(
+        body["error"]["message"]
+            .as_str()
+            .unwrap()
+            .contains("not found for this GitHub App"),
+        "unverified installation must say so: {}",
+        body["error"]["message"]
+    );
+    // Nothing was recorded.
+    let installations: serde_json::Value = fixture
+        .client
+        .get(format!("{}/installations", fixture.base))
+        .header("x-reponyx-setup-token", SETUP_TOKEN)
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(installations.as_array().unwrap().len(), 0);
+}
+
+#[tokio::test]
+async fn callback_rate_limit_returns_429() {
+    let fixture = start_broker_with(30.0, |config| {
+        config.callback_per_minute_per_ip = 2.0;
+    })
+    .await;
+    let _installations = mock_installations_scoped(&fixture.github, &[INSTALLATION_ID]).await;
+    for attempt in 0..3 {
+        let state: serde_json::Value = fixture
+            .client
+            .post(format!("{}/setup/state", fixture.base))
+            .header("x-reponyx-setup-token", SETUP_TOKEN)
+            .send()
+            .await
+            .unwrap()
+            .json()
+            .await
+            .unwrap();
+        let state_value = state["state"].as_str().unwrap();
+        let response = fixture
+            .client
+            .get(format!("{}/github/callback", fixture.base))
+            .query(&[
+                ("installation_id", INSTALLATION_ID),
+                ("setup_action", "install"),
+                ("state", state_value),
+            ])
+            .send()
+            .await
+            .unwrap();
+        if attempt < 2 {
+            assert_eq!(response.status(), 200, "callback {attempt}");
+        } else {
+            assert_eq!(response.status(), 429, "callback {attempt}");
+            assert!(response.headers().contains_key("retry-after"));
+        }
+    }
+}
+
+#[tokio::test]
+async fn setup_state_rate_limit_returns_429() {
+    let fixture = start_broker_with(30.0, |config| {
+        config.setup_state_per_minute_per_ip = 2.0;
+    })
+    .await;
+    for attempt in 0..3 {
+        let response = fixture
+            .client
+            .post(format!("{}/setup/state", fixture.base))
+            .header("x-reponyx-setup-token", SETUP_TOKEN)
+            .send()
+            .await
+            .unwrap();
+        if attempt < 2 {
+            assert_eq!(response.status(), 200, "setup/state {attempt}");
+        } else {
+            assert_eq!(response.status(), 429, "setup/state {attempt}");
+            assert!(response.headers().contains_key("retry-after"));
+        }
+    }
+}
+
+#[tokio::test]
+async fn pairing_status_is_post_only_and_takes_the_code_in_the_body() {
+    let fixture = start_broker(30.0).await;
+    fixture.install_app().await;
+    let code = fixture.request_code(DEVICE_ID).await;
+    let pairing_code = code["pairing_code"].as_str().unwrap().to_string();
+    // The code must not travel in a URL query (audit B5).
+    let get = fixture
+        .client
+        .get(format!("{}/pairing/status", fixture.base))
+        .header("x-reponyx-setup-token", SETUP_TOKEN)
+        .query(&[("code", pairing_code.as_str())])
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(get.status(), 405);
+    // POST with the code in the JSON body works.
+    let post: serde_json::Value = fixture
+        .client
+        .post(format!("{}/pairing/status", fixture.base))
+        .header("x-reponyx-setup-token", SETUP_TOKEN)
+        .json(&json!({ "code": pairing_code }))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(post["status"], "pending");
+    assert_eq!(post["device_identifier"], DEVICE_ID);
 }

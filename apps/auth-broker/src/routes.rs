@@ -10,7 +10,10 @@
 //!   auth, per-IP rate limit).
 //! - `POST /pairing/confirm` — confirm a code, receive a device
 //!   token (setup-token auth, per-IP rate limit).
-//! - `GET /pairing/status` — pairing-code status (setup-token auth).
+//! - `POST /pairing/status` — pairing-code status (setup-token
+//!   auth). POST with the code in the JSON body, never in a URL
+//!   query: query strings land in access logs and browser history
+//!   (audit B5).
 //! - `POST /pairing/revoke` — revoke a device's codes and tokens
 //!   (setup-token auth).
 //! - `POST /installations/{id}/token` — mint an installation token
@@ -29,7 +32,7 @@
 //! using `RepoNyxError` codes. Responses and logs never contain a
 //! token, code, or key.
 
-use crate::auth::sha256_hex;
+use crate::auth::{digests_equal, sha256_bytes};
 use crate::state::{BrokerState, DeviceTokenRecord, PairingStatusInfo};
 use axum::extract::{ConnectInfo, Path, Query, State};
 use axum::http::HeaderMap;
@@ -129,20 +132,51 @@ impl IntoResponse for ApiError {
 
 /// Setup-token authentication: the operator's token, supplied at
 /// broker startup, presented as `X-RepoNyx-Setup-Token`.
+///
+/// The comparison is constant-time over the SHA-256 digests (audit
+/// A2), and failed presentations count toward a lockout (audit B2):
+/// after `setup_auth_max_failures` consecutive failures, setup-token
+/// auth returns 429 for `setup_auth_lockout`. A successful
+/// presentation resets the counter. Individual failures are not
+/// audited — a brute-force loop would flood the audit table — only
+/// the lockout transition is.
 struct SetupToken;
 
 impl SetupToken {
-    fn from_headers(state: &BrokerState, headers: &HeaderMap) -> Result<(), ApiError> {
+    async fn check(state: &BrokerState, headers: &HeaderMap) -> Result<(), ApiError> {
+        if let Some(wait) = state.setup_auth_locked_out() {
+            return Err(ApiError::rate_limited(wait));
+        }
         let presented = headers
             .get("x-reponyx-setup-token")
             .and_then(|value| value.to_str().ok())
             .unwrap_or("");
-        if presented.is_empty() || sha256_hex(presented) != sha256_hex(&state.config.setup_token) {
+        let matches = !presented.is_empty()
+            && digests_equal(
+                &sha256_bytes(presented),
+                &sha256_bytes(state.config.setup_token.expose()),
+            );
+        if !matches {
+            if let Some(wait) = state.note_setup_auth_failure() {
+                state
+                    .audit(
+                        "setup-token",
+                        "setup.auth_locked_out",
+                        "failure",
+                        format!(
+                            "setup-token auth locked out for {}s after too many failed presentations",
+                            wait.as_secs()
+                        ),
+                    )
+                    .await;
+                return Err(ApiError::rate_limited(wait));
+            }
             return Err(ApiError::new(RepoNyxError::new(
                 ErrorCode::AuthenticationExpired,
                 "invalid or missing setup token",
             )));
         }
+        state.reset_setup_auth_failures();
         Ok(())
     }
 }
@@ -167,10 +201,21 @@ impl DeviceAuth {
         }
         match state.device_for_token(presented).await {
             Some(record) => Ok(Self(record)),
-            None => Err(ApiError::new(RepoNyxError::new(
-                ErrorCode::AuthenticationExpired,
-                "invalid or revoked device token",
-            ))),
+            None => {
+                // An expired token is a different problem from a
+                // wrong one: the operator pairs again instead of
+                // hunting for a typo (audit A1).
+                if state.device_token_expired(presented).await {
+                    return Err(ApiError::new(RepoNyxError::new(
+                        ErrorCode::AuthenticationExpired,
+                        "device token expired; pair this device again",
+                    )));
+                }
+                Err(ApiError::new(RepoNyxError::new(
+                    ErrorCode::AuthenticationExpired,
+                    "invalid or revoked device token",
+                )))
+            }
         }
     }
 }
@@ -217,9 +262,20 @@ struct SetupStateResponse {
 
 async fn setup_state(
     State(state): State<SharedState>,
+    ConnectInfo(addr): ConnectInfo<SocketAddr>,
     headers: HeaderMap,
 ) -> Result<Json<SetupStateResponse>, ApiError> {
-    SetupToken::from_headers(&state, &headers)?;
+    SetupToken::check(&state, &headers).await?;
+    // Audit B6: issuing states was un-rate-limited; a local process
+    // could mint states (and flood the audit table via the callback)
+    // without bound.
+    let ip = client_ip(ConnectInfo(addr));
+    rate_limit(
+        &state,
+        &format!("setup-state:ip:{ip}"),
+        state.config.setup_state_per_minute_per_ip,
+        state.config.setup_state_per_minute_per_ip / 60.0,
+    )?;
     let (state_value, expires_at) = state.issue_setup_state().await.map_err(ApiError::new)?;
     let install_url = format!(
         "https://github.com/apps/{}/installations/new?state={}",
@@ -261,6 +317,16 @@ async fn github_callback(
     Query(query): Query<CallbackQuery>,
 ) -> Result<Json<CallbackResponse>, ApiError> {
     let ip = client_ip(ConnectInfo(addr));
+    // Audit B3: the callback had no rate limit, so a local process
+    // could flood the audit table and record arbitrary installations
+    // with an observed `state`. Rate-limit first — before any audit
+    // write or state consumption — so the flood cannot even start.
+    rate_limit(
+        &state,
+        &format!("callback:ip:{ip}"),
+        state.config.callback_per_minute_per_ip,
+        state.config.callback_per_minute_per_ip / 60.0,
+    )?;
     let installation_id = query.installation_id.unwrap_or_default();
     let setup_action = query.setup_action.unwrap_or_else(|| "install".to_string());
     let state_value = query.state.unwrap_or_default();
@@ -292,6 +358,31 @@ async fn github_callback(
             return Err(ApiError::new(RepoNyxError::new(
                 ErrorCode::InvalidInput,
                 "invalid, reused, or expired state",
+            )));
+        }
+        Err(err) => return Err(ApiError::new(err)),
+    }
+    // Audit B3: verify the installation really belongs to THIS
+    // GitHub App before recording it. A GitHub failure fails
+    // closed (502) — a forged callback must not slip through
+    // during a GitHub outage.
+    match crate::tokens::verify_app_installation(&state.http, &state.config, &installation_id).await
+    {
+        Ok(true) => {}
+        Ok(false) => {
+            state
+                .audit(
+                    &ip,
+                    "callback.failed",
+                    "failure",
+                    format!(
+                        "installation {installation_id} is not an installation of this GitHub App"
+                    ),
+                )
+                .await;
+            return Err(ApiError::new(RepoNyxError::new(
+                ErrorCode::InvalidInput,
+                "installation not found for this GitHub App",
             )));
         }
         Err(err) => return Err(ApiError::new(err)),
@@ -335,7 +426,7 @@ async fn pairing_request(
     headers: HeaderMap,
     Json(body): Json<PairingRequestBody>,
 ) -> Result<Json<PairingRequestResponse>, ApiError> {
-    SetupToken::from_headers(&state, &headers)?;
+    SetupToken::check(&state, &headers).await?;
     let ip = client_ip(ConnectInfo(addr));
     rate_limit(
         &state,
@@ -382,7 +473,7 @@ async fn pairing_confirm(
     headers: HeaderMap,
     Json(body): Json<PairingConfirmBody>,
 ) -> Result<Json<PairingConfirmResponse>, ApiError> {
-    SetupToken::from_headers(&state, &headers)?;
+    SetupToken::check(&state, &headers).await?;
     let ip = client_ip(ConnectInfo(addr));
     rate_limit(
         &state,
@@ -405,8 +496,11 @@ async fn pairing_confirm(
     }))
 }
 
+/// The pairing code travels in the JSON body, never in a URL
+/// query (audit B5): query strings land in access logs and browser
+/// history, and the code is a bearer credential for the device.
 #[derive(Debug, Deserialize)]
-struct PairingStatusQuery {
+struct PairingStatusBody {
     code: String,
 }
 
@@ -420,10 +514,10 @@ struct PairingStatusResponse {
 async fn pairing_status(
     State(state): State<SharedState>,
     headers: HeaderMap,
-    Query(query): Query<PairingStatusQuery>,
+    Json(body): Json<PairingStatusBody>,
 ) -> Result<Json<PairingStatusResponse>, ApiError> {
-    SetupToken::from_headers(&state, &headers)?;
-    let info: PairingStatusInfo = state.pairing_status(&query.code).await;
+    SetupToken::check(&state, &headers).await?;
+    let info: PairingStatusInfo = state.pairing_status(&body.code).await;
     Ok(Json(PairingStatusResponse {
         status: info.status,
         installation_id: info.installation_id,
@@ -446,7 +540,7 @@ async fn pairing_revoke(
     headers: HeaderMap,
     Json(body): Json<PairingRevokeBody>,
 ) -> Result<Json<PairingRevokeResponse>, ApiError> {
-    SetupToken::from_headers(&state, &headers)?;
+    SetupToken::check(&state, &headers).await?;
     let revoked = state
         .revoke_device(&body.device_identifier)
         .await
@@ -556,7 +650,7 @@ async fn list_installations(
     State(state): State<SharedState>,
     headers: HeaderMap,
 ) -> Result<Json<Vec<InstallationResponse>>, ApiError> {
-    SetupToken::from_headers(&state, &headers)?;
+    SetupToken::check(&state, &headers).await?;
     // The install callback does not carry the account login, so the
     // recorded login is usually absent. Fill it from GitHub (one
     // call for all installations); on any failure the recorded
@@ -589,7 +683,7 @@ async fn list_audit(
     State(state): State<SharedState>,
     headers: HeaderMap,
 ) -> Result<Json<AuditResponse>, ApiError> {
-    SetupToken::from_headers(&state, &headers)?;
+    SetupToken::check(&state, &headers).await?;
     Ok(Json(AuditResponse {
         events: state.audit_events(),
     }))
@@ -604,7 +698,7 @@ pub fn app(state: SharedState) -> Router {
         .route("/github/callback", get(github_callback))
         .route("/pairing/request", post(pairing_request))
         .route("/pairing/confirm", post(pairing_confirm))
-        .route("/pairing/status", get(pairing_status))
+        .route("/pairing/status", post(pairing_status))
         .route("/pairing/revoke", post(pairing_revoke))
         .route("/installations/{id}/token", post(mint_token))
         .route("/installations", get(list_installations))

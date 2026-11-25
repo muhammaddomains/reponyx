@@ -249,14 +249,15 @@ impl BrokerStore {
 
     pub async fn insert_device_token(&self, record: &DeviceTokenRecord) -> Result<(), sqlx::Error> {
         sqlx::query(
-            "INSERT INTO broker_device_tokens (token_hash, device_identifier, device_name, installation_id, created_at, revoked)
-             VALUES (?, ?, ?, ?, ?, ?)",
+            "INSERT INTO broker_device_tokens (token_hash, device_identifier, device_name, installation_id, created_at, expires_at, revoked)
+             VALUES (?, ?, ?, ?, ?, ?, ?)",
         )
         .bind(&record.token_hash)
         .bind(&record.device_identifier)
         .bind(&record.device_name)
         .bind(&record.installation_id)
         .bind(to_text(record.created_at))
+        .bind(to_text(record.expires_at))
         .bind(record.revoked as i64)
         .execute(&self.pool)
         .await?;
@@ -274,7 +275,7 @@ impl BrokerStore {
 
     pub async fn load_device_tokens(&self) -> Result<Vec<DeviceTokenRecord>, sqlx::Error> {
         let rows = sqlx::query(
-            "SELECT token_hash, device_identifier, device_name, installation_id, created_at, revoked
+            "SELECT token_hash, device_identifier, device_name, installation_id, created_at, expires_at, revoked
              FROM broker_device_tokens ORDER BY created_at",
         )
         .fetch_all(&self.pool)
@@ -287,10 +288,30 @@ impl BrokerStore {
                 device_name: row.get("device_name"),
                 installation_id: row.get("installation_id"),
                 created_at: parse_time(row.get("created_at"))?,
+                // Pre-V3 rows have no expiry until migration 0003
+                // backfills them; a missing value here means the
+                // store predates the migration and the record is
+                // treated as already expired (fail closed).
+                expires_at: match row.get::<Option<String>, _>("expires_at") {
+                    Some(text) => parse_time(text)?,
+                    None => Utc::now() - chrono::Duration::seconds(1),
+                },
                 revoked: row.get::<i64, _>("revoked") != 0,
             });
         }
         Ok(out)
+    }
+
+    /// Delete device tokens whose expiry has passed. Called at
+    /// startup; an expired token is useless, and keeping its hash
+    /// around only widens the window for a replay attempt to report
+    /// "expired" instead of "unknown".
+    pub async fn prune_expired_device_tokens(&self) -> Result<u64, sqlx::Error> {
+        let result = sqlx::query("DELETE FROM broker_device_tokens WHERE expires_at < ?")
+            .bind(to_text(Utc::now()))
+            .execute(&self.pool)
+            .await?;
+        Ok(result.rows_affected())
     }
 
     // -- audit events --------------------------------------------------

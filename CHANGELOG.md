@@ -5,6 +5,74 @@ All notable changes to RepoNyx are documented here. Format follows
 
 ## [Unreleased]
 
+### Added — Security hardening (2026-11-25, Phase 3 of the production audit)
+
+- **Device tokens expire (A1):** a token minted by pairing lives
+  90 days (`device_token_ttl`), then minting fails with "device
+  token expired; pair this device again". Migration 0003 adds
+  `broker_device_tokens.expires_at` and backfills pre-existing
+  tokens with 90 days from their creation time; expired tokens are
+  pruned at startup. **Re-pairing revokes the device's previous
+  tokens:** one live token per device, so a leaked token stops
+  minting the moment the device pairs again.
+- **Re-install preserves pairing (B1):** `record_installation`
+  carries the existing `paired_device` (and the recorded login
+  when the callback carries none) forward, so reinstalling the
+  GitHub App no longer unpairs the device and breaks minting.
+- **Setup-token brute-force lockout (B2):** 10 consecutive failed
+  setup-token presentations lock setup-token auth out for 15
+  minutes (429 with `Retry-After`); a success resets the counter
+  and the lockout is never extended by further guesses.
+  Individual failures are not audited, so a guessing loop cannot
+  flood the audit table — only the lockout transition is.
+  **Non-loopback bind needs opt-in:** `REPONYX_BROKER_BIND` set
+  to anything but loopback refuses to start unless
+  `REPONYX_BROKER_ALLOW_NON_LOOPBACK=true` is also set.
+- **Install callback verified + rate-limited (B3):** the callback
+  is rate-limited (10/min per IP, before any audit write) and the
+  `installation_id` is verified against GitHub's
+  `GET /app/installations` for THIS App before recording — a
+  forged callback with an observed `state` can no longer record
+  an arbitrary installation, and a GitHub failure fails closed
+  (502) instead of recording unverified.
+- **Setup-state rate limit (B6):** `POST /setup/state` is
+  rate-limited (10/min per IP).
+- **Pairing status is POST-only (B5):** the pairing code travels
+  in the JSON body, never in a URL query (queries land in access
+  logs); `GET /pairing/status` now returns 405.
+- **Pipe ACL (F2 / Phase 10 F2):** the agent's Windows named pipe
+  is created with a DACL granting access only to the current user
+  and SYSTEM (via tokio's
+  `create_with_security_attributes_raw`, so the pipe is
+  restricted from the instant it exists). Any other local user
+  gets Access Denied at connect time. If the descriptor cannot be
+  built, pipe creation fails loudly — never silently falls back
+  to a world-accessible pipe. A Windows test asserts the DACL
+  contains exactly those two trustees.
+- **Constant-time secret comparison (A2):** the setup-token check
+  and the IPC token check compare SHA-256 digests with
+  `subtle::ConstantTimeEq` instead of short-circuiting `==`.
+- **Secrets as `SecretString` (A3):** the broker's setup token,
+  private key, and cached installation tokens are held in
+  `SecretString` (redacted `Debug`, zeroized on drop). The type
+  moved to `reponyx-core` so the broker can use it without
+  depending on the credential-store crate; the credential store
+  re-exports it unchanged.
+- **Registered-secret redaction (A7):** `reponyx_logging` can
+  register exact secret values (`register_secret`); `redact_secrets`
+  replaces every occurrence, so a prefix-less secret (hex setup
+  token, base64url device token) that appears bare in a log line
+  is redacted even though no pattern could match it. The broker
+  registers its setup token and private key at startup.
+- **`.env` permissions warning (A4):** on Unix the broker warns at
+  startup when its `.env` file is readable by other users
+  (`chmod 600`); the README documents the permissions guidance.
+- **IPC connection limits + idle timeout (C2/C3):** at most 16
+  simultaneous IPC connections (further connections are dropped);
+  a connection that sends nothing for 10 minutes is closed. The
+  desktop client opens one connection per request, so legitimate
+  use is unaffected.
+
 ### Fixed — CI windows-build compile errors in the desktop crate (2026-11-25, found by run #83 on 7742d28)
 
 - `cancel_kills_the_whole_process_tree` no longer asserts on a

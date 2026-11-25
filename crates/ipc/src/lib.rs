@@ -17,6 +17,8 @@ pub mod agent_lock;
 pub mod auth;
 pub mod client;
 pub mod frame;
+#[cfg(windows)]
+pub mod pipe_security;
 pub mod protocol;
 pub mod server;
 pub mod transport;

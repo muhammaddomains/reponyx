@@ -10,9 +10,20 @@ use reponyx_credential_store::CredentialStore;
 use std::path::Path;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU64};
-use tokio::sync::{RwLock, mpsc};
+use std::time::Duration;
+use tokio::sync::{RwLock, Semaphore, mpsc};
 use tracing::{debug, info, warn};
 use uuid::Uuid;
+
+/// Maximum simultaneous IPC connections (audit C2). The desktop
+/// client opens one connection per request, so legitimate use never
+/// approaches this; the cap exists so a connection-flood cannot
+/// exhaust the agent's task and file-descriptor budget.
+const MAX_CONNECTIONS: usize = 16;
+/// A connection that sends nothing for this long is closed (audit
+/// C3). Normal requests finish in seconds (the client enforces a
+/// 60 s request timeout), so an idle connection is abandoned.
+const IDLE_TIMEOUT: Duration = Duration::from_secs(600);
 
 /// Commands the IPC layer asks the agent runtime to perform.
 #[derive(Debug)]
@@ -79,6 +90,8 @@ pub struct AgentIpcServer {
     commands: mpsc::Sender<AgentCommand>,
     /// Optional progress fan-out: JSON-encoded SyncProgressEvent values.
     progress_rx: Arc<RwLock<Option<tokio::sync::broadcast::Receiver<serde_json::Value>>>>,
+    /// Live-connection permits (audit C2).
+    connections: Arc<Semaphore>,
 }
 
 impl AgentIpcServer {
@@ -98,6 +111,7 @@ impl AgentIpcServer {
             generation,
             commands,
             progress_rx: Arc::new(RwLock::new(None)),
+            connections: Arc::new(Semaphore::new(MAX_CONNECTIONS)),
         })
     }
 
@@ -120,12 +134,24 @@ impl AgentIpcServer {
                 accepted = self.listener.accept() => {
                     match accepted {
                         Ok(conn) => {
+                            // Audit C2: refuse (and drop) the
+                            // connection when every permit is held,
+                            // instead of spawning unbounded tasks.
+                            let Ok(permit) =
+                                Arc::clone(&self.connections).try_acquire_owned()
+                            else {
+                                warn!("ipc connection limit reached; dropping connection");
+                                continue;
+                            };
                             let token = self.expected_token.clone();
                             let generation = self.generation;
                             let commands = self.commands.clone();
                             let progress_rx = Arc::clone(&self.progress_rx);
                             let cancel = cancel.child_token();
                             tokio::spawn(async move {
+                                // Held for the connection's lifetime;
+                                // released when the task ends.
+                                let _permit = permit;
                                 if let Err(e) = handle_connection(conn, token, generation, commands, progress_rx, cancel).await {
                                     debug!(error = %e, "ipc connection ended");
                                 }
@@ -198,11 +224,17 @@ async fn handle_connection(
     loop {
         tokio::select! {
             _ = cancel.cancelled() => return Ok(()),
-            frame = read_frame(&mut reader) => {
+            // Audit C3: an idle connection is closed after
+            // IDLE_TIMEOUT instead of being held open forever.
+            frame = tokio::time::timeout(IDLE_TIMEOUT, read_frame(&mut reader)) => {
                 let body = match frame {
-                    Ok(b) => b,
-                    Err(crate::frame::FrameError::Closed) => return Ok(()),
-                    Err(e) => return Err(e.to_string()),
+                    Ok(Ok(b)) => b,
+                    Ok(Err(crate::frame::FrameError::Closed)) => return Ok(()),
+                    Ok(Err(e)) => return Err(e.to_string()),
+                    Err(_) => {
+                        debug!("ipc connection idle too long; closing");
+                        return Ok(());
+                    }
                 };
                 let msg = parse_client_message(&body)?;
                 let reply = dispatch(msg, &expected_token, generation, &commands).await;

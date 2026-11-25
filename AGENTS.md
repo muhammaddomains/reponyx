@@ -79,6 +79,23 @@ pnpm --filter @reponyx/desktop build        # vite build
 cargo tauri build                          # apps/desktop; needs WebViewGTK dev libs on Linux
 ```
 
+Windows-only code (e.g. `crates/ipc` pipe security) cannot be
+checked by the Linux build or by CI's `cargo check` on the
+desktop crate alone. Cross-check it with the MinGW GNU target
+(installed 2026-11-25: `rustup target add --toolchain 1.100.0
+x86_64-pc-windows-gnu` + `apt install gcc-mingw-w64-x86-64`):
+
+```bash
+CC_x86_64_pc_windows_gnu=x86_64-w64-mingw32-gcc cargo check -p reponyx-ipc --target x86_64-pc-windows-gnu
+```
+
+The MSVC target (`x86_64-pc-windows-msvc`) does NOT work on this
+VM — C build scripts (aws-lc-sys, libsqlite3-sys) need MSVC.
+The GNU check caught real errors the Linux build never saw
+(wrong `windows-sys` module for `NO_INHERITANCE`, unexported
+consts). Run it (and clippy with the same target) before pushing
+any change to Windows-only code.
+
 ## Layout
 
 - `apps/desktop` — React frontend + Tauri backend (`src-tauri`)

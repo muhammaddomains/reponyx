@@ -9,6 +9,10 @@
 //! - `REPONYX_BROKER_SETUP_TOKEN` — operator token for pairing
 //!   requests (required, at least 16 characters)
 //! - `REPONYX_BROKER_BIND` — bind address (default `127.0.0.1:8765`)
+//! - `REPONYX_BROKER_ALLOW_NON_LOOPBACK` — set to `true` to allow a
+//!   non-loopback bind (audit B2). Without it the broker refuses to
+//!   bind anywhere but loopback: a LAN-visible broker would expose
+//!   setup-token auth to the whole network.
 //! - `REPONYX_BROKER_GITHUB_API_URL` — GitHub API base (default
 //!   `https://api.github.com`)
 //! - `REPONYX_BROKER_ENV_FILE` — explicit `.env` file to load
@@ -72,6 +76,17 @@ async fn main() {
             std::process::exit(2);
         }
     };
+    // Register the long-lived secrets for redaction (audit A7): a
+    // prefix-less setup token or private key that ever appears bare
+    // in a log line is replaced with `[REDACTED]`, even though no
+    // pattern could match it.
+    reponyx_logging::register_secret(config.setup_token.expose());
+    reponyx_logging::register_secret(config.private_key_pem.expose());
+    // The broker's secrets come from a `.env` file by default: warn
+    // when that file is readable by other users (audit A4). On
+    // Windows the check is skipped — ACLs, not modes, govern access
+    // there, and the file lives under the user's %APPDATA%.
+    warn_if_env_file_world_readable();
     let bind_addr: SocketAddr = config.bind_addr;
     // A broker is already listening here (started by hand, by
     // dev:all, or by the desktop): this is not an error. Exit 0 so
@@ -117,6 +132,40 @@ async fn main() {
         std::process::exit(1);
     }
 }
+
+/// Warn when a `.env` file the broker loads is readable by users
+/// other than the owner (audit A4). The broker's setup token and
+/// private key live in that file; a world-readable copy defeats
+/// every other secret control. Unix only: on Windows the file lives
+/// under the user's profile and access is governed by ACLs.
+#[cfg(unix)]
+fn warn_if_env_file_world_readable() {
+    use std::os::unix::fs::PermissionsExt;
+    let mut paths = Vec::new();
+    if let Ok(path) = std::env::var("REPONYX_BROKER_ENV_FILE")
+        && !path.trim().is_empty()
+    {
+        paths.push(std::path::PathBuf::from(path));
+    }
+    paths.push(std::path::PathBuf::from(".env"));
+    for path in paths {
+        let Ok(metadata) = std::fs::metadata(&path) else {
+            continue;
+        };
+        let mode = metadata.permissions().mode();
+        if mode & 0o044 != 0 {
+            eprintln!(
+                "auth-broker: WARNING: {} is readable by other users (mode {:o}); run `chmod 600 {}` so only you can read the setup token and private key",
+                path.display(),
+                mode & 0o777,
+                path.display()
+            );
+        }
+    }
+}
+
+#[cfg(not(unix))]
+fn warn_if_env_file_world_readable() {}
 
 /// Is a broker already answering `/health` on this address? A bare
 /// TCP connect is not enough — another process could hold the port —

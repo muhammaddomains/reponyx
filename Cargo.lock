@@ -4041,6 +4041,7 @@ dependencies = [
  "serde_json",
  "sha2 0.11.1",
  "sqlx",
+ "subtle",
  "tokio",
  "tracing",
  "tracing-subscriber",
@@ -4081,6 +4082,7 @@ dependencies = [
  "serde_json",
  "thiserror 2.0.21",
  "uuid",
+ "zeroize",
 ]
 
 [[package]]
@@ -4194,12 +4196,14 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2 0.11.1",
+ "subtle",
  "tempfile",
  "thiserror 2.0.21",
  "tokio",
  "tokio-util",
  "tracing",
  "uuid",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]

@@ -5,6 +5,8 @@
 
 pub mod domain;
 pub mod errors;
+pub mod secret;
 
 pub use domain::*;
 pub use errors::{ErrorCode, RepoNyxError};
+pub use secret::SecretString;

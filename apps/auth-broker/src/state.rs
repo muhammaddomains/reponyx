@@ -28,9 +28,10 @@ use crate::rate_limit::RateLimiter;
 use crate::store::BrokerStore;
 use crate::tokens::{InstallationTokenResponse, mint_installation_token};
 use chrono::{DateTime, Utc};
-use reponyx_core::{ErrorCode, RepoNyxError};
+use reponyx_core::{ErrorCode, RepoNyxError, SecretString};
 use std::collections::HashMap;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
+use std::time::Instant;
 use tokio::sync::RwLock;
 
 /// A recorded GitHub App installation (from the install callback).
@@ -92,7 +93,9 @@ pub struct SetupStateRecord {
 }
 
 /// A device token issued after pairing, keyed by its SHA-256 hash.
-/// Non-expiring by time in Phase 5; revocable.
+/// Tokens live [`BrokerConfig::device_token_ttl`] (90 days, audit
+/// A1), then minting with them fails and the device must pair again.
+/// Revocable at any time.
 #[derive(Debug, Clone)]
 pub struct DeviceTokenRecord {
     pub token_hash: String,
@@ -100,13 +103,21 @@ pub struct DeviceTokenRecord {
     pub device_name: String,
     pub installation_id: String,
     pub created_at: DateTime<Utc>,
+    pub expires_at: DateTime<Utc>,
     pub revoked: bool,
 }
 
-/// A cached installation token (in memory only). `Debug` redacts
-/// the token.
+impl DeviceTokenRecord {
+    pub fn is_expired(&self) -> bool {
+        Utc::now() >= self.expires_at
+    }
+}
+
+/// A cached installation token (in memory only). The token is a
+/// [`SecretString`]: a live GitHub token must never be printable
+/// from a debug dump. `Debug` redacts the token.
 pub struct CachedInstallationToken {
-    pub token: String,
+    pub token: SecretString,
     pub expires_at: DateTime<Utc>,
 }
 
@@ -127,6 +138,18 @@ pub struct PairingStatusInfo {
     pub device_identifier: Option<String>,
 }
 
+/// Setup-token brute-force guard (audit B2): consecutive failed
+/// presentations, and the lockout they trip. In-memory only — a
+/// broker restart resets it, which is acceptable for a local
+/// service: restarting the broker already requires local access.
+/// Individual failures are NOT audited (a brute-force loop would
+/// flood the audit table); only the lockout transition is.
+#[derive(Debug, Default)]
+struct SetupAuthTracker {
+    consecutive_failures: u32,
+    locked_until: Option<Instant>,
+}
+
 /// All broker state. Handlers take `Arc<BrokerState>`.
 pub struct BrokerState {
     pub config: BrokerConfig,
@@ -142,6 +165,7 @@ pub struct BrokerState {
     token_cache: RwLock<HashMap<String, CachedInstallationToken>>,
     audit: AuditLog,
     pub rate_limiter: RateLimiter,
+    setup_auth: Mutex<SetupAuthTracker>,
 }
 
 fn store_error(err: sqlx::Error) -> RepoNyxError {
@@ -169,6 +193,7 @@ impl BrokerState {
             token_cache: RwLock::new(HashMap::new()),
             audit: AuditLog::new(),
             rate_limiter: RateLimiter::new(),
+            setup_auth: Mutex::new(SetupAuthTracker::default()),
         }
     }
 
@@ -185,6 +210,7 @@ impl BrokerState {
     ) -> Result<Arc<Self>, sqlx::Error> {
         store.prune_spent_pairing_codes().await?;
         store.prune_setup_states().await?;
+        store.prune_expired_device_tokens().await?;
         store.prune_audit_events().await?;
         let installations = store.load_installations().await?;
         let pairing_codes = store.load_pairing_codes().await?;
@@ -245,6 +271,60 @@ impl BrokerState {
         self.audit.list()
     }
 
+    // -- setup-token brute-force guard (audit B2) --------------------
+
+    /// Remaining lockout, if setup-token auth is currently locked
+    /// out. `None` also when a previous lockout has expired (the
+    /// next failure re-arms the counter).
+    pub fn setup_auth_locked_out(&self) -> Option<std::time::Duration> {
+        let tracker = self
+            .setup_auth
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        tracker.locked_until.and_then(|until| {
+            let now = Instant::now();
+            if until > now { Some(until - now) } else { None }
+        })
+    }
+
+    /// Record a failed setup-token presentation. Returns the lockout
+    /// that just started, if the failure threshold was reached. An
+    /// in-progress lockout is not extended by further attempts — it
+    /// is a fixed window from the trip, so the operator is never
+    /// locked out forever by an attacker who keeps guessing.
+    pub fn note_setup_auth_failure(&self) -> Option<std::time::Duration> {
+        let mut tracker = self
+            .setup_auth
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        if let Some(until) = tracker.locked_until
+            && until > Instant::now()
+        {
+            return Some(until - Instant::now());
+        }
+        tracker.locked_until = None;
+        tracker.consecutive_failures += 1;
+        if tracker.consecutive_failures >= self.config.setup_auth_max_failures {
+            let lockout = self.config.setup_auth_lockout;
+            tracker.locked_until = Some(Instant::now() + lockout);
+            tracker.consecutive_failures = 0;
+            Some(lockout)
+        } else {
+            None
+        }
+    }
+
+    /// A successful setup-token presentation clears the failure
+    /// counter (and any expired lockout).
+    pub fn reset_setup_auth_failures(&self) {
+        let mut tracker = self
+            .setup_auth
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        tracker.consecutive_failures = 0;
+        tracker.locked_until = None;
+    }
+
     // -- installations ----------------------------------------------
 
     pub async fn record_installation(
@@ -253,12 +333,22 @@ impl BrokerState {
         setup_action: &str,
         account_login: Option<String>,
     ) -> Result<(), RepoNyxError> {
+        // Re-installing the GitHub App must NOT wipe the pairing
+        // (audit B1): carry the existing `paired_device` forward,
+        // and keep the recorded login when the callback carries none.
+        let existing = self.installation(installation_id).await;
         let record = InstallationRecord {
             installation_id: installation_id.to_string(),
             setup_action: setup_action.to_string(),
-            account_login,
+            account_login: account_login.or_else(|| {
+                existing
+                    .as_ref()
+                    .and_then(|record| record.account_login.clone())
+            }),
             installed_at: Utc::now(),
-            paired_device: None,
+            paired_device: existing
+                .as_ref()
+                .and_then(|record| record.paired_device.clone()),
         };
         if let Some(store) = &self.store {
             store
@@ -488,19 +578,43 @@ impl BrokerState {
         let mut confirmed = record.clone();
         confirmed.status = PairingStatus::Confirmed;
         let device_token = random_token();
+        let now = Utc::now();
         let token_record = DeviceTokenRecord {
             token_hash: sha256_hex(&device_token),
             device_identifier: device_identifier.to_string(),
             device_name,
             installation_id: installation_id.clone(),
-            created_at: Utc::now(),
+            created_at: now,
+            expires_at: now + self.config.device_token_ttl,
             revoked: false,
         };
+        // Re-pairing revokes the device's previous tokens (audit
+        // A1): one live token per device, so a token leaked before
+        // the re-pair stops minting. Collected and persisted before
+        // the new token is inserted, so the new token is never
+        // caught in its own revocation.
+        let mut previous_tokens: Vec<DeviceTokenRecord> = Vec::new();
+        {
+            let tokens = self.device_tokens.read().await;
+            for token in tokens.values() {
+                if token.device_identifier == device_identifier && !token.revoked {
+                    let mut updated = token.clone();
+                    updated.revoked = true;
+                    previous_tokens.push(updated);
+                }
+            }
+        }
         if let Some(store) = &self.store {
             store
                 .update_pairing_code(&confirmed)
                 .await
                 .map_err(store_error)?;
+            for token in &previous_tokens {
+                store
+                    .update_device_token(token)
+                    .await
+                    .map_err(store_error)?;
+            }
             store
                 .insert_device_token(&token_record)
                 .await
@@ -519,10 +633,15 @@ impl BrokerState {
         }
         *record = confirmed;
         drop(codes);
-        self.device_tokens
-            .write()
-            .await
-            .insert(token_record.token_hash.clone(), token_record);
+        {
+            let mut tokens = self.device_tokens.write().await;
+            for updated in &previous_tokens {
+                if let Some(token) = tokens.get_mut(&updated.token_hash) {
+                    token.revoked = true;
+                }
+            }
+            tokens.insert(token_record.token_hash.clone(), token_record);
+        }
         if let Some(installation) = self.installations.write().await.get_mut(&installation_id) {
             installation.paired_device = Some(device_identifier.to_string());
         }
@@ -530,7 +649,14 @@ impl BrokerState {
             device_identifier,
             "pairing.confirmed",
             "success",
-            format!("installation {installation_id}"),
+            if previous_tokens.is_empty() {
+                format!("installation {installation_id}")
+            } else {
+                format!(
+                    "installation {installation_id}; revoked {} previous device token(s)",
+                    previous_tokens.len()
+                )
+            },
         )
         .await;
         Ok((device_token, installation_id))
@@ -627,15 +753,30 @@ impl BrokerState {
     }
 
     /// Resolve a presented device token to its record (hash match,
-    /// not revoked). Returns `None` for unknown or revoked tokens.
+    /// not revoked, not expired). Returns `None` for unknown,
+    /// revoked, or expired tokens. Whether a known token is expired
+    /// is reported by [`Self::device_token_expired`] so callers can
+    /// tell the operator to pair again instead of "invalid token".
     pub async fn device_for_token(&self, token: &str) -> Option<DeviceTokenRecord> {
         let hash = sha256_hex(token);
         self.device_tokens
             .read()
             .await
             .get(&hash)
-            .filter(|record| !record.revoked)
+            .filter(|record| !record.revoked && !record.is_expired())
             .cloned()
+    }
+
+    /// True when the presented token is known but its expiry has
+    /// passed (and it is not revoked). Unknown and revoked tokens
+    /// return false — they are "invalid", not "expired".
+    pub async fn device_token_expired(&self, token: &str) -> bool {
+        let hash = sha256_hex(token);
+        self.device_tokens
+            .read()
+            .await
+            .get(&hash)
+            .is_some_and(|record| !record.revoked && record.is_expired())
     }
 
     // -- token minting -----------------------------------------------
@@ -655,7 +796,7 @@ impl BrokerState {
                 && Utc::now() + chrono::Duration::minutes(5) < cached.expires_at
             {
                 return Ok(InstallationTokenResponse {
-                    token: cached.token.clone(),
+                    token: cached.token.expose().to_string(),
                     expires_at: cached.expires_at,
                     permissions: serde_json::Value::Object(Default::default()),
                     repository_selection: None,
@@ -666,7 +807,7 @@ impl BrokerState {
         self.token_cache.write().await.insert(
             installation_id.to_string(),
             CachedInstallationToken {
-                token: minted.token.clone(),
+                token: SecretString::new(minted.token.clone()),
                 expires_at: minted.expires_at,
             },
         );

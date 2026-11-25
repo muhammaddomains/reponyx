@@ -42,15 +42,14 @@ pub fn app_jwt(config: &BrokerConfig) -> Result<String, RepoNyxError> {
         iat: now - 60,
         exp: now + 540,
     };
-    let key = jsonwebtoken::EncodingKey::from_rsa_pem(config.private_key_pem.as_bytes()).map_err(
-        |e| {
-            RepoNyxError::new(
-                ErrorCode::InternalError,
-                "broker private key is not a valid RSA PEM key",
-            )
-            .with_details(e.to_string())
-        },
-    )?;
+    let key = jsonwebtoken::EncodingKey::from_rsa_pem(config.private_key_pem.expose().as_bytes())
+        .map_err(|e| {
+        RepoNyxError::new(
+            ErrorCode::InternalError,
+            "broker private key is not a valid RSA PEM key",
+        )
+        .with_details(e.to_string())
+    })?;
     jsonwebtoken::encode(
         &jsonwebtoken::Header::new(jsonwebtoken::Algorithm::RS256),
         &claims,
@@ -140,42 +139,93 @@ pub async fn list_app_installations(
     http: &reqwest::Client,
     config: &BrokerConfig,
 ) -> std::collections::HashMap<String, String> {
-    #[derive(Deserialize)]
-    struct AppInstallation {
-        id: u64,
-        account: AppInstallationAccount,
+    match fetch_app_installations(http, config).await {
+        Ok(installations) => installations
+            .into_iter()
+            .map(|installation| (installation.id.to_string(), installation.account.login))
+            .collect(),
+        Err(_) => std::collections::HashMap::new(),
     }
-    #[derive(Deserialize)]
-    struct AppInstallationAccount {
-        login: String,
-    }
-    let mut out = std::collections::HashMap::new();
-    let Ok(jwt) = app_jwt(config) else {
-        return out;
-    };
+}
+
+/// Verify an installation id against GitHub: true only when the id
+/// is an installation of THIS GitHub App (audit B3 — the install
+/// callback must not record an arbitrary `installation_id` handed
+/// to it with a valid `state`). Unlike
+/// [`list_app_installations`], a GitHub failure is an error, not an
+/// empty list: the callback must fail closed when it cannot verify,
+/// so a forged callback cannot slip through during a GitHub outage.
+pub async fn verify_app_installation(
+    http: &reqwest::Client,
+    config: &BrokerConfig,
+    installation_id: &str,
+) -> Result<bool, RepoNyxError> {
+    let installations = fetch_app_installations(http, config).await?;
+    Ok(installations
+        .iter()
+        .any(|installation| installation.id.to_string() == installation_id))
+}
+
+#[derive(Deserialize)]
+struct AppInstallation {
+    id: u64,
+    account: AppInstallationAccount,
+}
+
+#[derive(Deserialize)]
+struct AppInstallationAccount {
+    login: String,
+}
+
+/// Fetch the App's installations from GitHub (`GET
+/// /app/installations`, App JWT auth). Transport and HTTP errors
+/// surface as [`RepoNyxError`]; callers decide whether to fail open
+/// ([`list_app_installations`]) or closed
+/// ([`verify_app_installation`]).
+async fn fetch_app_installations(
+    http: &reqwest::Client,
+    config: &BrokerConfig,
+) -> Result<Vec<AppInstallation>, RepoNyxError> {
+    let jwt = app_jwt(config)?;
     let url = format!(
         "{}/app/installations",
         config.github_api_base.trim_end_matches('/')
     );
-    let Ok(response) = http
+    let response = http
         .get(&url)
         .header("Authorization", format!("Bearer {jwt}"))
         .header("Accept", "application/vnd.github+json")
         .header("X-GitHub-Api-Version", "2022-11-28")
         .send()
         .await
-    else {
-        return out;
-    };
-    if !response.status().is_success() {
-        return out;
+        .map_err(|e| {
+            if e.is_timeout() {
+                RepoNyxError::new(ErrorCode::OperationTimedOut, "GitHub API request timed out")
+                    .with_details(e.to_string())
+            } else {
+                RepoNyxError::new(ErrorCode::NetworkUnavailable, "cannot reach the GitHub API")
+                    .with_details(e.to_string())
+            }
+        })?;
+    let status = response.status();
+    if !status.is_success() {
+        let body = response.text().await.unwrap_or_default();
+        return Err(RepoNyxError::new(
+            ErrorCode::NetworkUnavailable,
+            format!(
+                "GitHub installations lookup failed (HTTP {})",
+                status.as_u16()
+            ),
+        )
+        .with_details(parse_error_message(&body)));
     }
-    if let Ok(installations) = response.json::<Vec<AppInstallation>>().await {
-        for installation in installations {
-            out.insert(installation.id.to_string(), installation.account.login);
-        }
-    }
-    out
+    response.json::<Vec<AppInstallation>>().await.map_err(|e| {
+        RepoNyxError::new(
+            ErrorCode::InternalError,
+            "GitHub API returned an unparsable installations response",
+        )
+        .with_details(e.to_string())
+    })
 }
 
 fn parse_error_message(body: &str) -> String {

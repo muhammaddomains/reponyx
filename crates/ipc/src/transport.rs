@@ -54,22 +54,18 @@ impl Listener {
         }
         #[cfg(windows)]
         {
-            use tokio::net::windows::named_pipe::ServerOptions;
             // Take the pending instance (creating one on demand when
             // none is pending), then create its replacement BEFORE
             // awaiting connect — so a listening instance is always
-            // available for the next client.
+            // available for the next client. Every instance carries
+            // the restricted DACL (audit F2): current user + SYSTEM
+            // only.
             let server = match self.pending.take() {
                 Some(server) => server,
-                None => ServerOptions::new()
-                    .first_pipe_instance(false)
-                    .create(&self.path)
+                None => crate::pipe_security::create_restricted_pipe(&self.path, false)
                     .map_err(TransportError::Io)?,
             };
-            if let Ok(next) = ServerOptions::new()
-                .first_pipe_instance(false)
-                .create(&self.path)
-            {
+            if let Ok(next) = crate::pipe_security::create_restricted_pipe(&self.path, false) {
                 self.pending = Some(next);
             }
             // If the replacement could not be created, the next
@@ -104,7 +100,6 @@ pub async fn listen(data_dir: &Path) -> Result<Listener, TransportError> {
     }
     #[cfg(windows)]
     {
-        use tokio::net::windows::named_pipe::ServerOptions;
         let path = socket_path(data_dir);
         // Create the first instance and KEEP it as the pending
         // listening instance. (The old code dropped it here, so the
@@ -112,25 +107,27 @@ pub async fn listen(data_dir: &Path) -> Result<Listener, TransportError> {
         // a probe landing in that gap, or between accept() returning
         // and the next accept() creating an instance, saw no pipe
         // at all and the desktop concluded the agent was down.)
-        let pending = ServerOptions::new()
-            .first_pipe_instance(true)
-            .create(&path)
-            .map_err(|e| {
-                // `first_pipe_instance` fails with Access denied when
-                // an instance of the pipe already exists — i.e. another
-                // agent is already running and owns the pipe. That is
-                // the normal single-instance conflict, not a permissions
-                // problem, so name it instead of surfacing the raw OS
-                // error ("io error: Access is denied. (os error 5)").
-                if e.kind() == io::ErrorKind::PermissionDenied {
-                    TransportError::Other(
-                        "named pipe already in use (Access is denied) — another reponyx-agent is probably already running; only one agent can own the pipe"
-                            .into(),
-                    )
-                } else {
-                    TransportError::Io(e)
-                }
-            })?;
+        //
+        // The instance carries the restricted DACL (audit F2):
+        // current user + SYSTEM only. If the descriptor cannot be
+        // built, creation fails loudly — never silently fall back
+        // to a world-accessible pipe.
+        let pending = crate::pipe_security::create_restricted_pipe(&path, true).map_err(|e| {
+            // `first_pipe_instance` fails with Access denied when
+            // an instance of the pipe already exists — i.e. another
+            // agent is already running and owns the pipe. That is
+            // the normal single-instance conflict, not a permissions
+            // problem, so name it instead of surfacing the raw OS
+            // error ("io error: Access is denied. (os error 5)").
+            if e.kind() == io::ErrorKind::PermissionDenied {
+                TransportError::Other(
+                    "named pipe already in use (Access is denied) — another reponyx-agent is probably already running; only one agent can own the pipe"
+                        .into(),
+                )
+            } else {
+                TransportError::Io(e)
+            }
+        })?;
         Ok(Listener {
             path,
             pending: Some(pending),

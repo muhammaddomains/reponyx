@@ -10,6 +10,24 @@
 
 use rand::RngExt;
 use sha2::{Digest, Sha256};
+use subtle::ConstantTimeEq;
+
+/// Constant-time equality for two SHA-256 digests. The digests are
+/// fixed-length, so the comparison itself leaks nothing about where
+/// (or whether) two secrets differ — a plain `==` on the digests or
+/// on the hex strings short-circuits at the first differing byte
+/// (audit A2).
+pub fn digests_equal(a: &[u8; 32], b: &[u8; 32]) -> bool {
+    a.ct_eq(b).into()
+}
+
+/// SHA-256 of a secret value, as raw bytes. Only hashes are stored
+/// or compared; the raw value is never persisted server-side.
+pub fn sha256_bytes(input: &str) -> [u8; 32] {
+    let mut hasher = Sha256::new();
+    hasher.update(input.as_bytes());
+    hasher.finalize().into()
+}
 
 /// Alphabet without characters that are easy to confuse when a user
 /// reads a code off a screen.
@@ -104,6 +122,18 @@ mod tests {
         assert_ne!(hash, sha256_hex("test-secret-other"));
         assert!(!hash.contains("test-secret-value"));
         assert_eq!(hash.len(), 64);
+    }
+
+    #[test]
+    fn digests_compare_in_constant_time_shape() {
+        // Behavioural check only (timing is not observable in a unit
+        // test): equal digests match, any differing byte does not.
+        let a = sha256_bytes("test-secret-value");
+        assert!(digests_equal(&a, &sha256_bytes("test-secret-value")));
+        assert!(!digests_equal(&a, &sha256_bytes("test-secret-other")));
+        let mut b = a;
+        b[31] ^= 1;
+        assert!(!digests_equal(&a, &b));
     }
 
     #[test]

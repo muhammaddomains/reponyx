@@ -246,6 +246,7 @@ async fn store_round_trips_records() {
             device_name: "Test Machine".to_string(),
             installation_id: "781".to_string(),
             created_at: now,
+            expires_at: now + chrono::Duration::days(90),
             revoked: false,
         })
         .await
@@ -259,5 +260,6 @@ async fn store_round_trips_records() {
     let tokens = store.load_device_tokens().await.unwrap();
     assert_eq!(tokens.len(), 1);
     assert_eq!(tokens[0].device_identifier, "device-roundtrip");
+    assert_eq!(tokens[0].expires_at, now + chrono::Duration::days(90));
     std::fs::remove_dir_all(&dir).ok();
 }

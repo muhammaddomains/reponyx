@@ -12,6 +12,7 @@
 //! Nothing in this module ever logs a secret: `Debug` for
 //! [`BrokerConfig`] redacts the key and the setup token.
 
+use reponyx_core::SecretString;
 use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::time::Duration;
@@ -26,24 +27,52 @@ pub const DEFAULT_STATE_TTL: Duration = Duration::from_secs(600);
 /// Wrong-code attempts allowed per pairing code before it is
 /// invalidated.
 pub const DEFAULT_MAX_PAIRING_ATTEMPTS: u32 = 5;
+/// Device tokens live 90 days, then minting requires re-pairing
+/// (audit A1).
+pub const DEFAULT_DEVICE_TOKEN_TTL: Duration = Duration::from_secs(90 * 24 * 60 * 60);
+/// Consecutive failed setup-token presentations before setup-token
+/// auth locks out (audit B2).
+pub const DEFAULT_SETUP_AUTH_MAX_FAILURES: u32 = 10;
+/// How long setup-token auth stays locked out after the failure
+/// threshold (audit B2).
+pub const DEFAULT_SETUP_AUTH_LOCKOUT: Duration = Duration::from_secs(15 * 60);
+/// GitHub-callback rate limit: requests per minute per IP (audit B3).
+pub const DEFAULT_CALLBACK_PER_MINUTE_PER_IP: f64 = 10.0;
+/// Setup-state rate limit: requests per minute per IP (audit B6).
+pub const DEFAULT_SETUP_STATE_PER_MINUTE_PER_IP: f64 = 10.0;
 
 pub struct BrokerConfig {
     /// GitHub App id (public, from the App's settings page).
     pub app_id: String,
     /// GitHub App slug (public, used for the install URL).
     pub app_slug: String,
-    /// The App's private key, PEM text. Secret — redacted in `Debug`,
-    /// never logged, never returned by any endpoint.
-    pub private_key_pem: String,
+    /// The App's private key, PEM text. A [`SecretString`]: redacted
+    /// in `Debug`, zeroized on drop, never logged, never returned by
+    /// any endpoint.
+    pub private_key_pem: SecretString,
     /// GitHub API base (default `https://api.github.com`; tests point
     /// it at a mock server).
     pub github_api_base: String,
     pub bind_addr: SocketAddr,
     /// Token that authenticates pairing/setup requests from the
-    /// desktop operator. Secret — redacted in `Debug`, never logged.
-    pub setup_token: String,
+    /// desktop operator. A [`SecretString`]: redacted in `Debug`,
+    /// zeroized on drop, never logged.
+    pub setup_token: SecretString,
     pub state_ttl: Duration,
     pub max_pairing_attempts: u32,
+    /// Device-token lifetime (audit A1): a token minted more than
+    /// this long ago no longer mints; the device must pair again.
+    pub device_token_ttl: Duration,
+    /// Consecutive failed setup-token presentations before
+    /// setup-token auth locks out (audit B2).
+    pub setup_auth_max_failures: u32,
+    /// How long setup-token auth stays locked out (audit B2).
+    pub setup_auth_lockout: Duration,
+    /// GitHub-callback rate limit: requests per minute per IP
+    /// (audit B3).
+    pub callback_per_minute_per_ip: f64,
+    /// Setup-state rate limit: requests per minute per IP (audit B6).
+    pub setup_state_per_minute_per_ip: f64,
     /// Token-mint rate limit: requests per minute per device.
     pub mint_per_minute_per_device: f64,
     /// Pairing-request rate limit: requests per minute per IP.
@@ -109,18 +138,35 @@ impl BrokerConfig {
             .unwrap_or_else(|_| DEFAULT_BIND_ADDR.to_string())
             .parse()
             .map_err(|e| format!("REPONYX_BROKER_BIND is not a valid socket address: {e}"))?;
+        // A non-loopback bind exposes the broker (and its setup-token
+        // auth) to the LAN: it needs an explicit opt-in, not just a
+        // changed address (audit B2). Loopback (`127.0.0.1`, `::1`)
+        // needs nothing.
+        let allow_non_loopback = std::env::var("REPONYX_BROKER_ALLOW_NON_LOOPBACK")
+            .map(|value| value.eq_ignore_ascii_case("true"))
+            .unwrap_or(false);
+        if !bind_addr.ip().is_loopback() && !allow_non_loopback {
+            return Err(format!(
+                "REPONYX_BROKER_BIND={bind_addr} is not loopback; set REPONYX_BROKER_ALLOW_NON_LOOPBACK=true to expose the broker on the network (anyone on the network can then reach it — keep the setup token secret)"
+            ));
+        }
         let data_dir = std::env::var("REPONYX_BROKER_DATA_DIR")
             .map(PathBuf::from)
             .unwrap_or_else(|_| PathBuf::from("broker-data"));
         Ok(Self {
             app_id,
             app_slug,
-            private_key_pem,
+            private_key_pem: SecretString::new(private_key_pem),
             github_api_base,
             bind_addr,
-            setup_token,
+            setup_token: SecretString::new(setup_token),
             state_ttl: DEFAULT_STATE_TTL,
             max_pairing_attempts: DEFAULT_MAX_PAIRING_ATTEMPTS,
+            device_token_ttl: DEFAULT_DEVICE_TOKEN_TTL,
+            setup_auth_max_failures: DEFAULT_SETUP_AUTH_MAX_FAILURES,
+            setup_auth_lockout: DEFAULT_SETUP_AUTH_LOCKOUT,
+            callback_per_minute_per_ip: DEFAULT_CALLBACK_PER_MINUTE_PER_IP,
+            setup_state_per_minute_per_ip: DEFAULT_SETUP_STATE_PER_MINUTE_PER_IP,
             mint_per_minute_per_device: 30.0,
             pairing_per_minute_per_ip: 10.0,
             data_dir,
@@ -138,12 +184,17 @@ impl BrokerConfig {
         Self {
             app_id: app_id.into(),
             app_slug: "reponyx-test".to_string(),
-            private_key_pem: private_key_pem.into(),
+            private_key_pem: SecretString::new(private_key_pem.into()),
             github_api_base: github_api_base.into(),
             bind_addr: "127.0.0.1:0".parse().unwrap(),
-            setup_token: "test-setup-token-do-not-use".to_string(),
+            setup_token: SecretString::new("test-setup-token-do-not-use"),
             state_ttl: DEFAULT_STATE_TTL,
             max_pairing_attempts: DEFAULT_MAX_PAIRING_ATTEMPTS,
+            device_token_ttl: DEFAULT_DEVICE_TOKEN_TTL,
+            setup_auth_max_failures: DEFAULT_SETUP_AUTH_MAX_FAILURES,
+            setup_auth_lockout: DEFAULT_SETUP_AUTH_LOCKOUT,
+            callback_per_minute_per_ip: DEFAULT_CALLBACK_PER_MINUTE_PER_IP,
+            setup_state_per_minute_per_ip: DEFAULT_SETUP_STATE_PER_MINUTE_PER_IP,
             mint_per_minute_per_device: 30.0,
             pairing_per_minute_per_ip: 10.0,
             // Never a temp_dir() call here: Semgrep's temp-dir rule
@@ -166,14 +217,19 @@ mod tests {
         let config = BrokerConfig {
             app_id: "123456".to_string(),
             app_slug: "reponyx".to_string(),
-            private_key_pem:
-                "-----BEGIN RSA PRIVATE KEY-----\ntest-key-material\n-----END RSA PRIVATE KEY-----"
-                    .to_string(),
+            private_key_pem: SecretString::new(
+                "-----BEGIN RSA PRIVATE KEY-----\ntest-key-material\n-----END RSA PRIVATE KEY-----",
+            ),
             github_api_base: DEFAULT_GITHUB_API_BASE.to_string(),
             bind_addr: DEFAULT_BIND_ADDR.parse().unwrap(),
-            setup_token: "test-setup-token-secret".to_string(),
+            setup_token: SecretString::new("test-setup-token-secret"),
             state_ttl: DEFAULT_STATE_TTL,
             max_pairing_attempts: DEFAULT_MAX_PAIRING_ATTEMPTS,
+            device_token_ttl: DEFAULT_DEVICE_TOKEN_TTL,
+            setup_auth_max_failures: DEFAULT_SETUP_AUTH_MAX_FAILURES,
+            setup_auth_lockout: DEFAULT_SETUP_AUTH_LOCKOUT,
+            callback_per_minute_per_ip: DEFAULT_CALLBACK_PER_MINUTE_PER_IP,
+            setup_state_per_minute_per_ip: DEFAULT_SETUP_STATE_PER_MINUTE_PER_IP,
             mint_per_minute_per_device: 30.0,
             pairing_per_minute_per_ip: 10.0,
             data_dir: PathBuf::from("broker-data"),

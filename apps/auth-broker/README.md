@@ -20,11 +20,27 @@ cargo run -p reponyx-auth-broker
 ```
 
 The broker refuses to start without the App id, the private key,
-and a setup token of at least 16 characters. State is held
-**in memory** in Phase 5: restarting the broker forgets
-installations, pairing codes, and device tokens, so devices must
-re-pair. Durable broker storage is a hardening item for the
-deployment phase.
+and a setup token of at least 16 characters. State is **durable
+SQLite** (`broker.sqlite` under `REPONYX_BROKER_DATA_DIR`,
+default `broker-data`): restarting the broker keeps
+installations, pairing codes, device tokens, and the audit log.
+
+## Protecting the broker's secrets
+
+- **The `.env` file must not be world-readable.** The broker
+  reads a repo-root `.env` at startup (real OS env vars win over
+  the file; `REPONYX_BROKER_ENV_FILE` points at a different file
+  when the app is installed). On Unix the broker warns at startup
+  if that file is readable by other users — keep it `chmod 600`
+  (owner read/write only). The file holds the GitHub App private
+  key and the setup token; anyone who can read it can mint tokens
+  for every installed account.
+- **The broker binds loopback only by default.** Setting
+  `REPONYX_BROKER_BIND` to a non-loopback address refuses to
+  start unless `REPONYX_BROKER_ALLOW_NON_LOOPBACK=true` is also
+  set. Only set that on a trusted network — anyone on the network
+  can then reach the broker, and the setup token is the only
+  thing standing between them and your installations.
 
 ## Endpoints
 
@@ -35,7 +51,7 @@ deployment phase.
 | GET | `/github/callback` | `state` query param | GitHub App install callback; validates `state` (single-use, 10 min), records the installation |
 | POST | `/pairing/request` | setup token | request a pairing code for an installation (10 min TTL) |
 | POST | `/pairing/confirm` | setup token | confirm a code → receive a device token |
-| GET | `/pairing/status?code=…` | setup token | pairing-code status |
+| POST | `/pairing/status` | setup token | pairing-code status (code in the JSON body, never in a URL query) |
 | POST | `/pairing/revoke` | setup token | revoke a device's codes and tokens |
 | POST | `/installations/{id}/token` | device token | mint an installation access token (cached until 5 min before expiry) |
 | GET | `/installations` | setup token | list recorded installations |
@@ -53,7 +69,8 @@ RepoNyx error codes.
 2. The desktop asks the broker for a pairing code for an
    installation (the installation must already be recorded via the
    install callback). The code is 9 characters from an unambiguous
-   alphabet, shown as `XXX-XXX-XXX`, single-use, 10-minute TTL.
+   alphabet, shown as `XXX-XXX-XXX`, single-use, and it does not
+   expire (spent codes are pruned after 90 days).
 3. The user confirms the code (the desktop sends it back with the
    device name + identifier). The broker checks the code, its
    expiry, and that the device identifier matches the one the code
@@ -62,6 +79,10 @@ RepoNyx error codes.
    desktop stores it in the OS credential store and presents it as
    `Authorization: Bearer <device_token>` when minting installation
    tokens. The broker stores only the SHA-256 hash of the token.
+   **A device token lives 90 days** (`device_token_ttl`); after
+   that, minting fails with "device token expired; pair this
+   device again" and the device must re-pair. **Re-pairing revokes
+   the device's previous tokens** — only the latest token works.
 5. Revocation (`POST /pairing/revoke`) invalidates the device's
    tokens and pending codes.
 
@@ -69,18 +90,26 @@ RepoNyx error codes.
 
 Hand-rolled per-key token buckets (no extra dependency): token
 minting is limited per device (30/min), pairing requests per IP
-(10/min), pairing confirms per IP (20/min). Pairing codes also
-have a 5-attempt lockout of their own. Limits return HTTP 429
-with `Retry-After`.
+(10/min), pairing confirms per IP (20/min), the install callback
+per IP (10/min), and setup-state issuance per IP (10/min).
+Pairing codes also have a 5-attempt lockout of their own. Limits
+return HTTP 429 with `Retry-After`.
+
+**Setup-token lockout:** 10 consecutive failed setup-token
+presentations lock setup-token auth out for 15 minutes (429 with
+`Retry-After`); a success resets the counter. The lockout lives
+in memory — a broker restart resets it — and individual failures
+are not audited, so a guessing loop cannot flood the audit log;
+only the lockout transition is.
 
 ## Audit
 
-Append-only, in-memory: pairing requested/confirmed/revoked/
-failed, token minted/failed, callback received/failed, auth
-failures. Events carry timestamp, actor (device id, `setup`, or
-client IP), action, outcome, and detail — never a secret, token,
-code, or key. A test proves a minted token never appears in the
-audit output or broker logs.
+Append-only, durable (SQLite, 90-day retention): pairing
+requested/confirmed/revoked/failed, token minted/failed, callback
+received/failed, auth failures. Events carry timestamp, actor
+(device id, `setup`, or client IP), action, outcome, and detail
+— never a secret, token, code, or key. A test proves a minted
+token never appears in the audit output or broker logs.
 
 ## Token minting
 

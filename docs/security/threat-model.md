@@ -1,10 +1,11 @@
 # Threat Model
 
-Status: **Reviewed 2026-11-22 (Phase 10 security audit).** Every
-mitigation below was checked against the code as it stands after
-Phase 9; the findings from that review are in "Phase 10 findings"
-at the end. The Phase 1 draft's wording is kept where it still
-holds and corrected where the code says otherwise.
+Status: **Reviewed 2026-11-22 (Phase 10 security audit); updated
+2026-11-25 (Phase 3 of the production audit).** Every mitigation
+below was checked against the code as it stands after Phase 9;
+the findings from that review are in "Phase 10 findings" at the
+end. The Phase 1 draft's wording is kept where it still holds
+and corrected where the code says otherwise.
 
 Scope: RepoNyx desktop + background agent + Auth Broker + GitHub
 integration. Out of scope: GitHub's own infrastructure, the user's
@@ -17,17 +18,21 @@ below names the boundary, the mitigation, and the residual risk.
 
 - **Threat:** Another process on the machine reads the SQLite DB,
   scrapes memory, or issues IPC commands to trigger syncs/deletes.
-- **Mitigation (verified 2026-11-22):** The desktop↔agent IPC is
-  gated by a per-install 32-byte shared secret stored in the OS
-  credential store (`crates/ipc/src/auth.rs`) — every IPC message
-  carries the token, compared in constant time; no network
+- **Mitigation (verified 2026-11-22; pipe ACL fixed
+  2026-11-25):** The desktop↔agent IPC is gated by a per-install
+  32-byte shared secret stored in the OS credential store
+  (`crates/ipc/src/auth.rs`) — every IPC message carries the
+  token, compared in constant time (SHA-256 digest +
+  `subtle::ConstantTimeEq` since 2026-11-25); no network
   listener; DB file under the user's profile with OS file
-  permissions; no secrets in the DB.
+  permissions; no secrets in the DB. The Windows named pipe is
+  created with a DACL granting access only to the current user
+  and SYSTEM (`crates/ipc/src/pipe_security.rs`, Phase 3) — a
+  different local user gets Access Denied at connect time, and
+  pipe creation fails loudly if the descriptor cannot be built.
 - **Residual:** A process running as the same user can read the user's
   files. RepoNyx cannot defend against same-user malware; OS account
-  separation is the boundary. Note: the Windows named pipe itself
-  has no ACL configured (see finding F2) — the token check, not the
-  pipe, is the gate.
+  separation is the boundary.
 
 ## 2. Stolen PATs
 
@@ -58,17 +63,26 @@ below names the boundary, the mitigation, and the residual risk.
 - **Threat:** An attacker pairs their device to a victim's GitHub
   installation and receives its repositories.
 - **Mitigation (verified 2026-11-22, pairing expiry removed
-  2026-11-24):** Cryptographically random pairing codes, stored
+  2026-11-24; token expiry + lockout + callback verification
+  added 2026-11-25):** Cryptographically random pairing codes, stored
   only as SHA-256 hashes, single-use (a confirmed/revoked code is
   rejected on reuse), no expiry — the code is bound to one device,
   confirm requires the setup token, and wrong-device attempts
   revoke the code after 5 tries — per-IP rate limiting, device
   identification, explicit user confirmation in the browser flow;
-  revocation + audit history.
+  revocation + audit history. **Device tokens expire after 90 days**
+  and re-pairing revokes the device's previous tokens, so a leaked
+  token stops minting the moment the device pairs again. The setup
+  token locks out for 15 minutes after 10 consecutive failures.
+  The install callback verifies the `installation_id` against
+  GitHub's `GET /app/installations` for this App before recording
+  it, so a forged callback cannot register a foreign installation.
+  The pairing code travels in a POST body, never in a URL query.
 - **Residual:** If an attacker also controls the victim's GitHub
   session, pairing cannot distinguish them; GitHub session security
   is the boundary. The audit history is durable (SQLite, F1 fixed
-  2026-11-22) with a 90-day retention prune at startup.
+  2026-11-22) with a 90-day retention prune at startup. The
+  setup-token lockout is in-memory: a broker restart resets it.
 
 ## 5. Compromised Auth Broker
 
@@ -78,6 +92,12 @@ below names the boundary, the mitigation, and the residual risk.
   permissions; tokens expire in ~1 h; append-only audit log
   (`apps/auth-broker/src/audit.rs`); rate limits; TLS; broker has no
   access to local archives (it never sees repository contents).
+  Since 2026-11-25 the broker also refuses a non-loopback bind
+  unless `REPONYX_BROKER_ALLOW_NON_LOOPBACK=true` is set, the
+  setup token is compared in constant time, broker secrets are
+  held in `SecretString` (zeroized on drop, redacted in logs),
+  and exact secret values are registered for log redaction so a
+  prefix-less secret appearing bare in a log line is redacted.
 - **Residual:** Read access to all installed repositories for the
   token lifetime; revocation requires uninstalling the app per account.
   Broker state is durable (SQLite, F1 fixed 2026-11-22), so a broker
@@ -132,6 +152,10 @@ below names the boundary, the mitigation, and the residual risk.
   versioned protocol; the protocol has no delete operation at all
   (`ClientMessage`: Ping, AgentStatus, Enqueue, CancelJob, Shutdown)
   — destructive actions are Tauri commands from the UI only.
+  Since 2026-11-25 the agent accepts at most 16 simultaneous IPC
+  connections and closes connections idle for 10 minutes, so a
+  local process cannot exhaust the agent by holding connections
+  open.
 - **Residual:** Same-user local attackers remain a residual risk (§1).
 
 ## 10. Local disk theft
@@ -166,13 +190,18 @@ documented here with its consequence — nothing is silently dropped.
   minted-token cache and the rate-limiter buckets are still
   in-memory (a restart re-mints tokens and resets the buckets);
   audit events older than 90 days are pruned at startup.
-- **F2 — Windows named pipe has no ACL (documented).** The agent's
-  pipe (`\\.\pipe\reponyx-agent`) is created without a security
-  descriptor; any same-user process can connect, and the token
-  check is the only gate. Practical impact is bounded by the
-  same-user boundary (§1) — a same-user attacker can already read
-  the credential store — but restricting the pipe to the current
-  user is a hardening item for a later release.
+- **F2 — Windows named pipe has no ACL (fixed 2026-11-25,
+  Phase 3 of the production audit).** The agent's pipe
+  (`\\.\pipe\reponyx-agent`) is now created with a DACL granting
+  access only to the current user and SYSTEM
+  (`crates/ipc/src/pipe_security.rs`, via tokio's
+  `create_with_security_attributes_raw` so the pipe is restricted
+  from the instant it exists). Pipe creation fails loudly if the
+  descriptor cannot be built — never silently falls back to a
+  world-accessible pipe. A Windows-only test asserts the DACL
+  contains exactly those two trustees; it has not run on a
+  Windows machine yet (only the MinGW GNU cross-check covers the
+  code on this VM). The token check remains the second gate.
 - **F3 — No key-rotation / incident runbook (fixed 2026-11-23).**
   The runbook is `docs/security/key-rotation-runbook.md`: routine
   rotation for the GitHub App private key, broker setup token,

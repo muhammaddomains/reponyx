@@ -30,14 +30,58 @@ pub fn init_logging(log_dir: &Path) -> Result<(), Box<dyn std::error::Error>> {
         .map_err(|e| format!("logging already initialized or failed: {e}").into())
 }
 
+/// Register a secret value for redaction (audit A7). Pattern-based
+/// redaction cannot catch a prefix-less secret (a hex setup token,
+/// a base64url device token) that appears bare in a log line, so
+/// processes that hold long-lived secrets register the exact values
+/// and [`redact_secrets`] replaces every occurrence with
+/// `[REDACTED]`.
+///
+/// Values shorter than 8 characters are ignored (too generic to
+/// redact safely). The registry itself never prints its contents:
+/// it is a private static, and no `Debug` impl exposes it. Register
+/// at startup, after configuration is loaded.
+pub fn register_secret(value: &str) {
+    if value.len() < 8 {
+        return;
+    }
+    let mut registered = registered_secrets();
+    if !registered.iter().any(|secret| secret == value) {
+        registered.push(value.to_string());
+    }
+}
+
+static REGISTERED_SECRETS: std::sync::OnceLock<std::sync::Mutex<Vec<String>>> =
+    std::sync::OnceLock::new();
+
+fn registered_secrets() -> std::sync::MutexGuard<'static, Vec<String>> {
+    REGISTERED_SECRETS
+        .get_or_init(|| std::sync::Mutex::new(Vec::new()))
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+}
+
 /// Redact credential material from a string before logging.
 ///
 /// Handles: `Authorization: Bearer <x>`, `Authorization: token <x>`,
 /// `token=<x>`, `access_token=<x>`, `password=<x>`, `client_secret=<x>`,
-/// and GitHub PAT-shaped tokens (`ghp_…`, `github_pat_…`).
+/// GitHub PAT-shaped tokens (`ghp_…`, `github_pat_…`), and any
+/// secret registered with [`register_secret`] — including
+/// prefix-less values that no pattern could match (audit A7).
 /// Anything not matched is returned unchanged.
 pub fn redact_secrets(input: &str) -> String {
     let mut out = input.to_string();
+    // Registered values first: an exact value beats every pattern,
+    // and a registered value must never survive into a pattern pass
+    // that could split it.
+    {
+        let registered = registered_secrets();
+        for secret in registered.iter() {
+            if out.contains(secret.as_str()) {
+                out = out.replace(secret.as_str(), "[REDACTED]");
+            }
+        }
+    }
     for prefix in [
         "Authorization: Bearer ",
         "Authorization: token ",
@@ -278,6 +322,17 @@ mod tests {
         let s = redact_secrets("used ghp_AbC123xYz and github_pat_11ABCxyz_0def");
         assert!(!s.contains("ghp_AbC123xYz"));
         assert!(!s.contains("github_pat_11ABCxyz_0def"));
+    }
+
+    #[test]
+    fn redacts_registered_prefix_less_secret() {
+        // A hex setup token / base64url device token has no prefix
+        // for the pattern redactors to catch (audit A7); registering
+        // the exact value redacts it even when it appears bare.
+        register_secret("9f2c41ab77e0d3c5a1b8");
+        let s = redact_secrets("saw 9f2c41ab77e0d3c5a1b8 in the output");
+        assert!(!s.contains("9f2c41ab77e0d3c5a1b8"));
+        assert!(s.contains("[REDACTED]"));
     }
 
     #[test]

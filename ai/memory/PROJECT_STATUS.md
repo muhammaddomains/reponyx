@@ -125,6 +125,73 @@ installation id — deterministic by construction, not by thread
 luck; it must survive repeated full-suite runs before the flake
 is called fixed.
 
+## Phase 3 security hardening (2026-11-25)
+
+Built the same day Phase 2 was pushed, on the user's "now start
+phase 3". Closes audit A1–A4, A7, B1–B3, B5, B6, C2, C3 and F2
+(pipe ACL). Device tokens now expire after 90 days
+(`device_token_ttl`, migration 0003 backfills pre-existing
+tokens with creation + 90 days — verified with sqlite3 on a
+scratch DB: 2026-11-01 → 2027-01-30) and re-pairing revokes the
+device's previous tokens (one live token per device; the mint
+gate test was rewritten to the new semantics — the token
+confirmed for the LATEST pairing mints for any installation
+paired to the same device, the revoked one 401s). Re-installing
+the GitHub App preserves pairing (`record_installation` carries
+`paired_device` forward). Setup-token auth locks out after 10
+consecutive failures for 15 minutes (429 + Retry-After; in
+memory only — a broker restart resets it; failures are not
+audited, only the lockout transition); a non-loopback bind
+refuses to start without `REPONYX_BROKER_ALLOW_NON_LOOPBACK=true`
+(verified live with a throwaway key: 0.0.0.0 refused, opt-in
+listens, 127.0.0.1 unaffected). The install callback is
+rate-limited per IP before any audit write and the installation
+is verified against GitHub's `GET /app/installations` for this
+App before recording (forged callbacks 400; GitHub failure fails
+closed 502). `/setup/state` is rate-limited per IP; pairing
+status is POST-only (code in the JSON body, never a URL query).
+The agent's Windows named pipe is created with a DACL granting
+access only to the current user and SYSTEM (fails loudly if the
+descriptor cannot be built — never a world-accessible fallback);
+a Windows test asserts exactly those two trustees. Setup tokens
+and IPC tokens are compared in constant time (SHA-256 digest +
+`subtle::ConstantTimeEq`); broker secrets live in `SecretString`
+(redacted Debug, zeroized on drop — moved to `reponyx-core` so
+the broker does not depend on the credential-store crate);
+`reponyx_logging` registers exact secret values for redaction
+(the broker registers its setup token + private key), so a
+prefix-less secret appearing bare in a log line is redacted;
+the broker warns on Unix when its `.env` is group/other
+readable. IPC accepts at most 16 connections and closes idle
+connections after 10 minutes (the desktop client is
+request-scoped, so legitimate use is unaffected).
+Verified 2026-11-25: `cargo fmt --check` OK, clippy (workspace
+excl. desktop) clean, clippy for `reponyx-ipc` on the Windows
+GNU target clean (MinGW cross-check — see AGENTS.md; the MSVC
+target cannot run on this VM), broker suite 25 passed / 0
+failed (8 new Phase 3 tests; the 2 failures on the first run
+were test bugs — mint-request counting now filters by path, and
+the multi-installation test follows A1 revocation), full
+workspace suite **460 passed / 0 failed in 3 consecutive runs**
+(baseline 449; +12 new tests incl. the 8 broker ones), typecheck
+clean, frontend tests 73 passed / 0 failed, `pnpm -r lint`
+clean, vite build OK, `cargo audit` clean (0 vulnerabilities,
+7 no-fix warnings). **Semgrep caught the new file first:**
+`pipe_security.rs` drew 24 blocking findings — one per `unsafe`
+block, the repo's SAST gate flags every `unsafe`. Win32 FFI has
+no safe wrapper for these calls, so the file now carries a
+per-call `// nosemgrep:
+rust.lang.security.unsafe-usage.unsafe-usage` on each of the 24
+sites (the repo's established convention, same as exe.rs), with
+a module-level note explaining why; re-run is **0 findings**.
+Honest limits: the pipe-DACL test is Windows-only and has not
+run anywhere yet (only the GNU cross-check + CI's `cargo check`
+on the desktop crate cover it); the setup-token lockout is
+in-memory and resets on restart; B4 (pairing codes never expire)
+is a documented accepted trade-off and was NOT changed; the
+user's live device token (created before this change) expires 90
+days after its creation — re-pairing is the renewal path.
+
 ## Windows first-run bugs (2026-11-23)
 
 First real Windows run (`target\debug\reponyx-desktop.exe`):

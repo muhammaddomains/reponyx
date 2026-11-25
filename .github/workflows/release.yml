@@ -73,6 +73,14 @@ jobs:
       - name: Install frontend dependencies
         run: pnpm install --frozen-lockfile
 
+      # The installer bundles the agent and the broker (bundle.resources
+      # in apps/desktop/src-tauri/tauri.conf.json), so they must be
+      # built in release mode BEFORE tauri-action runs — otherwise the
+      # installer ships a desktop that cannot sync. They also ship in
+      # the portable ZIP and as their own assets below.
+      - name: Build agent and broker binaries
+        run: cargo build --release -p reponyx-background-agent -p reponyx-auth-broker
+
       - name: Build and release
         uses: tauri-apps/tauri-action@v0
         env:
@@ -95,8 +103,8 @@ jobs:
 
             - **Installer**: `RepoNyx_${{ github.ref_name }}_x64-setup.exe` (NSIS, per-user install, no admin needed)
             - **Portable ZIP**: `reponyx-desktop-x64.zip` (unzip and run `reponyx-desktop.exe`; README.md included — the agent and broker binaries are inside the same folder)
-            - **Agent**: `reponyx-agent-x64.zip` (`reponyx-agent.exe` — the background agent; the desktop starts it when it sits next to `reponyx-desktop.exe`)
-            - **Auth Broker**: `reponyx-auth-broker-x64.zip` (`reponyx-auth-broker.exe` — mints GitHub App tokens; run it before pairing, see README "Running the Auth Broker")
+            - **Agent**: `reponyx-agent-x64.zip` (`reponyx-agent.exe` — the background agent; included in the installer and the portable ZIP, and the desktop starts it automatically)
+            - **Auth Broker**: `reponyx-auth-broker-x64.zip` (`reponyx-auth-broker.exe` — mints GitHub App tokens; included in the installer and the portable ZIP, and the desktop starts it automatically)
             - **Requires**: Windows 10 / 11 (x64)
 
             ## Notes
@@ -105,14 +113,6 @@ jobs:
             - If Windows SmartScreen warns ("Windows protected your PC"), click **More info** → **Run anyway** (new binary from an individual developer).
           releaseDraft: true
           prerelease: false
-
-      # The desktop alone is not a working release: the background
-      # agent (started by the desktop when it sits next to the exe)
-      # and the Auth Broker (GitHub App token minting) are separate
-      # binaries. Build them in release mode so they ship with the
-      # release — in the portable ZIP and as their own assets.
-      - name: Build agent and broker binaries
-        run: cargo build --release -p reponyx-background-agent -p reponyx-auth-broker
 
       # The portable ZIP is not produced by tauri-action, so it is built
       # here: the built exe plus the README. This repo has no bundled

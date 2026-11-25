@@ -180,14 +180,14 @@ jobs:
       # with it.
       - name: Generate throwaway signing key
         working-directory: apps/desktop
-        run: pnpm tauri signer generate --ci -p "" -w ci-signing.key --force
+        run: pnpm tauri signer generate --ci -p "ci" -w ci-signing.key --force
 
       - name: Build installer
         working-directory: apps/desktop
         shell: pwsh
         run: |
           $env:TAURI_SIGNING_PRIVATE_KEY = Get-Content -Raw ci-signing.key
-          $env:TAURI_SIGNING_PRIVATE_KEY_PASSWORD = ""
+          $env:TAURI_SIGNING_PRIVATE_KEY_PASSWORD = "ci"
           pnpm tauri build
 
       # The portable ZIP is not produced by the Tauri build, so it is

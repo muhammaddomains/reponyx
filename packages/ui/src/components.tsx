@@ -1,3 +1,4 @@
+import { useEffect } from "react";
 import type { ButtonHTMLAttributes, ReactNode } from "react";
 
 type ButtonVariant = "primary" | "secondary" | "ghost" | "danger";
@@ -70,5 +71,70 @@ export function Badge({
     >
       {children}
     </span>
+  );
+}
+
+export interface ConfirmDialogProps {
+  open: boolean;
+  title: string;
+  message: string;
+  confirmLabel?: string;
+  cancelLabel?: string;
+  onConfirm: () => void;
+  onCancel: () => void;
+}
+
+/** In-app confirmation dialog for destructive actions.
+ *
+ *  Do NOT gate a delete on `window.confirm` in this app: in the
+ *  Tauri webview it returns immediately (truthy) while the native
+ *  dialog is still open, so the action runs before the user answers
+ *  — Cancel cannot stop it. This modal only runs the action from
+ *  its own OK button, so the answer is real in every webview. */
+export function ConfirmDialog({
+  open,
+  title,
+  message,
+  confirmLabel = "OK",
+  cancelLabel = "Cancel",
+  onConfirm,
+  onCancel,
+}: ConfirmDialogProps) {
+  useEffect(() => {
+    if (!open) return;
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onCancel();
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [open, onCancel]);
+
+  if (!open) return null;
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
+      onClick={onCancel}
+    >
+      <div
+        role="alertdialog"
+        aria-modal="true"
+        aria-label={title}
+        className="w-full max-w-md rounded-lg border border-zinc-200 bg-white p-5 dark:border-zinc-800 dark:bg-zinc-900"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <h2 className="text-base font-semibold">{title}</h2>
+        <p className="mt-2 whitespace-pre-line text-sm text-zinc-600 dark:text-zinc-300">
+          {message}
+        </p>
+        <div className="mt-5 flex justify-end gap-3">
+          <Button variant="secondary" onClick={onCancel} autoFocus>
+            {cancelLabel}
+          </Button>
+          <Button variant="danger" onClick={onConfirm}>
+            {confirmLabel}
+          </Button>
+        </div>
+      </div>
+    </div>
   );
 }

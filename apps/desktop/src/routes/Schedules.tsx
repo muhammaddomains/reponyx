@@ -19,7 +19,7 @@ import type {
   ScheduleScope,
   ScheduleWithNextRun,
 } from "@reponyx/shared";
-import { Badge, Button, Card } from "@reponyx/ui";
+import { Badge, Button, Card, ConfirmDialog } from "@reponyx/ui";
 
 const inputClass =
   "w-full rounded-md border border-zinc-300 bg-white px-3 py-2 text-sm dark:border-zinc-700 dark:bg-zinc-900";
@@ -44,6 +44,56 @@ function browserTimezone(): string {
   } catch {
     return "UTC";
   }
+}
+
+/** Every IANA timezone the runtime knows, for the timezone picker.
+ *  Falls back to the browser zone + UTC where `supportedValuesOf`
+ *  is unavailable, so the select never renders empty. */
+function allTimezones(): string[] {
+  try {
+    const zones = Intl.supportedValuesOf("timeZone");
+    if (zones.length > 0) {
+      // `supportedValuesOf` lists `Etc/UTC` but not the `UTC` alias
+      // the app already uses as a fallback — include it explicitly.
+      return [...new Set([...zones, "UTC"])].sort();
+    }
+  } catch {
+    // Fall through to the fallback below.
+  }
+  const fallback = browserTimezone();
+  return fallback === "UTC" ? ["UTC"] : [fallback, "UTC"];
+}
+
+const TIMEZONES = allTimezones();
+
+/** Timezone picker: every IANA zone, so the user picks instead of
+ *  typing a name by hand. A stored zone outside the list (e.g. an
+ *  older value) is kept as the first option so the select never
+ *  renders blank. */
+function TimezoneSelect({
+  value,
+  onChange,
+}: {
+  value: string;
+  onChange: (value: string) => void;
+}) {
+  const options = TIMEZONES.includes(value)
+    ? TIMEZONES
+    : [value, ...TIMEZONES];
+  return (
+    <select
+      className={inputClass}
+      value={value}
+      onChange={(e) => onChange(e.target.value)}
+      aria-label="Timezone"
+    >
+      {options.map((zone) => (
+        <option key={zone} value={zone}>
+          {zone}
+        </option>
+      ))}
+    </select>
+  );
 }
 
 /** Human-readable cadence. Falls back to the raw value when the
@@ -136,6 +186,17 @@ export default function Schedules() {
   const [enabled, setEnabled] = useState(true);
 
   const [editing, setEditing] = useState<EditDraft | null>(null);
+
+  // Pending destructive confirmation. The action only runs from the
+  // dialog's OK button — never from `window.confirm`, which the
+  // Tauri webview answers immediately (truthy) while its native
+  // dialog is still open, so Cancel could not stop the delete.
+  const [pendingConfirm, setPendingConfirm] = useState<null | {
+    title: string;
+    message: string;
+    confirmLabel: string;
+    action: () => void;
+  }>(null);
 
   const [lookupRepoId, setLookupRepoId] = useState("");
   const [effective, setEffective] = useState<EffectiveSchedule | null>(null);
@@ -445,13 +506,10 @@ export default function Schedules() {
                     {cadenceHint(editing.intervalType)}
                   </p>
                   <div className="flex gap-3">
-                    <input
-                      className={inputClass}
-                      type="text"
-                      placeholder="Timezone, e.g. America/Phoenix"
+                    <TimezoneSelect
                       value={editing.timezone}
-                      onChange={(e) =>
-                        setEditing({ ...editing, timezone: e.target.value })
+                      onChange={(value) =>
+                        setEditing({ ...editing, timezone: value })
                       }
                     />
                     <label className="flex items-center gap-2 text-sm">
@@ -525,18 +583,18 @@ export default function Schedules() {
                   <Button
                     variant="danger"
                     disabled={busy}
-                    onClick={() => {
-                      if (
-                        window.confirm(
-                          `Delete this ${schedule.scope} schedule (${cadenceDescription(schedule)})? Repositories it governed fall back to the next broader schedule.`,
-                        )
-                      ) {
-                        void run(
-                          () => deleteSchedule(schedule.id),
-                          () => setNotice("Schedule deleted."),
-                        );
-                      }
-                    }}
+                    onClick={() =>
+                      setPendingConfirm({
+                        title: "Delete schedule",
+                        message: `Delete this ${schedule.scope} schedule (${cadenceDescription(schedule)})? Repositories it governed fall back to the next broader schedule.`,
+                        confirmLabel: "Delete",
+                        action: () =>
+                          void run(
+                            () => deleteSchedule(schedule.id),
+                            () => setNotice("Schedule deleted."),
+                          ),
+                      })
+                    }
                   >
                     Delete
                   </Button>
@@ -634,13 +692,7 @@ export default function Schedules() {
             a real error, never silently stored.
           </p>
           <div className="flex gap-3">
-            <input
-              className={inputClass}
-              type="text"
-              placeholder="Timezone, e.g. America/Phoenix"
-              value={timezone}
-              onChange={(e) => setTimezone(e.target.value)}
-            />
+            <TimezoneSelect value={timezone} onChange={setTimezone} />
             <label className="flex items-center gap-2 text-sm">
               <input
                 type="checkbox"
@@ -696,6 +748,18 @@ export default function Schedules() {
             ))}
         </Card>
       </section>
+      <ConfirmDialog
+        open={pendingConfirm !== null}
+        title={pendingConfirm?.title ?? ""}
+        message={pendingConfirm?.message ?? ""}
+        confirmLabel={pendingConfirm?.confirmLabel ?? "OK"}
+        onConfirm={() => {
+          const pending = pendingConfirm;
+          setPendingConfirm(null);
+          pending?.action();
+        }}
+        onCancel={() => setPendingConfirm(null)}
+      />
     </div>
   );
 }

@@ -18,7 +18,7 @@ import type {
   ImportReport,
   Settings,
 } from "@reponyx/shared";
-import { Button, Card } from "@reponyx/ui";
+import { Button, Card, ConfirmDialog } from "@reponyx/ui";
 import { applyTheme, parseTheme } from "../lib/theme";
 
 function formatBytes(bytes: number): string {
@@ -83,6 +83,17 @@ export default function Settings() {
     useState<ConfigExport | null>(null);
   const [lastImport, setLastImport] = useState<ImportReport | null>(null);
   const [diagBusy, setDiagBusy] = useState(false);
+
+  // Pending destructive confirmation. The action only runs from the
+  // dialog's OK button — never from `window.confirm`, which the
+  // Tauri webview answers immediately (truthy) while its native
+  // dialog is still open, so Cancel could not stop the delete.
+  const [pendingConfirm, setPendingConfirm] = useState<null | {
+    title: string;
+    message: string;
+    confirmLabel: string;
+    action: () => void;
+  }>(null);
 
   const [theme, setTheme] = useState("system");
   const [notifications, setNotifications] = useState(true);
@@ -193,13 +204,6 @@ export default function Settings() {
   }
 
   async function handleDeleteBackup(backup: DatabaseBackup) {
-    if (
-      !window.confirm(
-        `Delete this database backup?\n\n${fileName(backup.path)}\n\nThis cannot be undone.`,
-      )
-    ) {
-      return;
-    }
     setError(null);
     setNotice(null);
     setDiagBusy(true);
@@ -215,13 +219,6 @@ export default function Settings() {
   }
 
   async function handleRestoreBackup(backup: DatabaseBackup) {
-    if (
-      !window.confirm(
-        `Restore the database from this backup?\n\n${fileName(backup.path)}\n\nThe backup is checked first, and the background agent is stopped while the restore is staged. Nothing changes until you quit RepoNyx completely and relaunch it. The current database is kept as a fallback.`,
-      )
-    ) {
-      return;
-    }
     setError(null);
     setNotice(null);
     setDiagBusy(true);
@@ -570,14 +567,28 @@ export default function Settings() {
                         <Button
                           variant="secondary"
                           disabled={diagBusy}
-                          onClick={() => void handleRestoreBackup(backup)}
+                          onClick={() =>
+                            setPendingConfirm({
+                              title: "Restore database backup",
+                              message: `Restore the database from this backup?\n\n${fileName(backup.path)}\n\nThe backup is checked first, and the background agent is stopped while the restore is staged. Nothing changes until you quit RepoNyx completely and relaunch it. The current database is kept as a fallback.`,
+                              confirmLabel: "Restore",
+                              action: () => void handleRestoreBackup(backup),
+                            })
+                          }
                         >
                           Restore
                         </Button>
                         <Button
                           variant="danger"
                           disabled={diagBusy}
-                          onClick={() => void handleDeleteBackup(backup)}
+                          onClick={() =>
+                            setPendingConfirm({
+                              title: "Delete database backup",
+                              message: `Delete this database backup?\n\n${fileName(backup.path)}\n\nThis cannot be undone.`,
+                              confirmLabel: "Delete",
+                              action: () => void handleDeleteBackup(backup),
+                            })
+                          }
                         >
                           Delete
                         </Button>
@@ -648,6 +659,18 @@ export default function Settings() {
           </Card>
         </>
       )}
+      <ConfirmDialog
+        open={pendingConfirm !== null}
+        title={pendingConfirm?.title ?? ""}
+        message={pendingConfirm?.message ?? ""}
+        confirmLabel={pendingConfirm?.confirmLabel ?? "OK"}
+        onConfirm={() => {
+          const pending = pendingConfirm;
+          setPendingConfirm(null);
+          pending?.action();
+        }}
+        onCancel={() => setPendingConfirm(null)}
+      />
     </div>
   );
 }

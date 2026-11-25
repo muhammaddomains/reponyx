@@ -22,7 +22,7 @@ import type {
   BrokerStatus,
   PairingInfo,
 } from "@reponyx/shared";
-import { Badge, Button, Card } from "@reponyx/ui";
+import { Badge, Button, Card, ConfirmDialog } from "@reponyx/ui";
 
 const inputClass =
   "w-full rounded-md border border-zinc-300 bg-white px-3 py-2 text-sm dark:border-zinc-700 dark:bg-zinc-900";
@@ -73,6 +73,17 @@ export default function Accounts() {
   const [replacePat, setReplacePat] = useState<Record<string, string>>({});
   const [setupToken, setSetupToken] = useState("");
   const [pairing, setPairing] = useState<PairingInfo | null>(null);
+
+  // Pending destructive confirmation. The action only runs from the
+  // dialog's OK button — never from `window.confirm`, which the
+  // Tauri webview answers immediately (truthy) while its native
+  // dialog is still open, so Cancel could not stop the delete.
+  const [pendingConfirm, setPendingConfirm] = useState<null | {
+    title: string;
+    message: string;
+    confirmLabel: string;
+    action: () => void;
+  }>(null);
 
   // Accounts and broker status load independently: in the web preview
   // (plain browser, no Tauri backend) both fail, but a broker failure
@@ -284,42 +295,42 @@ export default function Accounts() {
                   <Button
                     variant="danger"
                     disabled={busy}
-                    onClick={() => {
-                      if (
-                        window.confirm(
-                          `Remove the PAT account ${account.username}? The stored token is deleted and the account is marked revoked. Local repositories are kept.`,
-                        )
-                      ) {
-                        void run(
-                          () => removePatAccount(account.id),
-                          () =>
-                            setNotice(
-                              `Removed the PAT for ${account.username}.`,
-                            ),
-                        );
-                      }
-                    }}
+                    onClick={() =>
+                      setPendingConfirm({
+                        title: "Remove PAT account",
+                        message: `Remove the PAT account ${account.username}? The stored token is deleted and the account is marked revoked. Local repositories are kept.`,
+                        confirmLabel: "Remove",
+                        action: () =>
+                          void run(
+                            () => removePatAccount(account.id),
+                            () =>
+                              setNotice(
+                                `Removed the PAT for ${account.username}.`,
+                              ),
+                          ),
+                      })
+                    }
                   >
                     Remove
                   </Button>
                   <Button
                     variant="danger"
                     disabled={busy}
-                    onClick={() => {
-                      if (
-                        window.confirm(
-                          `Delete the account ${account.username}? The stored token is deleted and the account is removed from RepoNyx, including its repositories, schedules and jobs. Local files on disk are kept.`,
-                        )
-                      ) {
-                        void run(
-                          () => deletePatAccount(account.id),
-                          () =>
-                            setNotice(
-                              `Deleted the account ${account.username}.`,
-                            ),
-                        );
-                      }
-                    }}
+                    onClick={() =>
+                      setPendingConfirm({
+                        title: "Delete account",
+                        message: `Delete the account ${account.username}? The stored token is deleted and the account is removed from RepoNyx, including its repositories, schedules and jobs. Local files on disk are kept.`,
+                        confirmLabel: "Delete account",
+                        action: () =>
+                          void run(
+                            () => deletePatAccount(account.id),
+                            () =>
+                              setNotice(
+                                `Deleted the account ${account.username}.`,
+                              ),
+                          ),
+                      })
+                    }
                   >
                     Delete account
                   </Button>
@@ -554,6 +565,18 @@ export default function Accounts() {
           )}
         </Card>
       </section>
+      <ConfirmDialog
+        open={pendingConfirm !== null}
+        title={pendingConfirm?.title ?? ""}
+        message={pendingConfirm?.message ?? ""}
+        confirmLabel={pendingConfirm?.confirmLabel ?? "OK"}
+        onConfirm={() => {
+          const pending = pendingConfirm;
+          setPendingConfirm(null);
+          pending?.action();
+        }}
+        onCancel={() => setPendingConfirm(null)}
+      />
     </div>
   );
 }

@@ -216,19 +216,48 @@ pub async fn agent_cancel_command(job_id: String) -> CommandResult<()> {
     client()?.cancel_job(id).await.map_err(CommandError::from)
 }
 
+/// One live status probe, retried a few times: a single probe can
+/// fail when it lands in the microsecond gap where the named pipe
+/// has no listening instance, or when the agent goes away between
+/// the reachability check and the status call. Neither means the
+/// agent is down — `ensure_agent_running_command` must not report
+/// "not running" (and skip the spawn) on one such probe.
+async fn live_health(dir: &Path) -> Option<AgentHealthView> {
+    for attempt in 0..3 {
+        if agent_reachable(dir).await {
+            if let Ok(health) = agent_health_command().await {
+                if health.reachable {
+                    return Some(health);
+                }
+            }
+        }
+        if attempt < 2 {
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+    }
+    None
+}
+
 /// Start the agent process if it is not already reachable.
 #[tauri::command]
 pub async fn ensure_agent_running_command() -> CommandResult<AgentHealthView> {
     let dir = data_dir();
-    if agent_reachable(&dir).await {
-        return agent_health_command().await;
+    if let Some(health) = live_health(&dir).await {
+        return Ok(health);
     }
     spawn_agent_process()?;
     // Wait briefly for the socket to come up.
     for _ in 0..20 {
         tokio::time::sleep(Duration::from_millis(250)).await;
         if agent_reachable(&dir).await {
-            return agent_health_command().await;
+            if let Ok(health) = agent_health_command().await {
+                if health.reachable {
+                    return Ok(health);
+                }
+            }
+            // Reachable a moment ago but the status probe missed:
+            // the agent is coming up — keep waiting instead of
+            // reporting it down.
         }
     }
     Ok(AgentHealthView {

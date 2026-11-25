@@ -14,7 +14,7 @@ import type {
   StorageOverview,
   StoredRepository,
 } from "@reponyx/shared";
-import { Badge, Button, Card } from "@reponyx/ui";
+import { Badge, Button, Card, ConfirmDialog } from "@reponyx/ui";
 
 function commandMessage(error: unknown): string {
   if (typeof error === "object" && error !== null) {
@@ -60,6 +60,17 @@ export default function Storage() {
   const [notice, setNotice] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [loading, setLoading] = useState(true);
+
+  // Pending destructive confirmation. The action only runs from the
+  // dialog's OK button — never from `window.confirm`, which the
+  // Tauri webview answers immediately (truthy) while its native
+  // dialog is still open, so Cancel could not stop the delete.
+  const [pendingConfirm, setPendingConfirm] = useState<null | {
+    title: string;
+    message: string;
+    confirmLabel: string;
+    action: () => void;
+  }>(null);
 
   const refresh = useCallback(async () => {
     setOverview(await getStorageOverview());
@@ -121,13 +132,6 @@ export default function Storage() {
   }
 
   async function handleDeleteOrphan(orphan: OrphanArchive) {
-    if (
-      !window.confirm(
-        `Delete this orphan archive?\n\n${orphan.path}\n\n${formatBytes(orphan.bytes)} will be freed. No repository points at it, so nothing can re-create it. This cannot be undone.`,
-      )
-    ) {
-      return;
-    }
     setError(null);
     setNotice(null);
     setBusy(true);
@@ -143,13 +147,6 @@ export default function Storage() {
   }
 
   async function handleDeleteArchive(repo: StoredRepository) {
-    if (
-      !window.confirm(
-        `Delete the local archive for ${repo.fullName}?\n\nThe repository row stays — the next sync will re-clone it. ${formatBytes(repo.bytes)} will be freed. This cannot be undone.`,
-      )
-    ) {
-      return;
-    }
     setError(null);
     setNotice(null);
     setBusy(true);
@@ -167,13 +164,6 @@ export default function Storage() {
   }
 
   async function handleMoveArchive(renamed: RenamedArchive) {
-    if (
-      !window.confirm(
-        `Move the archive to match the new name?\n\n${renamed.currentPath}\n→ ${renamed.expectedPath}`,
-      )
-    ) {
-      return;
-    }
     setError(null);
     setNotice(null);
     setBusy(true);
@@ -370,7 +360,14 @@ export default function Storage() {
                     <Button
                       variant="danger"
                       disabled={busy}
-                      onClick={() => void handleDeleteOrphan(orphan)}
+                      onClick={() =>
+                        setPendingConfirm({
+                          title: "Delete orphan archive",
+                          message: `Delete this orphan archive?\n\n${orphan.path}\n\n${formatBytes(orphan.bytes)} will be freed. No repository points at it, so nothing can re-create it. This cannot be undone.`,
+                          confirmLabel: "Delete",
+                          action: () => void handleDeleteOrphan(orphan),
+                        })
+                      }
                     >
                       Delete
                     </Button>
@@ -408,7 +405,14 @@ export default function Storage() {
                     <Button
                       variant="secondary"
                       disabled={busy}
-                      onClick={() => void handleMoveArchive(renamed)}
+                      onClick={() =>
+                        setPendingConfirm({
+                          title: "Move archive",
+                          message: `Move the archive to match the new name?\n\n${renamed.currentPath}\n→ ${renamed.expectedPath}`,
+                          confirmLabel: "Move archive",
+                          action: () => void handleMoveArchive(renamed),
+                        })
+                      }
                     >
                       Move archive
                     </Button>
@@ -477,7 +481,14 @@ export default function Storage() {
                   <Button
                     variant="danger"
                     disabled={busy}
-                    onClick={() => void handleDeleteArchive(repo)}
+                    onClick={() =>
+                      setPendingConfirm({
+                        title: "Delete local archive",
+                        message: `Delete the local archive for ${repo.fullName}?\n\nThe repository row stays — the next sync will re-clone it. ${formatBytes(repo.bytes)} will be freed. This cannot be undone.`,
+                        confirmLabel: "Delete archive",
+                        action: () => void handleDeleteArchive(repo),
+                      })
+                    }
                   >
                     Delete archive
                   </Button>
@@ -487,6 +498,18 @@ export default function Storage() {
           </section>
         </>
       )}
+      <ConfirmDialog
+        open={pendingConfirm !== null}
+        title={pendingConfirm?.title ?? ""}
+        message={pendingConfirm?.message ?? ""}
+        confirmLabel={pendingConfirm?.confirmLabel ?? "OK"}
+        onConfirm={() => {
+          const pending = pendingConfirm;
+          setPendingConfirm(null);
+          pending?.action();
+        }}
+        onCancel={() => setPendingConfirm(null)}
+      />
     </div>
   );
 }

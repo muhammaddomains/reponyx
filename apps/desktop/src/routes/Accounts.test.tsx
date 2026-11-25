@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, within } from "@testing-library/react";
 import Accounts from "./Accounts";
 
 vi.mock("@reponyx/api-client", () => ({
@@ -108,26 +108,34 @@ describe("Accounts page — Delete account", () => {
   it("deletes the account after confirmation and shows a notice", async () => {
     vi.mocked(listAccounts).mockResolvedValue([revokedPatAccount]);
     vi.mocked(deletePatAccount).mockResolvedValue(true);
-    const confirm = vi.spyOn(window, "confirm").mockReturnValue(true);
     render(<Accounts />);
     fireEvent.click(
       await screen.findByRole("button", { name: "Delete account" }),
+    );
+    const dialog = screen.getByRole("alertdialog", {
+      name: "Delete account",
+    });
+    fireEvent.click(
+      within(dialog).getByRole("button", { name: "Delete account" }),
     );
     expect(deletePatAccount).toHaveBeenCalledWith(revokedPatAccount.id);
     expect(
       await screen.findByText("Deleted the account octocat."),
     ).toBeInTheDocument();
-    confirm.mockRestore();
   });
 
   it("does nothing when the confirmation is dismissed", async () => {
     vi.mocked(listAccounts).mockResolvedValue([revokedPatAccount]);
-    vi.spyOn(window, "confirm").mockReturnValue(false);
     render(<Accounts />);
     fireEvent.click(
       await screen.findByRole("button", { name: "Delete account" }),
     );
+    const dialog = screen.getByRole("alertdialog", {
+      name: "Delete account",
+    });
+    fireEvent.click(within(dialog).getByRole("button", { name: "Cancel" }));
     expect(deletePatAccount).not.toHaveBeenCalled();
+    expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument();
   });
 });
 

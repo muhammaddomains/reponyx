@@ -18,7 +18,7 @@ import type {
   Repository,
   SyncMode,
 } from "@reponyx/shared";
-import { Badge, Button, Card } from "@reponyx/ui";
+import { Badge, Button, Card, ConfirmDialog } from "@reponyx/ui";
 
 const inputClass =
   "w-full rounded-md border border-zinc-300 bg-white px-3 py-2 text-sm dark:border-zinc-700 dark:bg-zinc-900";
@@ -94,6 +94,17 @@ export default function Repositories() {
   const [outcome, setOutcome] = useState<DiscoveryOutcome | null>(null);
 
   const [syncingId, setSyncingId] = useState<string | null>(null);
+
+  // Pending destructive confirmation. The action only runs from the
+  // dialog's OK button — never from `window.confirm`, which the
+  // Tauri webview answers immediately (truthy) while its native
+  // dialog is still open, so Cancel could not stop the delete.
+  const [pendingConfirm, setPendingConfirm] = useState<null | {
+    title: string;
+    message: string;
+    confirmLabel: string;
+    action: () => void;
+  }>(null);
 
   // True virtualization (Phase 8): only the rows on screen are in
   // the DOM, however many repositories are loaded. The list still
@@ -273,20 +284,11 @@ export default function Repositories() {
     );
   }
 
-  async function handleBulkRemove() {
-    const ids = [...selected];
+  async function handleBulkRemove(ids: string[]) {
     if (ids.length === 0) return;
-    // One confirm and one refresh for the whole selection: removing
-    // repos one row at a time meant a confirm + a busy refresh per
-    // repo, which felt slow even though each delete is a single
-    // SQL statement.
-    if (
-      !window.confirm(
-        `Remove ${ids.length} selected repositories from RepoNyx? Their local files on disk are kept — only the RepoNyx rows are deleted.`,
-      )
-    ) {
-      return;
-    }
+    // One refresh for the whole selection: removing repos one row at
+    // a time meant a busy refresh per repo, which felt slow even
+    // though each delete is a single SQL statement.
     await run(
       async () => {
         for (const id of ids) {
@@ -495,7 +497,16 @@ export default function Repositories() {
             <Button
               variant="danger"
               disabled={busy}
-              onClick={() => void handleBulkRemove()}
+              onClick={() => {
+                const ids = [...selected];
+                if (ids.length === 0) return;
+                setPendingConfirm({
+                  title: "Remove selected repositories",
+                  message: `Remove ${ids.length} selected repositories from RepoNyx? Their local files on disk are kept — only the RepoNyx rows are deleted.`,
+                  confirmLabel: "Remove selected",
+                  action: () => void handleBulkRemove(ids),
+                });
+              }}
             >
               Remove selected
             </Button>
@@ -679,21 +690,21 @@ export default function Repositories() {
                         <Button
                           variant="danger"
                           disabled={busy}
-                          onClick={() => {
-                            if (
-                              window.confirm(
-                                `Remove ${repository.fullName} from RepoNyx? Its local files on disk are kept — only the RepoNyx row is deleted.`,
-                              )
-                            ) {
-                              void run(
-                                () => deleteRepository(repository.id),
-                                () =>
-                                  setNotice(
-                                    `Removed ${repository.fullName}. Local files were kept.`,
-                                  ),
-                              );
-                            }
-                          }}
+                          onClick={() =>
+                            setPendingConfirm({
+                              title: "Remove repository",
+                              message: `Remove ${repository.fullName} from RepoNyx? Its local files on disk are kept — only the RepoNyx row is deleted.`,
+                              confirmLabel: "Remove",
+                              action: () =>
+                                void run(
+                                  () => deleteRepository(repository.id),
+                                  () =>
+                                    setNotice(
+                                      `Removed ${repository.fullName}. Local files were kept.`,
+                                    ),
+                                ),
+                            })
+                          }
                         >
                           Remove
                         </Button>
@@ -717,6 +728,18 @@ export default function Repositories() {
           </Button>
         )}
       </section>
+      <ConfirmDialog
+        open={pendingConfirm !== null}
+        title={pendingConfirm?.title ?? ""}
+        message={pendingConfirm?.message ?? ""}
+        confirmLabel={pendingConfirm?.confirmLabel ?? "OK"}
+        onConfirm={() => {
+          const pending = pendingConfirm;
+          setPendingConfirm(null);
+          pending?.action();
+        }}
+        onCancel={() => setPendingConfirm(null)}
+      />
     </div>
   );
 }

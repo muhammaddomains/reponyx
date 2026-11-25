@@ -7,7 +7,7 @@ import {
   it,
   vi,
 } from "vitest";
-import { render, screen, fireEvent } from "@testing-library/react";
+import { render, screen, fireEvent, within } from "@testing-library/react";
 import type { Repository } from "@reponyx/shared";
 import Repositories from "./Repositories";
 
@@ -163,13 +163,19 @@ describe("Repositories page (virtualized list)", () => {
       ],
       total: 3,
     });
-    const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(true);
     render(<Repositories />);
     await screen.findByText("muhammaddomains/reponyx");
     fireEvent.click(screen.getByLabelText("Select muhammaddomains/other"));
     fireEvent.click(screen.getByLabelText("Select muhammaddomains/third"));
     fireEvent.click(
       screen.getByRole("button", { name: "Remove selected" }),
+    );
+    // The in-app dialog (not window.confirm) gates the delete.
+    const dialog = screen.getByRole("alertdialog", {
+      name: "Remove selected repositories",
+    });
+    fireEvent.click(
+      within(dialog).getByRole("button", { name: "Remove selected" }),
     );
     expect(
       await screen.findByText("Removed 2 repositories. Local files were kept."),
@@ -182,7 +188,6 @@ describe("Repositories page (virtualized list)", () => {
     expect(
       screen.queryByRole("button", { name: "Remove selected" }),
     ).not.toBeInTheDocument();
-    confirmSpy.mockRestore();
   });
 
   it("removes nothing when the bulk remove confirm is dismissed", async () => {
@@ -190,18 +195,65 @@ describe("Repositories page (virtualized list)", () => {
       items: [repo("muhammaddomains/reponyx")],
       total: 1,
     });
-    const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(false);
     render(<Repositories />);
     await screen.findByText("muhammaddomains/reponyx");
     fireEvent.click(screen.getByLabelText("Select muhammaddomains/reponyx"));
     fireEvent.click(
       screen.getByRole("button", { name: "Remove selected" }),
     );
+    const dialog = screen.getByRole("alertdialog", {
+      name: "Remove selected repositories",
+    });
+    fireEvent.click(within(dialog).getByRole("button", { name: "Cancel" }));
     expect(vi.mocked(deleteRepository)).not.toHaveBeenCalled();
     expect(
       screen.queryByText(/Removed 1 repositories/),
     ).not.toBeInTheDocument();
-    confirmSpy.mockRestore();
+    expect(
+      screen.queryByRole("alertdialog"),
+    ).not.toBeInTheDocument();
+  });
+
+  it("removes one repository after confirming the row dialog", async () => {
+    vi.mocked(listRepositories).mockResolvedValue({
+      items: [repo("muhammaddomains/reponyx")],
+      total: 1,
+    });
+    render(<Repositories />);
+    await screen.findByText("muhammaddomains/reponyx");
+    fireEvent.click(screen.getByRole("button", { name: "Remove" }));
+    const dialog = screen.getByRole("alertdialog", {
+      name: "Remove repository",
+    });
+    expect(dialog).toHaveTextContent(
+      "Remove muhammaddomains/reponyx from RepoNyx?",
+    );
+    fireEvent.click(within(dialog).getByRole("button", { name: "Remove" }));
+    expect(
+      await screen.findByText(
+        "Removed muhammaddomains/reponyx. Local files were kept.",
+      ),
+    ).toBeInTheDocument();
+    expect(vi.mocked(deleteRepository).mock.calls).toEqual([["id-reponyx"]]);
+  });
+
+  it("removes nothing when the row remove dialog is cancelled", async () => {
+    vi.mocked(listRepositories).mockResolvedValue({
+      items: [repo("muhammaddomains/reponyx")],
+      total: 1,
+    });
+    render(<Repositories />);
+    await screen.findByText("muhammaddomains/reponyx");
+    fireEvent.click(screen.getByRole("button", { name: "Remove" }));
+    const dialog = screen.getByRole("alertdialog", {
+      name: "Remove repository",
+    });
+    fireEvent.click(within(dialog).getByRole("button", { name: "Cancel" }));
+    expect(vi.mocked(deleteRepository)).not.toHaveBeenCalled();
+    expect(
+      screen.queryByRole("alertdialog"),
+    ).not.toBeInTheDocument();
+    expect(screen.getByText("muhammaddomains/reponyx")).toBeInTheDocument();
   });
 
   it("mode notice names the mode just picked, not the previous one", async () => {

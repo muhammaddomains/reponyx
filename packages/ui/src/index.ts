@@ -1,2 +1,2 @@
-export { Badge, Button, Card } from "./components";
-export type { ButtonProps } from "./components";
+export { Badge, Button, Card, ConfirmDialog } from "./components";
+export type { ButtonProps, ConfirmDialogProps } from "./components";

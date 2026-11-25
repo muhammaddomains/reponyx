@@ -59,6 +59,7 @@ function commandMessage(error: unknown): string {
  *  unpolished — Phase 8 owns the settings UI. */
 export default function Accounts() {
   const [accounts, setAccounts] = useState<Account[]>([]);
+  const [loading, setLoading] = useState(true);
   const [broker, setBroker] = useState<BrokerStatus | null>(null);
   const [brokerError, setBrokerError] = useState<string | null>(null);
   const [installations, setInstallations] = useState<BrokerInstallation[]>([]);
@@ -89,6 +90,9 @@ export default function Accounts() {
   // (plain browser, no Tauri backend) both fail, but a broker failure
   // must not blank the accounts list, and must resolve the "Checking
   // the Auth Broker…" line to a real error instead of spinning forever.
+  // The installations call is a real HTTP request, so it can reject
+  // while the accounts already loaded — it is guarded below, and the
+  // accounts are set no matter what the broker does.
   const refresh = useCallback(async () => {
     const [accountsResult, brokerResult] = await Promise.allSettled([
       listAccounts(),
@@ -97,14 +101,20 @@ export default function Accounts() {
     if (brokerResult.status === "fulfilled") {
       setBroker(brokerResult.value);
       setBrokerError(null);
-      setInstallations(
-        brokerResult.value.configured
-          ? await listBrokerInstallations()
-          : [],
-      );
+      try {
+        setInstallations(
+          brokerResult.value.configured
+            ? await listBrokerInstallations()
+            : [],
+        );
+      } catch (e: unknown) {
+        setBrokerError(commandMessage(e));
+        setInstallations([]);
+      }
     } else {
       setBroker(null);
       setBrokerError(commandMessage(brokerResult.reason));
+      setInstallations([]);
     }
     if (accountsResult.status === "rejected") {
       throw accountsResult.reason;
@@ -114,9 +124,14 @@ export default function Accounts() {
 
   useEffect(() => {
     let cancelled = false;
-    refresh().catch((e: unknown) => {
-      if (!cancelled) setError(commandMessage(e));
-    });
+    setLoading(true);
+    refresh()
+      .catch((e: unknown) => {
+        if (!cancelled) setError(commandMessage(e));
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
     return () => {
       cancelled = true;
     };
@@ -168,7 +183,9 @@ export default function Accounts() {
         {accounts.length === 0 && (
           <Card className="p-4">
             <p className="text-sm text-zinc-600 dark:text-zinc-400">
-              No accounts yet. Add a PAT below, or pair the GitHub App.
+              {loading
+                ? "Loading accounts…"
+                : "No accounts yet. Add a PAT below, or pair the GitHub App."}
             </p>
           </Card>
         )}

@@ -4,6 +4,7 @@
 //! the UI gets a real `BackgroundAgentUnavailable`-style error.
 
 use crate::auth::{CommandError, CommandResult, database_unavailable};
+use crate::exe;
 use reponyx_credential_store::default_store;
 use reponyx_database::Database;
 use reponyx_ipc::protocol::AgentStatus;
@@ -53,7 +54,7 @@ impl From<AgentStatus> for AgentStatusView {
     }
 }
 
-fn data_dir() -> PathBuf {
+pub(crate) fn data_dir() -> PathBuf {
     if let Some(dir) = std::env::var_os("REPONYX_DATA_DIR") {
         return PathBuf::from(dir);
     }
@@ -116,6 +117,12 @@ async fn forward_progress_stream(app: &AppHandle) -> Result<(), ()> {
 /// was running and has stopped. The agent is re-spawned on demand
 /// (the Agent page's "Start agent", or the next sync enqueue), so
 /// stopping it here loses nothing.
+///
+/// The graceful path is an IPC shutdown; if the agent is wedged
+/// (pipe open, no reply) and still reachable after the wait, the
+/// last resort is killing the process named by the single-instance
+/// lock — only after verifying the PID is alive and is a
+/// reponyx-agent, so a recycled PID is never killed by mistake.
 pub(crate) async fn stop_agent_if_running() -> CommandResult<bool> {
     let dir = data_dir();
     if !agent_reachable(&dir).await {
@@ -131,10 +138,50 @@ pub(crate) async fn stop_agent_if_running() -> CommandResult<bool> {
             return Ok(true);
         }
     }
+    if kill_agent_by_lock() {
+        for _ in 0..8 {
+            tokio::time::sleep(Duration::from_millis(250)).await;
+            if !agent_reachable(&dir).await {
+                return Ok(true);
+            }
+        }
+    }
     Err(CommandError {
         code: "InternalError".into(),
         message: "background agent did not stop; the database restore was not staged".into(),
     })
+}
+
+/// Kill the agent process named by the single-instance lock, after
+/// verifying the PID is alive and is a reponyx-agent. Returns
+/// `true` when a process was killed.
+fn kill_agent_by_lock() -> bool {
+    let Some(lock) = reponyx_ipc::read_lock(&data_dir()) else {
+        return false;
+    };
+    if !reponyx_ipc::pid_alive(lock.pid) || !reponyx_ipc::pid_is_agent(lock.pid) {
+        return false;
+    }
+    #[cfg(windows)]
+    {
+        let killed = Command::new("taskkill")
+            .args(["/PID", &lock.pid.to_string(), "/F"])
+            .output()
+            .map(|o| o.status.success())
+            .unwrap_or(false);
+        if killed {
+            tracing::warn!(pid = lock.pid, "killed wedged agent by PID");
+        }
+        killed
+    }
+    #[cfg(not(windows))]
+    {
+        Command::new("kill")
+            .args(["-9", &lock.pid.to_string()])
+            .output()
+            .map(|o| o.status.success())
+            .unwrap_or(false)
+    }
 }
 
 /// Stop the agent on purpose (Agent page "Stop agent" button and
@@ -174,10 +221,14 @@ pub async fn agent_health_command() -> CommandResult<AgentHealthView> {
             status: Some(status.into()),
             message: "ok".into(),
         }),
+        // The pipe accepted the connection but the agent never
+        // answered (or answered with an error): it is wedged, not
+        // healthy. Reporting reachable:true here made the UI claim
+        // a dead agent was "connected".
         Err(e) => Ok(AgentHealthView {
-            reachable: true,
+            reachable: false,
             status: None,
-            message: format!("connected but status failed: {}", e.message),
+            message: format!("background agent is not responding: {}", e.message),
         }),
     }
 }
@@ -240,12 +291,22 @@ async fn live_health(dir: &Path) -> Option<AgentHealthView> {
 
 /// Start the agent process if it is not already reachable.
 #[tauri::command]
-pub async fn ensure_agent_running_command() -> CommandResult<AgentHealthView> {
+pub async fn ensure_agent_running_command(app: AppHandle) -> CommandResult<AgentHealthView> {
+    ensure_agent_running(Some(&app)).await
+}
+
+/// Start the agent process if it is not already reachable. The
+/// AppHandle lets the lookup check Tauri's resource directory (the
+/// installer layout); without it the exe-dir and workspace-target
+/// fallbacks still apply.
+pub(crate) async fn ensure_agent_running(
+    app: Option<&AppHandle>,
+) -> CommandResult<AgentHealthView> {
     let dir = data_dir();
     if let Some(health) = live_health(&dir).await {
         return Ok(health);
     }
-    let mut child = spawn_agent_process()?;
+    let mut child = spawn_agent_process(app)?;
     // Wait briefly for the socket to come up.
     for _ in 0..20 {
         tokio::time::sleep(Duration::from_millis(250)).await;
@@ -286,8 +347,8 @@ pub async fn ensure_agent_running_command() -> CommandResult<AgentHealthView> {
     })
 }
 
-fn spawn_agent_process() -> Result<Child, CommandError> {
-    let exe = resolve_agent_exe().ok_or_else(|| CommandError {
+fn spawn_agent_process(app: Option<&AppHandle>) -> Result<Child, CommandError> {
+    let exe = resolve_agent_exe(app).ok_or_else(|| CommandError {
         code: "InternalError".into(),
         message: "reponyx-agent executable not found (set REPONYX_AGENT_EXE or install the agent binary on PATH)".into(),
     })?;
@@ -317,53 +378,39 @@ fn spawn_agent_process() -> Result<Child, CommandError> {
     })
 }
 
-fn resolve_agent_exe() -> Option<PathBuf> {
-    if let Some(p) = std::env::var_os("REPONYX_AGENT_EXE") {
-        return Some(PathBuf::from(p));
-    }
-    // Same directory as the desktop binary (bundled layout).
-    // The result is only a path hint for locating our own bundled
-    // agent binary, never an identity or trust decision: anyone able
-    // to replace that binary already controls this machine.
-    // nosemgrep: rust.lang.security.current-exe.current-exe
-    if let Ok(me) = std::env::current_exe() {
-        if let Some(dir) = me.parent() {
-            #[cfg(windows)]
-            let candidate = dir.join("reponyx-agent.exe");
-            #[cfg(not(windows))]
-            let candidate = dir.join("reponyx-agent");
-            if candidate.is_file() {
-                return Some(candidate);
-            }
-        }
-    }
-    // PATH lookup.
-    which("reponyx-agent")
+fn resolve_agent_exe(app: Option<&AppHandle>) -> Option<PathBuf> {
+    exe::resolve_exe(app, "REPONYX_AGENT_EXE", &exe::exe_name("reponyx-agent"))
 }
 
-fn which(name: &str) -> Option<PathBuf> {
-    let path = std::env::var_os("PATH")?;
-    for dir in std::env::split_paths(&path) {
-        #[cfg(windows)]
-        let candidate = dir.join(format!("{name}.exe"));
-        #[cfg(not(windows))]
-        let candidate = dir.join(name);
-        if candidate.is_file() {
-            return Some(candidate);
-        }
-    }
-    None
-}
-
-/// Register the agent to start at user logon (Windows Task Scheduler /
-/// Linux systemd user unit / macOS LaunchAgent).
+/// Register the app to start at user logon (Windows Task Scheduler /
+/// Linux systemd user unit / macOS LaunchAgent). On Windows the
+/// entry points at the desktop app itself: the desktop starts the
+/// agent and the broker when it launches, so "start at login" means
+/// the whole system comes up together — not the agent alone, which
+/// used to leave the desktop and the broker behind on the next
+/// logon. On Linux/macOS the entry still points at the agent
+/// (a GUI desktop app is not a systemd/launchd service).
 #[tauri::command]
-pub async fn register_agent_autostart_command() -> CommandResult<String> {
-    let exe = resolve_agent_exe().ok_or_else(|| CommandError {
-        code: "InternalError".into(),
-        message: "reponyx-agent executable not found".into(),
-    })?;
-    register_autostart(&exe)
+pub async fn register_agent_autostart_command(app: AppHandle) -> CommandResult<String> {
+    #[cfg(windows)]
+    {
+        // The desktop's own executable: autostart launches the app,
+        // and the app starts its services.
+        // nosemgrep: rust.lang.security.current-exe.current-exe
+        let exe = std::env::current_exe().map_err(|e| CommandError {
+            code: "InternalError".into(),
+            message: format!("could not locate the desktop executable: {e}"),
+        })?;
+        register_autostart(&exe)
+    }
+    #[cfg(not(windows))]
+    {
+        let exe = resolve_agent_exe(Some(&app)).ok_or_else(|| CommandError {
+            code: "InternalError".into(),
+            message: "reponyx-agent executable not found".into(),
+        })?;
+        register_autostart(&exe)
+    }
 }
 
 #[tauri::command]
@@ -374,44 +421,43 @@ pub async fn unregister_agent_autostart_command() -> CommandResult<String> {
 /// Per-user autostart, Registry Run key
 /// (`HKCU\Software\Microsoft\Windows\CurrentVersion\Run`).
 /// This is the fallback when Task Scheduler refuses the task: it
-/// needs no elevation, no service and no password, and the agent
+/// needs no elevation, no service and no password, and the desktop
 /// is a user-session process, so the Run key gives it exactly the
 /// same logon behaviour.
 const RUN_KEY: &str = r"HKCU\Software\Microsoft\Windows\CurrentVersion\Run";
-const RUN_VALUE_NAME: &str = "RepoNyxBackgroundAgent";
+/// Current autostart entry: the desktop app itself.
+const RUN_VALUE_NAME: &str = "RepoNyx";
+const TASK_NAME: &str = "RepoNyx";
+/// Legacy entries (2026-11-24 and earlier) pointed at the agent
+/// binary only. Enabling autostart now removes them so the agent
+/// does not also start alone at logon; unregistering removes both.
+const LEGACY_RUN_VALUE_NAME: &str = "RepoNyxBackgroundAgent";
+const LEGACY_TASK_NAME: &str = "RepoNyxBackgroundAgent";
 
 #[cfg(windows)]
-fn task_scheduler_task_present() -> bool {
+fn task_scheduler_task_present(task: &str) -> bool {
     Command::new("schtasks")
-        .args(["/Query", "/TN", "RepoNyxBackgroundAgent"])
+        .args(["/Query", "/TN", task])
         .output()
         .map(|o| o.status.success())
         .unwrap_or(false)
 }
 
 #[cfg(windows)]
-fn run_key_present() -> bool {
+fn run_key_present(value: &str) -> bool {
     Command::new("reg")
-        .args(["query", RUN_KEY, "/v", RUN_VALUE_NAME])
+        .args(["query", RUN_KEY, "/v", value])
         .output()
         .map(|o| o.status.success())
         .unwrap_or(false)
 }
 
 #[cfg(windows)]
-fn register_run_key(agent_exe: &Path) -> Result<(), String> {
-    let value = format!("\"{}\"", agent_exe.display());
+fn register_run_key(exe: &Path, value: &str) -> Result<(), String> {
+    let value_arg = format!("\"{}\"", exe.display());
     let output = Command::new("reg")
         .args([
-            "add",
-            RUN_KEY,
-            "/v",
-            RUN_VALUE_NAME,
-            "/t",
-            "REG_SZ",
-            "/d",
-            &value,
-            "/f",
+            "add", RUN_KEY, "/v", value, "/t", "REG_SZ", "/d", &value_arg, "/f",
         ])
         .output()
         .map_err(|e| format!("reg add failed: {e}"))?;
@@ -423,34 +469,45 @@ fn register_run_key(agent_exe: &Path) -> Result<(), String> {
 }
 
 #[cfg(windows)]
-fn unregister_run_key() -> bool {
+fn unregister_run_key(value: &str) -> bool {
     Command::new("reg")
-        .args(["delete", RUN_KEY, "/v", RUN_VALUE_NAME, "/f"])
+        .args(["delete", RUN_KEY, "/v", value, "/f"])
         .output()
         .map(|o| o.status.success())
         .unwrap_or(false)
 }
 
 #[cfg(windows)]
-fn register_autostart(agent_exe: &Path) -> CommandResult<String> {
-    if task_scheduler_task_present() {
+fn remove_legacy_autostart() {
+    let _ = Command::new("schtasks")
+        .args(["/Delete", "/TN", LEGACY_TASK_NAME, "/F"])
+        .output();
+    unregister_run_key(LEGACY_RUN_VALUE_NAME);
+}
+
+#[cfg(windows)]
+fn register_autostart(desktop_exe: &Path) -> CommandResult<String> {
+    if task_scheduler_task_present(TASK_NAME) {
         return Ok("Start at login is already enabled (Task Scheduler).".into());
     }
-    if run_key_present() {
+    if run_key_present(RUN_VALUE_NAME) {
         return Ok("Start at login is already enabled (Registry Run key).".into());
     }
+    // Upgrade: drop the legacy agent-only entries so the agent does
+    // not also start alone at logon next to the desktop.
+    remove_legacy_autostart();
     // No /RL flag: the task runs at logon with the user's normal
-    // token by default, which is all this user-session agent
-    // needs. The previous version passed /RL LIMITED and schtasks
-    // refused the task with "ERROR: Access is denied." when the
-    // app ran non-elevated.
+    // token by default, which is all this user-session app needs.
+    // The previous version passed /RL LIMITED and schtasks refused
+    // the task with "ERROR: Access is denied." when the app ran
+    // non-elevated.
     let output = Command::new("schtasks")
         .args([
             "/Create",
             "/TN",
-            "RepoNyxBackgroundAgent",
+            TASK_NAME,
             "/TR",
-            &format!("\"{}\"", agent_exe.display()),
+            &format!("\"{}\"", desktop_exe.display()),
             "/SC",
             "ONLOGON",
             "/F",
@@ -461,12 +518,12 @@ fn register_autostart(agent_exe: &Path) -> CommandResult<String> {
             message: format!("schtasks failed: {e}"),
         })?;
     if output.status.success() {
-        return Ok("Registered RepoNyxBackgroundAgent (ONLOGON, Task Scheduler)".into());
+        return Ok("Registered RepoNyx (ONLOGON, Task Scheduler)".into());
     }
     let scheduler_error = String::from_utf8_lossy(&output.stderr).trim().to_string();
     // Fall back to the per-user Registry Run key so Enable still
     // works on machines where Task Scheduler refuses the task.
-    match register_run_key(agent_exe) {
+    match register_run_key(desktop_exe, RUN_VALUE_NAME) {
         Ok(()) => Ok(format!(
             "Task Scheduler refused the task ({scheduler_error}); start at login was enabled via the Registry Run key instead."
         )),
@@ -483,15 +540,27 @@ fn register_autostart(agent_exe: &Path) -> CommandResult<String> {
 fn unregister_autostart() -> CommandResult<String> {
     let mut removed = Vec::new();
     let task_gone = Command::new("schtasks")
-        .args(["/Delete", "/TN", "RepoNyxBackgroundAgent", "/F"])
+        .args(["/Delete", "/TN", TASK_NAME, "/F"])
         .output()
         .map(|o| o.status.success())
         .unwrap_or(false);
     if task_gone {
         removed.push("Task Scheduler");
     }
-    if unregister_run_key() {
+    if unregister_run_key(RUN_VALUE_NAME) {
         removed.push("Registry Run key");
+    }
+    // Also drop the legacy agent-only entries.
+    let legacy_task_gone = Command::new("schtasks")
+        .args(["/Delete", "/TN", LEGACY_TASK_NAME, "/F"])
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false);
+    if legacy_task_gone {
+        removed.push("legacy Task Scheduler task");
+    }
+    if unregister_run_key(LEGACY_RUN_VALUE_NAME) {
+        removed.push("legacy Registry Run key");
     }
     if removed.is_empty() {
         Ok("Start at login was not enabled.".into())
@@ -505,7 +574,10 @@ fn unregister_autostart() -> CommandResult<String> {
 
 #[cfg(windows)]
 fn autostart_enabled() -> bool {
-    task_scheduler_task_present() || run_key_present()
+    task_scheduler_task_present(TASK_NAME)
+        || run_key_present(RUN_VALUE_NAME)
+        || task_scheduler_task_present(LEGACY_TASK_NAME)
+        || run_key_present(LEGACY_RUN_VALUE_NAME)
 }
 
 #[cfg(target_os = "linux")]

@@ -11,6 +11,10 @@
 //! - `REPONYX_BROKER_BIND` — bind address (default `127.0.0.1:8765`)
 //! - `REPONYX_BROKER_GITHUB_API_URL` — GitHub API base (default
 //!   `https://api.github.com`)
+//! - `REPONYX_BROKER_ENV_FILE` — explicit `.env` file to load
+//!   first (the desktop sets this when it spawns the broker for an
+//!   installed app, pointing at `<data_dir>/.env`); a missing file
+//!   is ignored, and a CWD `.env` still fills in the rest.
 //! - `REPONYX_BROKER_DATA_DIR` — durable state directory (default
 //!   `broker-data`); holds `broker.sqlite`, the installations,
 //!   pairing codes, setup states, device tokens, and audit log.
@@ -23,6 +27,11 @@
 //! variables always win: dotenv never overwrites a variable that is
 //! already set. `.env` is gitignored — never commit it.
 //!
+//! Starting a second broker while one is already listening on the
+//! bind address is not an error: the new process prints "already
+//! running" and exits 0, so `dev:all` (and the desktop's spawn)
+//! never kills the whole stack over a duplicate broker.
+//!
 //! The broker logs method/path/status only — never tokens, codes,
 //! keys, or request bodies.
 
@@ -30,16 +39,25 @@ use reponyx_auth_broker::BrokerStore;
 use reponyx_auth_broker::config::BrokerConfig;
 use reponyx_auth_broker::{BrokerState, app};
 use std::net::SocketAddr;
+use std::time::Duration;
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tracing::info;
 
 #[tokio::main]
 async fn main() {
-    // Load `.env` from the working directory first, so the broker can
-    // run from `pnpm broker` / `pnpm dev:all` without exported
-    // variables. Real OS environment variables are never overwritten
-    // by the file (dotenv only fills in missing ones), and a missing
-    // file is not an error — `BrokerConfig::from_env` still enforces
-    // the required variables below.
+    // Load `.env` from the explicit file first (when the desktop
+    // spawns the broker it points here), then from the working
+    // directory, so the broker can run from `pnpm broker` /
+    // `pnpm dev:all` without exported variables. Real OS environment
+    // variables are never overwritten by the file (dotenv only fills
+    // in missing ones), and a missing file is not an error —
+    // `BrokerConfig::from_env` still enforces the required
+    // variables below.
+    if let Ok(path) = std::env::var("REPONYX_BROKER_ENV_FILE")
+        && !path.trim().is_empty()
+    {
+        let _ = dotenvy::from_path(&path);
+    }
     dotenvy::dotenv().ok();
     let log_dir = std::env::var("REPONYX_BROKER_LOG_DIR").unwrap_or_else(|_| "logs".to_string());
     if let Err(err) = reponyx_logging::init_logging(std::path::Path::new(&log_dir)) {
@@ -55,6 +73,14 @@ async fn main() {
         }
     };
     let bind_addr: SocketAddr = config.bind_addr;
+    // A broker is already listening here (started by hand, by
+    // dev:all, or by the desktop): this is not an error. Exit 0 so
+    // `concurrently -k` never kills the whole stack over a duplicate
+    // broker, and so the desktop's spawn is a harmless no-op.
+    if broker_already_running(bind_addr).await {
+        eprintln!("auth-broker: already running at {bind_addr}; exiting");
+        return;
+    }
     let db_path = config.data_dir.join("broker.sqlite");
     let store = match BrokerStore::open(&db_path).await {
         Ok(store) => std::sync::Arc::new(store),
@@ -90,4 +116,32 @@ async fn main() {
         eprintln!("auth-broker: server error: {err}");
         std::process::exit(1);
     }
+}
+
+/// Is a broker already answering `/health` on this address? A bare
+/// TCP connect is not enough — another process could hold the port —
+/// so this sends a minimal HTTP GET and requires a 200 status line.
+/// Dependency-free on purpose: the broker binary does not need an
+/// HTTP client just for this probe.
+async fn broker_already_running(bind_addr: SocketAddr) -> bool {
+    let connect = tokio::time::timeout(
+        Duration::from_secs(1),
+        tokio::net::TcpStream::connect(bind_addr),
+    )
+    .await;
+    let Ok(Ok(mut stream)) = connect else {
+        return false;
+    };
+    let request = format!("GET /health HTTP/1.1\r\nHost: {bind_addr}\r\nConnection: close\r\n\r\n");
+    if stream.write_all(request.as_bytes()).await.is_err() {
+        return false;
+    }
+    let mut buf = [0u8; 256];
+    let read = tokio::time::timeout(Duration::from_secs(1), stream.read(&mut buf)).await;
+    let Ok(Ok(n)) = read else {
+        return false;
+    };
+    std::str::from_utf8(&buf[..n])
+        .map(|text| text.contains(" 200 "))
+        .unwrap_or(false)
 }

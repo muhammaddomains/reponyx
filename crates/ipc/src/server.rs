@@ -110,7 +110,7 @@ impl AgentIpcServer {
     }
 
     /// Accept loop until `cancel` is cancelled.
-    pub async fn run(self, cancel: tokio_util::sync::CancellationToken) {
+    pub async fn run(mut self, cancel: tokio_util::sync::CancellationToken) {
         loop {
             tokio::select! {
                 _ = cancel.cancelled() => {

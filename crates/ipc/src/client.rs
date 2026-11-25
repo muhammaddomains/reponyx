@@ -10,7 +10,16 @@ use reponyx_core::{ErrorCode, RepoNyxError};
 use reponyx_credential_store::CredentialStore;
 use std::path::Path;
 use std::sync::Arc;
+use std::time::Duration;
 use uuid::Uuid;
+
+/// Bound for a single IPC request (connect + write + read). A hung
+/// agent must never hang the desktop UI indefinitely: without this,
+/// a wedged agent (pipe open, no reply) blocks every Tauri command
+/// that talks to it — status, pause, enqueue, shutdown — forever.
+/// The progress subscription is exempt by design: it is long-lived
+/// and normally idle for long stretches.
+pub const IPC_REQUEST_TIMEOUT: Duration = Duration::from_secs(5);
 
 /// High-level client used by the desktop Tauri backend.
 pub struct IpcClient {
@@ -211,6 +220,20 @@ impl IpcClient {
     }
 
     async fn roundtrip(&self, msg: ClientMessage) -> Result<ServerMessage, RepoNyxError> {
+        tokio::time::timeout(IPC_REQUEST_TIMEOUT, self.roundtrip_inner(msg))
+            .await
+            .map_err(|_| {
+                RepoNyxError::new(
+                    ErrorCode::NetworkUnavailable,
+                    format!(
+                        "background agent did not reply within {}s",
+                        IPC_REQUEST_TIMEOUT.as_secs()
+                    ),
+                )
+            })?
+    }
+
+    async fn roundtrip_inner(&self, msg: ClientMessage) -> Result<ServerMessage, RepoNyxError> {
         let mut conn = transport::connect(&self.data_dir)
             .await
             .map_err(map_transport)?;

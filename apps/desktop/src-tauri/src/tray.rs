@@ -90,7 +90,7 @@ pub fn setup_tray(app: &AppHandle) -> tauri::Result<()> {
                 tauri::async_runtime::spawn(async move {
                     use tauri_plugin_notification::NotificationExt;
                     let outcome = async {
-                        crate::agent::ensure_agent_running_command().await?;
+                        crate::agent::ensure_agent_running(Some(&handle)).await?;
                         let db = handle.state::<Option<reponyx_database::Database>>();
                         let report = crate::schedules::materialize_due_command(db).await?;
                         Ok::<_, crate::auth::CommandError>(report)
@@ -131,7 +131,7 @@ pub fn setup_tray(app: &AppHandle) -> tauri::Result<()> {
                 let handle = app.clone();
                 tauri::async_runtime::spawn(async move {
                     use tauri_plugin_notification::NotificationExt;
-                    let outcome = crate::agent::ensure_agent_running_command().await;
+                    let outcome = crate::agent::ensure_agent_running(Some(&handle)).await;
                     let (title, body) = match outcome {
                         Ok(view) if view.reachable => (
                             "Agent running",

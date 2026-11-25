@@ -27,6 +27,45 @@ pub async fn run_agent() -> Result<(), Box<dyn std::error::Error>> {
         "reponyx-agent starting"
     );
 
+    // Single instance: refuse to start when another agent already
+    // holds the lock (its PID is alive and is a reponyx-agent).
+    // Without this, the second agent only fails later at bind_ipc
+    // with a cryptic "Access is denied" from the named pipe. A stale
+    // lock (PID dead, or not our agent) is ignored and overwritten
+    // after binding below.
+    if let Some(lock) = reponyx_ipc::read_lock(&data)
+        && reponyx_ipc::pid_alive(lock.pid)
+        && reponyx_ipc::pid_is_agent(lock.pid)
+    {
+        return Err(format!(
+            "another reponyx-agent is already running (pid {})",
+            lock.pid
+        )
+        .into());
+    }
+
+    // Bind the IPC endpoint FIRST — before the database opens and
+    // before the queue runs recovery. The named pipe / socket is the
+    // single-instance arbiter: if another agent already holds it,
+    // bind fails here and this process exits before two agents can
+    // both recover and claim the same jobs (the old order ran the
+    // queue first and only failed later at bind_ipc).
+    let cancel = CancellationToken::new();
+    let store = reponyx_credential_store::default_store();
+    let (ipc_server, cmd_rx) = bind_ipc(&data, store, generation).await?;
+
+    // Record this process in the single-instance lock now that the
+    // endpoint is bound, so a second agent refuses to start and the
+    // desktop can tell a live agent from a dead one.
+    let _ = reponyx_ipc::write_lock(
+        &data,
+        &reponyx_ipc::AgentLock {
+            pid: std::process::id(),
+            generation,
+            started_at: Utc::now().to_rfc3339(),
+        },
+    );
+
     let database = open_database(&db_path(&data)).await?;
     let pool = database.pool.clone();
 
@@ -38,7 +77,7 @@ pub async fn run_agent() -> Result<(), Box<dyn std::error::Error>> {
     // (Phase 8) can change it later.
     ensure_storage_root(&pool, &data).await?;
 
-    let (queue, store) = start_queue(pool.clone()).await?;
+    let (queue, _) = start_queue(pool.clone()).await?;
     let state = Arc::new(AgentState {
         pool: pool.clone(),
         queue,
@@ -48,9 +87,6 @@ pub async fn run_agent() -> Result<(), Box<dyn std::error::Error>> {
         last_materialize_at: tokio::sync::Mutex::new(None),
         last_materialize_created: tokio::sync::Mutex::new(None),
     });
-
-    let cancel = CancellationToken::new();
-    let (ipc_server, cmd_rx) = bind_ipc(&data, store, generation).await?;
 
     // Forward the queue's progress events to IPC subscribers. The
     // queue broadcasts typed events; the IPC server forwards JSON
@@ -110,6 +146,9 @@ pub async fn run_agent() -> Result<(), Box<dyn std::error::Error>> {
     ipc_handle.abort();
     sched_handle.abort();
     cmd_handle.abort();
+    // Best-effort: a killed agent leaves a stale lock behind, and
+    // the next start overwrites it once its PID is dead.
+    reponyx_ipc::remove_lock(&data);
     info!("reponyx-agent stopped");
     Ok(())
 }

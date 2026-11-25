@@ -38,10 +38,15 @@ pub struct Listener {
     inner: tokio::net::UnixListener,
     #[cfg(windows)]
     path: PathBuf,
+    /// The pipe instance currently waiting for a client. Kept (never
+    /// dropped while idle) so a listening instance always exists: a
+    /// bare probe must never land on a missing pipe.
+    #[cfg(windows)]
+    pending: Option<tokio::net::windows::named_pipe::NamedPipeServer>,
 }
 
 impl Listener {
-    pub async fn accept(&self) -> Result<Conn, TransportError> {
+    pub async fn accept(&mut self) -> Result<Conn, TransportError> {
         #[cfg(unix)]
         {
             let (stream, _) = self.inner.accept().await?;
@@ -50,11 +55,26 @@ impl Listener {
         #[cfg(windows)]
         {
             use tokio::net::windows::named_pipe::ServerOptions;
-            // Windows named pipes: create a new server instance per accept.
-            let server = ServerOptions::new()
+            // Take the pending instance (creating one on demand when
+            // none is pending), then create its replacement BEFORE
+            // awaiting connect — so a listening instance is always
+            // available for the next client.
+            let server = match self.pending.take() {
+                Some(server) => server,
+                None => ServerOptions::new()
+                    .first_pipe_instance(false)
+                    .create(&self.path)
+                    .map_err(TransportError::Io)?,
+            };
+            if let Ok(next) = ServerOptions::new()
                 .first_pipe_instance(false)
                 .create(&self.path)
-                .map_err(TransportError::Io)?;
+            {
+                self.pending = Some(next);
+            }
+            // If the replacement could not be created, the next
+            // accept() creates one on demand; this connection still
+            // works.
             server.connect().await.map_err(TransportError::Io)?;
             Ok(Box::new(server))
         }
@@ -86,9 +106,13 @@ pub async fn listen(data_dir: &Path) -> Result<Listener, TransportError> {
     {
         use tokio::net::windows::named_pipe::ServerOptions;
         let path = socket_path(data_dir);
-        // Create the first instance so the pipe exists; subsequent
-        // accepts create additional instances.
-        let _server = ServerOptions::new()
+        // Create the first instance and KEEP it as the pending
+        // listening instance. (The old code dropped it here, so the
+        // pipe did not exist until the first accept() created one —
+        // a probe landing in that gap, or between accept() returning
+        // and the next accept() creating an instance, saw no pipe
+        // at all and the desktop concluded the agent was down.)
+        let pending = ServerOptions::new()
             .first_pipe_instance(true)
             .create(&path)
             .map_err(|e| {
@@ -107,7 +131,10 @@ pub async fn listen(data_dir: &Path) -> Result<Listener, TransportError> {
                     TransportError::Io(e)
                 }
             })?;
-        Ok(Listener { path })
+        Ok(Listener {
+            path,
+            pending: Some(pending),
+        })
     }
 }
 

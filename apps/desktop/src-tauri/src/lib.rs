@@ -8,8 +8,10 @@
 
 mod agent;
 mod auth;
+mod broker;
 mod config;
 mod diagnostics;
+mod exe;
 mod repositories;
 mod schedules;
 mod settings;
@@ -59,6 +61,29 @@ mod commands {
 
 use reponyx_database::open_database;
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::time::Duration;
+use tauri::AppHandle;
+
+/// Stop the services the desktop owns: the background agent (IPC
+/// shutdown, then the lock-PID kill fallback) and a broker child
+/// this desktop process spawned. Best-effort — every step logs
+/// instead of failing, so quitting never hangs on a wedged service.
+async fn stop_services(app: &AppHandle) {
+    match agent::stop_agent_if_running().await {
+        Ok(true) => tracing::info!("background agent stopped on quit"),
+        Ok(false) => {}
+        Err(e) => tracing::warn!(error = %e.message, "agent did not stop on quit"),
+    }
+    if broker::stop_broker_if_spawned(app).await {
+        tracing::info!("auth broker stopped on quit");
+    }
+}
+
+/// Whether the quit shutdown is already running. Guards the
+/// ExitRequested → async-stop → exit(0) loop from re-entering
+/// itself, and keeps the Exit handler from stopping twice.
+static SHUTTING_DOWN: AtomicBool = AtomicBool::new(false);
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -93,11 +118,37 @@ pub fn run() {
         .plugin(tauri_plugin_updater::Builder::new().build())
         .manage(db_state)
         .manage(auth::AuthState::new())
+        .manage(broker::BrokerProcess(std::sync::Mutex::new(None)))
         .setup(|app| {
             if let Err(e) = tray::setup_tray(app.handle()) {
                 tracing::warn!(error = %e, "tray setup failed; continuing without tray");
             }
             agent::start_progress_forwarder(app.handle());
+            // One system: the app brings its services up with it.
+            // The agent and the broker start here (best-effort —
+            // the app must still open if a service cannot start)
+            // and stop on quit (see the RunEvent handler below).
+            let handle = app.handle().clone();
+            tauri::async_runtime::spawn(async move {
+                match agent::ensure_agent_running(Some(&handle)).await {
+                    Ok(view) if view.reachable => {
+                        tracing::info!("background agent running at startup");
+                    }
+                    Ok(view) => {
+                        tracing::warn!(
+                            message = %view.message,
+                            "background agent not running at startup"
+                        );
+                    }
+                    Err(e) => {
+                        tracing::warn!(
+                            error = %e.message,
+                            "could not start background agent at startup"
+                        );
+                    }
+                }
+                broker::ensure_broker_best_effort(&handle).await;
+            });
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -166,8 +217,35 @@ pub fn run() {
             settings::get_settings_command,
             settings::set_setting_command,
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running RepoNyx");
+        .build(tauri::generate_context!())
+        .expect("error while building RepoNyx")
+        .run(|app, event| match event {
+            // Quit means everything stops together: prevent the exit,
+            // stop the agent + broker, then exit for real. The guard
+            // keeps the exit(0) below from re-entering this arm.
+            tauri::RunEvent::ExitRequested { api, .. } => {
+                if SHUTTING_DOWN.swap(true, Ordering::SeqCst) {
+                    return;
+                }
+                api.prevent_exit();
+                let handle = app.clone();
+                tauri::async_runtime::spawn(async move {
+                    stop_services(&handle).await;
+                    handle.exit(0);
+                });
+            }
+            // Exits that bypass ExitRequested (a direct exit call):
+            // stop the services synchronously, bounded, best-effort.
+            tauri::RunEvent::Exit => {
+                if !SHUTTING_DOWN.swap(true, Ordering::SeqCst) {
+                    let handle = app.clone();
+                    let _ = tauri::async_runtime::block_on(async {
+                        tokio::time::timeout(Duration::from_secs(10), stop_services(&handle)).await
+                    });
+                }
+            }
+            _ => {}
+        });
 }
 
 /// Platform app-data directory for RepoNyx, without depending on Tauri's

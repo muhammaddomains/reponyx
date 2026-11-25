@@ -183,3 +183,41 @@ describe("Accounts page — pairing code", () => {
     expect(screen.getByText(/it does not expire/)).toBeInTheDocument();
   });
 });
+
+describe("Accounts page — broker down", () => {
+  const connectedPatAccount: Account = {
+    id: "00000000-0000-0000-0000-000000000002",
+    provider: "github",
+    providerAccountId: "42",
+    username: "octocat",
+    displayName: null,
+    label: null,
+    accountType: "personal",
+    authenticationMethod: "fine_grained_pat",
+    status: "connected",
+    patExpiresAt: null,
+    patExpiryStatus: "unknown",
+    patExpiryDaysLeft: null,
+    lastValidatedAt: null,
+    createdAt: "2026-11-24T00:00:00Z",
+    updatedAt: "2026-11-24T00:00:00Z",
+  };
+
+  it("still shows the accounts when the installations call rejects", async () => {
+    vi.mocked(listAccounts).mockResolvedValue([connectedPatAccount]);
+    vi.mocked(getBrokerStatus).mockResolvedValue({
+      configured: true,
+      reachable: false,
+      baseUrl: "http://127.0.0.1:8765",
+    });
+    vi.mocked(listBrokerInstallations).mockRejectedValue(
+      new Error("NetworkUnavailable: cannot reach the Auth Broker"),
+    );
+    render(<Accounts />);
+    expect(await screen.findByText("octocat")).toBeInTheDocument();
+    expect(
+      await screen.findByText(/is not reachable; setup token is configured/),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/No accounts yet/)).not.toBeInTheDocument();
+  });
+});

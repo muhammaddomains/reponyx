@@ -13,12 +13,17 @@
 //! that may contain repository identifiers beyond what tracing needs
 //! (message type only by default).
 
+pub mod agent_lock;
 pub mod auth;
 pub mod client;
 pub mod frame;
 pub mod protocol;
 pub mod server;
 pub mod transport;
+
+pub use agent_lock::{
+    AgentLock, lock_path, pid_alive, pid_is_agent, read_lock, remove_lock, write_lock,
+};
 
 pub use auth::{
     IpcAuthError, SERVICE_IPC, ensure_shared_secret, load_shared_secret, store_shared_secret,

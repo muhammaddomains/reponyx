@@ -44,6 +44,45 @@ only (the gdk blocker); the real desktop compile check is the
 user's Windows build. Remaining honest gaps are listed in the
 fixes section. Work is on `main` going forward.
 
+## Production audit + Phase 1 unified lifecycle (2026-11-25)
+
+The user ordered a full A-to-Z production audit first, then a
+report, then a plan, fixes only after the plan — and set the
+governing principle: RepoNyx runs as ONE system (broker + agent +
+desktop start together and stop together, in dev AND in the
+build); the fix is unified lifecycle, NOT degrading functions so
+a page works without a missing service. Full report:
+`~/workspace/goals/reponyx-development/files/reponyx-production-audit-report.md`.
+Verdict: not production-ready — 10 unique blockers, ~30 majors,
+~40 minors. Plan approved by the user 2026-11-25 02:20 MST;
+Phase 1 (unified lifecycle) built the same day, uncommitted at
+the time of writing (local `main` at merge `4927b1a`).
+
+Phase 1 delivered: desktop starts agent + broker at startup and
+stops both on quit (new `broker.rs` + `exe.rs` in the desktop
+crate; `RunEvent::ExitRequested`/`Exit` handler; agent spawn
+keeps the `Child` so an early exit is reported, not waited out);
+broker already-running detection via `/health` pre-bind
+(second `pnpm broker` exits 0); agent lock-first startup
+(`agent_lock.rs` in `crates/ipc`, incl. the `pid_alive(u32::MAX)`
+`kill(-1, 0)` fix); IPC 5 s request timeout; `agent_health`
+reports a wedged agent as unreachable; autostart registers the
+desktop on Windows (`RepoNyx`, legacy agent entries removed);
+installer bundles agent + broker (`bundle.resources`, release
+binaries built before the tauri-action step); Accounts page
+broker-down safety net (accounts still render + broker warning).
+Verified 2026-11-25: `cargo fmt --check` OK, clippy (workspace
+excl. desktop) clean, `cargo test --workspace --exclude
+reponyx-desktop` 433 passed / 0 failed (76 binaries; the broker
+flake did not recur), typecheck clean, frontend tests 73 passed /
+0 failed, `pnpm -r lint` clean, vite build OK, Semgrep (exact CI
+command) 0 findings. Honest limits: desktop Rust is
+compile-checked only by CI windows-build; installer bundling is
+proven only by a real Windows `tauri build` / the release
+workflow; a mid-job quit can still orphan git children until
+Phase 2's process-group kill (G2). Next: Phase 2 crash recovery
+& data integrity (incl. the broker flake test fix).
+
 ## Windows first-run bugs (2026-11-23)
 
 First real Windows run (`target\debug\reponyx-desktop.exe`):

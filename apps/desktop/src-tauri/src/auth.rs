@@ -42,7 +42,7 @@ use reponyx_github_provider::GitHubProvider;
 use reponyx_github_provider::broker::{BrokerClient, BrokerTokenSource};
 use serde::Serialize;
 use std::sync::Arc;
-use tauri::State;
+use tauri::{AppHandle, State};
 use uuid::Uuid;
 
 /// Error shape returned to the frontend: `{ code, message }`, using
@@ -442,8 +442,14 @@ pub async fn set_broker_setup_token_command(
 
 #[tauri::command]
 pub async fn get_broker_status_command(
+    app: AppHandle,
     auth: State<'_, AuthState>,
 ) -> CommandResult<BrokerStatusDto> {
+    // The broker is part of the system: start it on demand before
+    // reporting status, so the page sees it running instead of
+    // flashing "not reachable" on a cold start. Best-effort — a
+    // failure still reports reachable:false below.
+    crate::broker::ensure_broker_best_effort(&app).await;
     let configured = auth
         .store
         .exists(SERVICE_BROKER, ACCOUNT_SETUP_TOKEN)
@@ -458,8 +464,10 @@ pub async fn get_broker_status_command(
 
 #[tauri::command]
 pub async fn list_broker_installations_command(
+    app: AppHandle,
     auth: State<'_, AuthState>,
 ) -> CommandResult<Vec<BrokerInstallationDto>> {
+    crate::broker::ensure_broker_best_effort(&app).await;
     let token = setup_token(&auth)?;
     let installations = broker_client(&auth)?
         .list_installations(token.expose())
@@ -478,8 +486,10 @@ pub async fn list_broker_installations_command(
 
 #[tauri::command]
 pub async fn create_broker_setup_state_command(
+    app: AppHandle,
     auth: State<'_, AuthState>,
 ) -> CommandResult<BrokerSetupStateDto> {
+    crate::broker::ensure_broker_best_effort(&app).await;
     let token = setup_token(&auth)?;
     let (_state, install_url, expires_at) = broker_client(&auth)?
         .request_setup_state(token.expose())
@@ -529,10 +539,12 @@ async fn fresh_device_identifier_if_revoked(
 /// and its expiry.
 #[tauri::command]
 pub async fn start_pairing_command(
+    app: AppHandle,
     db: State<'_, Option<Database>>,
     auth: State<'_, AuthState>,
     installation_id: String,
 ) -> CommandResult<PairingDto> {
+    crate::broker::ensure_broker_best_effort(&app).await;
     let database = require_db(&db)?;
     let token = setup_token(&auth)?;
     let device_id = device_identifier(database).await?;
@@ -568,10 +580,12 @@ pub async fn start_pairing_command(
 
 #[tauri::command]
 pub async fn complete_pairing_command(
+    app: AppHandle,
     db: State<'_, Option<Database>>,
     auth: State<'_, AuthState>,
     pairing_code: String,
 ) -> CommandResult<AccountDto> {
+    crate::broker::ensure_broker_best_effort(&app).await;
     let database = require_db(&db)?;
     let token = setup_token(&auth)?;
     let device_id = device_identifier(database).await?;

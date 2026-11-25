@@ -5,6 +5,66 @@ All notable changes to RepoNyx are documented here. Format follows
 
 ## [Unreleased]
 
+### Added — Unified lifecycle: desktop starts/stops agent + broker; installer bundles all three (2026-11-25, Phase 1 of the production audit)
+
+- The desktop now brings its services up with it and tears them
+  down on quit — one system, not three processes that happen to
+  coexist. At startup it ensures the background agent is running
+  (spawning it when needed) and then the Auth Broker; on quit
+  (`RunEvent::ExitRequested` / `Exit`) it stops the agent (IPC
+  shutdown, then the lock-PID kill fallback) and any broker child
+  it spawned. A broker the user started by hand (or via
+  `dev:all`) is never touched on quit.
+- New `apps/desktop/src-tauri/src/exe.rs`: shared exe resolution
+  for the agent and the broker — env override, then Tauri
+  `resource_dir()` (installer), then `<exe_dir>/resources/`,
+  then the exe dir (portable ZIP), then the workspace
+  `target/{debug,release}/` walk-up, then PATH.
+- New `apps/desktop/src-tauri/src/broker.rs`: broker health
+  probe (raw TCP + HTTP GET `/health`, 1 s timeouts), spawn +
+  track the desktop-owned broker child, stop it on quit. In dev
+  the broker runs with the repo root as CWD (same `.env` and
+  relative `broker-data` as `pnpm broker`); for an installed app
+  the data dir is the CWD with `REPONYX_BROKER_DATA_DIR` and
+  `REPONYX_BROKER_ENV_FILE` pointed at it.
+- The broker now detects an already-running instance before
+  binding: a raw TCP + GET `/health` probe (1 s timeouts, needs a
+  200 status) makes a second `pnpm broker` exit 0 with
+  "already running" instead of crashing `dev:all` on a port
+  conflict. It also honours `REPONYX_BROKER_ENV_FILE` (checked
+  before the CWD `.env`) so an installed app can point it at
+  `<data_dir>/.env`.
+- The agent now takes the single-instance lock FIRST — before
+  binding the IPC pipe, opening the database, or running
+  recovery — so two agents can never both think they own the
+  pipe. New `crates/ipc/src/agent_lock.rs`: lock read/write/
+  remove, `pid_alive` / `pid_is_agent` (fixed: `pid_alive(u32::MAX)`
+  returned true on Linux because `kill -0` wraps to `kill(-1, 0)`).
+  The IPC transport also keeps a pending `NamedPipeServer`
+  listening instance on Windows so the pipe never has a
+  no-listener gap.
+- IPC requests now time out after 5 s (`IPC_REQUEST_TIMEOUT` in
+  `crates/ipc/src/client.rs`; the live progress subscription is
+  exempt). `agent_health` reports a wedged agent (pipe open, no
+  reply) as `reachable: false` instead of "connected".
+- Start-at-login now registers the DESKTOP on Windows (task /
+  Run value `RepoNyx`, legacy `RepoNyxBackgroundAgent` entries
+  removed on upgrade) so the whole system comes up at logon.
+  Linux/macOS still register the agent unit/LaunchAgent.
+- `tauri.conf.json` `bundle.resources` now maps
+  `target/release/reponyx-agent.exe` and
+  `target/release/reponyx-auth-broker.exe` into the installer —
+  this closes the open follow-up from 2026-11-23 (the NSIS
+  installer contained only the desktop). `broker:build` and
+  `agent:build` are now release builds, and the release workflow
+  builds them BEFORE the tauri-action step so the files exist
+  when the bundle is made.
+- Accounts page safety net (audit F1): the broker-installations
+  call is now guarded, so a dead broker can no longer hide the
+  accounts — the page shows the accounts plus a broker warning
+  instead of an empty list. New test: broker-down still renders
+  the accounts.
+
 ### Added — Auth Broker runs with the app; release ships all binaries (2026-11-23)
 
 - Root `package.json` now has `broker` (`cargo run -p
@@ -21,10 +81,10 @@ All notable changes to RepoNyx are documented here. Format follows
   release install.
 - `.env.example` documents the broker variables; README has a
   "Running the Auth Broker" section.
-- Open follow-up: the NSIS installer still contains only the
-  desktop; bundling the agent/broker into it needs
-  `bundle.resources` + a resource-dir lookup in
-  `resolve_agent_exe`.
+- Closed 2026-11-25 (Phase 1 of the production audit): the NSIS
+  installer now bundles the agent and the broker via
+  `bundle.resources`, and `resolve_agent_exe` checks Tauri's
+  resource directory first (see the entry above).
 
 ### Added — Broker reads `.env`; `dev:all` runs the agent; `build:all` (2026-11-23)
 

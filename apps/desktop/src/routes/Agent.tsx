@@ -235,7 +235,7 @@ export default function Agent() {
         </Button>
         <Button
           disabled={busy || autostart === false}
-          variant="ghost"
+          variant="secondary"
           onClick={() =>
             run(unregisterAgentAutostart, async (message) => {
               setNotice(message);

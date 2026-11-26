@@ -388,6 +388,49 @@ as this scope.
   **Not yet pushed** — rides with the next approved push.
   Note: `pnpm tauri:dev` alone still fails the same way until
   the release binaries exist; `dev:all` is the entry point.
+  (Update 2026-11-26 ~04:12 MST: pushed as snapshot `fbf0e78`,
+  sync 61; local main synced via merge `1fc2fcc`.)
+- **App identifier** `com.reponyx.app` → `com.reponyx.desktop`
+  (user's request 2026-11-26 ~04:12 MST): the `.app` suffix
+  collides with the macOS application-bundle extension and
+  caused macOS/Linux build warnings. One line in
+  `tauri.conf.json`; no other live references existed. Local
+  commit `2b61165`, pushed 2026-11-26 ~04:14 MST as snapshot
+  `c3c5e8d`, sync 62; local main synced via merge `1ce7a6f`.
+- **User pushed `757078b` "update gen" themselves** (2026-11-26
+  ~04:15 MST, parent `c3c5e8d`): regenerated
+  `gen/schemas/capabilities.json` (+`core:event:default`,
+  `dialog:default`, `notification:default`) and
+  `acl-manifests.json`. Benign — local main synced via merge
+  `6629e2b`.
+- **v0.1.0 tag created by the user** (2026-11-26 ~04:30 MST,
+  points at `757078b`) — the Release workflow ran on it
+  (run 45810288008) and **FAILED in the `test` job**: the
+  `disk_full` test in `crates/git-engine/tests/disk_full.rs`
+  uses `RLIMIT_FSIZE` (`libc::rlimit`/`getrlimit`/`setrlimit`),
+  which does not exist on Windows — 12 compile errors. The
+  `release` job was skipped, so no draft release exists.
+  Root cause: the Windows `cargo test` gate was never run
+  before — CI's `rust` job runs on Linux and `windows-build`
+  only `cargo check`s the desktop crate, so no Windows test
+  target was ever compiled.
+- **Fix (local commit `817b95e`, not yet pushed):**
+  `disk_full.rs` is now `#![cfg(unix)]` (the error-mapping
+  half is still covered on every platform by the
+  `maps_disk_full` unit test); the same MinGW cross-check
+  found a second ungated Unix-only test —
+  `symlinked_directory_escaping_the_root_is_rejected` in
+  `paths.rs` used `std::os::unix::fs::symlink` — now portable
+  (`symlink_dir` on Windows) and skips gracefully when the
+  environment cannot create a symlink. The mirror read-only
+  and health stale-lock tests were already `#[cfg(unix)]`.
+  Verified: `cargo test` 472/0, clippy clean, Semgrep (CI
+  command) 0 findings, and `cargo check --tests --workspace`
+  for `x86_64-pc-windows-gnu` now passes — every test target
+  compiles for Windows. **The tag must move to the fixed
+  commit before the release can run** (it points at the
+  broken `757078b`); the re-tagged run is the real proof, a
+  Windows `cargo test` run has never passed yet.
 
 Still open (user-side): the Windows verification checklist §1–§5,
 the one-agent setup test, syncing sendcms + reponyx, then tag

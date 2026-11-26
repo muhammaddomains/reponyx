@@ -1,5 +1,14 @@
 //! Failure injection: the disk cannot grow.
 //!
+//! Unix-only: `RLIMIT_FSIZE` does not exist on Windows (the `libc`
+//! crate has no `rlimit`/`getrlimit`/`setrlimit` there), so this
+//! whole file is gated out on non-Unix targets — see the `cfg`
+//! below. The release workflow's Windows `test` job failed to
+//! compile this file before the gate was added (2026-11-26). The
+//! error-mapping half is covered by the `maps_disk_full` unit test
+//! in `process.rs`, which runs on every platform; only the live
+//! rlimit simulation is Unix-only.
+//!
 //! What was tried for a true ENOSPC ("No space left on device"):
 //! a tiny tmpfs needs mount privileges this VM does not grant, and
 //! filling the real filesystem would endanger the machine. The
@@ -10,6 +19,8 @@
 //! exactly one test** and the limit is set only around the clone
 //! (restored by an RAII guard). The error-mapping half is covered by
 //! the `maps_disk_full` unit test in `process.rs`.
+
+#![cfg(unix)]
 
 #[path = "common.rs"]
 mod common;

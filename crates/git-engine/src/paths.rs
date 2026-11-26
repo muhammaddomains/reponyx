@@ -274,7 +274,30 @@ mod tests {
         let outside = dir.path().join("outside");
         std::fs::create_dir_all(&root).unwrap();
         std::fs::create_dir_all(&outside).unwrap();
-        std::os::unix::fs::symlink(&outside, root.join("link")).unwrap();
+        // Symlink creation needs a privilege on Windows (Developer
+        // Mode / admin); when the environment cannot create one,
+        // skip instead of failing the suite for an environment
+        // limitation — same precedent as the root check in the
+        // mirror tests.
+        let link = root.join("link");
+        let made = {
+            #[cfg(unix)]
+            {
+                std::os::unix::fs::symlink(&outside, &link).is_ok()
+            }
+            #[cfg(windows)]
+            {
+                std::os::windows::fs::symlink_dir(&outside, &link).is_ok()
+            }
+            #[cfg(not(any(unix, windows)))]
+            {
+                false
+            }
+        };
+        if !made {
+            eprintln!("skipping symlink test: cannot create a symlink here");
+            return;
+        }
         assert!(
             validate_repository_path(&root, &root.join("link").join("repo.git")).is_err(),
             "symlink escape must be rejected"

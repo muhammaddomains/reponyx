@@ -11,7 +11,7 @@
     "build": "pnpm --filter @reponyx/desktop build",
     "build:all": "pnpm broker:build && pnpm agent:build && pnpm tauri:build",
     "dev": "pnpm --filter @reponyx/desktop dev",
-    "dev:all": "concurrently -k -n broker,agent,desktop \"pnpm broker\" \"pnpm agent\" \"pnpm tauri:dev\"",
+    "dev:all": "pnpm agent:build && pnpm broker:build && concurrently -k -n broker,agent,desktop \"pnpm broker\" \"pnpm agent\" \"pnpm tauri:dev\"",
     "broker": "cargo run -p reponyx-auth-broker",
     "broker:build": "cargo build --release -p reponyx-auth-broker",
     "agent": "cargo run -p reponyx-background-agent",

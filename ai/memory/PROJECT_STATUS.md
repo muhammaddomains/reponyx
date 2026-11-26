@@ -352,6 +352,48 @@ installer bundle globs are still unproven until the ZIP fix
 lands and CI runs; the SBOM action (`anchore/sbom-action@v0`)
 has not run anywhere yet.
 
+## Phase 6 Windows verification + first release (2026-11-26, in progress)
+
+The audit plan had only 5 phases, so Phase 6 is the old Phase 10
+remainder: run the Windows verification checklist
+(`docs/qa/windows-verification.md` §1–§5) on a real Windows
+machine, sync the remaining repos end to end, and cut the first
+release (v0.1.0). Started on the user's "start phase 6", confirmed
+as this scope.
+
+- **CI fully green on the Phase 5 push** (`d814813`, checked
+  2026-11-26 ~03:34 MST): CI, Lint, CodeQL, Security audit all
+  success — including the `windows-installer` job, so the
+  portable-ZIP path fix and the installer bundle globs are now
+  proven. The one-time CI-check cron set for the push was removed
+  after this check (no duplicate report).
+- **Labels:** all 7 Labeler labels now exist on GitHub
+  (`backend`, `agent`, `broker`, `tests` created via web UI
+  2026-11-26 ~03:36 MST, verified via API; 19 labels total).
+  Dependabot PR #2 was already closed. Version is `0.1.0` in
+  Cargo.toml + tauri.conf.json; CHANGELOG has the `## [0.1.0]`
+  section (date set at tag time).
+- **dev:all failure on a fresh clone (2026-11-26 ~03:47 MST):**
+  the user's Windows run of `pnpm dev:all` failed at build.rs —
+  `resource path ..\..\..\target\release\reponyx-agent.exe
+  doesn't exist`. Root cause: `tauri.conf.json` lists the
+  release agent/broker exes as bundle resources, but `dev:all`
+  only ran the debug binaries (`cargo run`) and never built the
+  release ones — the same failure CI run #80 hit. Immediate
+  unblock given to the user: `pnpm agent:build` +
+  `pnpm broker:build`, then `pnpm dev:all` again. Durable fix in
+  local commit `ad0a47b` (root package.json): `dev:all` now runs
+  `agent:build && broker:build` first (cargo release builds are
+  cached after the first run, so later starts stay fast).
+  **Not yet pushed** — rides with the next approved push.
+  Note: `pnpm tauri:dev` alone still fails the same way until
+  the release binaries exist; `dev:all` is the entry point.
+
+Still open (user-side): the Windows verification checklist §1–§5,
+the one-agent setup test, syncing sendcms + reponyx, then tag
+v0.1.0 (needs the user's approval — publishing a release is
+gated), draft release → publish, and the updater E2E via v0.1.1.
+
 ## Windows first-run bugs (2026-11-23)
 
 First real Windows run (`target\debug\reponyx-desktop.exe`):

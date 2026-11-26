@@ -80,7 +80,7 @@ All notable changes to RepoNyx are documented here. Format follows
   (E6); and the two 120KB Tauri-generated schema files are no
   longer tracked — they are regenerated on every build (F16).
 
-## [0.1.0] — first release (date set when the `v0.1.0` tag is cut)
+## [0.1.0] — 2026-11-26
 
 ### Added — Release readiness (2026-11-25, Phase 4 of the production audit)
 

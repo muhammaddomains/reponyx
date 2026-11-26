@@ -230,9 +230,15 @@ export default function Synchronization() {
         if (!cancelled) setLoading(false);
       });
     const id = window.setInterval(() => {
-      refresh().catch((e: unknown) => {
-        if (!cancelled) setError(commandMessage(e));
-      });
+      // A successful poll clears a stale banner from an earlier
+      // transient failure (audit F12); a failed poll sets it.
+      refresh()
+        .then(() => {
+          if (!cancelled) setError(null);
+        })
+        .catch((e: unknown) => {
+          if (!cancelled) setError(commandMessage(e));
+        });
     }, 5000);
     return () => {
       cancelled = true;

@@ -125,6 +125,11 @@ impl AgentIpcServer {
 
     /// Accept loop until `cancel` is cancelled.
     pub async fn run(mut self, cancel: tokio_util::sync::CancellationToken) {
+        // Consecutive accept failures (AG-F13): a failing listener
+        // used to spin the loop at full speed, logging a warning
+        // per iteration. Back off exponentially and reset on the
+        // next accepted connection.
+        let mut consecutive_errors = 0u32;
         loop {
             tokio::select! {
                 _ = cancel.cancelled() => {
@@ -134,6 +139,7 @@ impl AgentIpcServer {
                 accepted = self.listener.accept() => {
                     match accepted {
                         Ok(conn) => {
+                            consecutive_errors = 0;
                             // Audit C2: refuse (and drop) the
                             // connection when every permit is held,
                             // instead of spawning unbounded tasks.
@@ -159,6 +165,14 @@ impl AgentIpcServer {
                         }
                         Err(e) => {
                             warn!(error = %e, "ipc accept failed");
+                            consecutive_errors = consecutive_errors.saturating_add(1);
+                            let delay = std::time::Duration::from_millis(10)
+                                .saturating_mul(1u32 << consecutive_errors.min(7))
+                                .min(std::time::Duration::from_secs(1));
+                            tokio::select! {
+                                _ = cancel.cancelled() => break,
+                                _ = tokio::time::sleep(delay) => {}
+                            }
                         }
                     }
                 }

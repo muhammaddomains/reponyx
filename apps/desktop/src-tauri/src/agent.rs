@@ -422,6 +422,23 @@ const TASK_NAME: &str = "RepoNyx";
 const LEGACY_RUN_VALUE_NAME: &str = "RepoNyxBackgroundAgent";
 const LEGACY_TASK_NAME: &str = "RepoNyxBackgroundAgent";
 
+/// Does `target` (the command stored in a Task Scheduler task, a
+/// Registry Run value, a systemd unit, or a LaunchAgent) launch
+/// `exe`? The stored value is usually quoted; compare
+/// case-insensitively (Windows paths are), and fall back to a
+/// canonical comparison when both files exist (covers 8.3 short
+/// names and symlinked spellings).
+fn autostart_target_is_current_exe(target: &str, exe: &Path) -> bool {
+    let target = target.trim().trim_matches('"').trim();
+    if target.eq_ignore_ascii_case(&exe.to_string_lossy()) {
+        return true;
+    }
+    if let (Ok(a), Ok(b)) = (std::fs::canonicalize(target), std::fs::canonicalize(exe)) {
+        return a == b;
+    }
+    false
+}
+
 #[cfg(windows)]
 fn task_scheduler_task_present(task: &str) -> bool {
     Command::new("schtasks")
@@ -429,6 +446,44 @@ fn task_scheduler_task_present(task: &str) -> bool {
         .output()
         .map(|o| o.status.success())
         .unwrap_or(false)
+}
+
+/// The command a Task Scheduler task runs, from `schtasks /Query
+/// /TN <task> /XML` (`<Command>...</Command>`). `None` when the
+/// task is missing or its XML has no command.
+#[cfg(windows)]
+fn task_command(task: &str) -> Option<String> {
+    let output = Command::new("schtasks")
+        .args(["/Query", "/TN", task, "/XML"])
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let xml = String::from_utf8_lossy(&output.stdout);
+    let start = xml.find("<Command>")? + "<Command>".len();
+    let end = xml[start..].find("</Command>")? + start;
+    Some(xml[start..end].trim().to_string())
+}
+
+/// The value of a Registry Run entry, from `reg query` output
+/// (`<name>    REG_SZ    <value>`). `None` when the entry is missing.
+#[cfg(windows)]
+fn run_key_value(value: &str) -> Option<String> {
+    let output = Command::new("reg")
+        .args(["query", RUN_KEY, "/v", value])
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let text = String::from_utf8_lossy(&output.stdout);
+    for line in text.lines() {
+        if let Some(rest) = line.split("REG_SZ").nth(1) {
+            return Some(rest.trim().to_string());
+        }
+    }
+    None
 }
 
 #[cfg(windows)]
@@ -475,11 +530,25 @@ fn remove_legacy_autostart() {
 
 #[cfg(windows)]
 fn register_autostart(desktop_exe: &Path) -> CommandResult<String> {
-    if task_scheduler_task_present(TASK_NAME) {
+    // Audit AG-F: presence alone used to mean "already enabled" —
+    // a stale entry pointing at a moved executable reported
+    // enabled and was never repaired. Only an entry that launches
+    // this executable counts; a stale one is removed first so the
+    // fresh registration below is the only entry.
+    if task_command(TASK_NAME).is_some_and(|c| autostart_target_is_current_exe(&c, desktop_exe)) {
         return Ok("Start at login is already enabled (Task Scheduler).".into());
     }
-    if run_key_present(RUN_VALUE_NAME) {
+    if run_key_value(RUN_VALUE_NAME)
+        .is_some_and(|v| autostart_target_is_current_exe(&v, desktop_exe))
+    {
         return Ok("Start at login is already enabled (Registry Run key).".into());
+    }
+    let had_stale = task_scheduler_task_present(TASK_NAME) || run_key_present(RUN_VALUE_NAME);
+    if had_stale {
+        let _ = Command::new("schtasks")
+            .args(["/Delete", "/TN", TASK_NAME, "/F"])
+            .output();
+        unregister_run_key(RUN_VALUE_NAME);
     }
     // Upgrade: drop the legacy agent-only entries so the agent does
     // not also start alone at logon next to the desktop.
@@ -506,14 +575,24 @@ fn register_autostart(desktop_exe: &Path) -> CommandResult<String> {
             message: format!("schtasks failed: {e}"),
         })?;
     if output.status.success() {
-        return Ok("Registered RepoNyx (ONLOGON, Task Scheduler)".into());
+        return Ok(if had_stale {
+            "Repaired start at login: the old entry pointed at a moved executable and was replaced (Task Scheduler)."
+                .into()
+        } else {
+            "Registered RepoNyx (ONLOGON, Task Scheduler)".into()
+        });
     }
     let scheduler_error = String::from_utf8_lossy(&output.stderr).trim().to_string();
     // Fall back to the per-user Registry Run key so Enable still
     // works on machines where Task Scheduler refuses the task.
     match register_run_key(desktop_exe, RUN_VALUE_NAME) {
         Ok(()) => Ok(format!(
-            "Task Scheduler refused the task ({scheduler_error}); start at login was enabled via the Registry Run key instead."
+            "Task Scheduler refused the task ({scheduler_error}); start at login was enabled via the Registry Run key instead.{}",
+            if had_stale {
+                " The stale entry was removed."
+            } else {
+                ""
+            }
         )),
         Err(reg_error) => Err(CommandError {
             code: "InternalError".into(),
@@ -562,10 +641,23 @@ fn unregister_autostart() -> CommandResult<String> {
 
 #[cfg(windows)]
 fn autostart_enabled() -> bool {
-    task_scheduler_task_present(TASK_NAME)
-        || run_key_present(RUN_VALUE_NAME)
-        || task_scheduler_task_present(LEGACY_TASK_NAME)
-        || run_key_present(LEGACY_RUN_VALUE_NAME)
+    // Audit AG-F: presence alone lied — a stale entry pointing at
+    // a moved or deleted exe still reported "enabled", and the
+    // legacy agent-only entries counted even though they never
+    // start the desktop. Only an entry that launches the current
+    // executable counts. When the current exe cannot be
+    // determined, fall back to presence. The path is only compared
+    // with autostart entries to report status, not used for any
+    // security decision.
+    // nosemgrep: rust.lang.security.current-exe.current-exe
+    let Ok(exe) = std::env::current_exe() else {
+        return task_scheduler_task_present(TASK_NAME)
+            || run_key_present(RUN_VALUE_NAME)
+            || task_scheduler_task_present(LEGACY_TASK_NAME)
+            || run_key_present(LEGACY_RUN_VALUE_NAME);
+    };
+    task_command(TASK_NAME).is_some_and(|c| autostart_target_is_current_exe(&c, &exe))
+        || run_key_value(RUN_VALUE_NAME).is_some_and(|v| autostart_target_is_current_exe(&v, &exe))
 }
 
 #[cfg(target_os = "linux")]
@@ -611,13 +703,31 @@ fn unregister_autostart() -> CommandResult<String> {
 
 #[cfg(target_os = "linux")]
 fn autostart_enabled() -> bool {
-    std::env::var_os("HOME")
-        .map(|home| {
-            PathBuf::from(home)
-                .join(".config/systemd/user/reponyx-agent.service")
-                .is_file()
-        })
-        .unwrap_or(false)
+    // Audit AG-F: the unit file existing said nothing — it could
+    // point at an agent binary that was moved or deleted. The
+    // ExecStart target must be the current agent executable (when
+    // it can be resolved), or at least an existing file.
+    let Some(home) = std::env::var_os("HOME") else {
+        return false;
+    };
+    let unit = PathBuf::from(home).join(".config/systemd/user/reponyx-agent.service");
+    let Ok(body) = std::fs::read_to_string(unit) else {
+        return false;
+    };
+    let Some(exec) = body
+        .lines()
+        .find_map(|line| line.strip_prefix("ExecStart="))
+    else {
+        return false;
+    };
+    let target = exec.trim().split_whitespace().next().unwrap_or("");
+    if target.is_empty() {
+        return false;
+    }
+    if let Some(exe) = resolve_agent_exe(None) {
+        return autostart_target_is_current_exe(target, &exe);
+    }
+    Path::new(target).is_file()
 }
 
 #[cfg(target_os = "macos")]
@@ -671,13 +781,36 @@ fn unregister_autostart() -> CommandResult<String> {
 
 #[cfg(target_os = "macos")]
 fn autostart_enabled() -> bool {
-    std::env::var_os("HOME")
-        .map(|home| {
-            PathBuf::from(home)
-                .join("Library/LaunchAgents/com.reponyx.agent.plist")
-                .is_file()
-        })
-        .unwrap_or(false)
+    // Audit AG-F: same as Linux — the plist existing said nothing.
+    // The first ProgramArguments string must be the current agent
+    // executable (when it can be resolved), or at least an existing
+    // file.
+    let Some(home) = std::env::var_os("HOME") else {
+        return false;
+    };
+    let plist = PathBuf::from(home).join("Library/LaunchAgents/com.reponyx.agent.plist");
+    let Ok(body) = std::fs::read_to_string(plist) else {
+        return false;
+    };
+    let Some(args_at) = body.find("<key>ProgramArguments</key>") else {
+        return false;
+    };
+    let rest = &body[args_at..];
+    let Some(target) = rest.find("<string>").and_then(|start| {
+        let start = start + "<string>".len();
+        rest[start..]
+            .find("</string>")
+            .map(|end| rest[start..start + end].trim())
+    }) else {
+        return false;
+    };
+    if target.is_empty() {
+        return false;
+    }
+    if let Some(exe) = resolve_agent_exe(None) {
+        return autostart_target_is_current_exe(target, &exe);
+    }
+    Path::new(target).is_file()
 }
 
 // Silence unused when DB state is present for future expansion.

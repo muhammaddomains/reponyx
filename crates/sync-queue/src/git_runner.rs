@@ -42,6 +42,7 @@ use tracing::{debug, info};
 use crate::credentials_resolve::{CredentialResolver, storage_root_from_settings};
 use crate::progress::SyncProgressEvent;
 use crate::runner::{JobContext, JobRunResult, JobRunner, operation_label};
+use crate::storage_migrate::same_path;
 
 /// Optional override for storage root / git binary (tests).
 #[derive(Debug, Clone)]
@@ -139,6 +140,24 @@ impl JobRunner for GitJobRunner {
             Some(p) => p.clone(),
             None => storage_root_from_settings(&ctx.pool).await?,
         };
+
+        // Audit ST-m: a missing storage root used to surface as a
+        // confusing git or layout error deep in the clone/fetch.
+        // Create it when it is missing (a fresh root is normal —
+        // the first clone creates it anyway); fail here, naming
+        // the root and where to fix it, when it cannot be created
+        // (a deleted drive or a missing parent).
+        if !storage_root.is_dir()
+            && let Err(e) = std::fs::create_dir_all(&storage_root)
+        {
+            return Err(RepoNyxError::new(
+                ErrorCode::InvalidInput,
+                format!(
+                    "storage root {} cannot be created ({e}) — set it in Settings → Storage",
+                    storage_root.display()
+                ),
+            ));
+        }
 
         let layout =
             RepositoryLayout::new(&storage_root, &account.username, &repo.owner, &repo.name)?;
@@ -346,7 +365,11 @@ impl GitJobRunner {
                     current.display()
                 ))
             })?;
-            if repo.local_path.as_deref() == legacy.to_str() {
+            if repo
+                .local_path
+                .as_deref()
+                .is_some_and(|p| same_path(Path::new(p), &legacy))
+            {
                 set_local_path(&ctx.pool, repo.id, Some(&current)).await?;
                 new_local_path = Some(current.clone());
             }
@@ -775,8 +798,23 @@ impl GitJobRunner {
             let first = failures.into_iter().next().unwrap();
             return Err(first.error);
         }
-        for f in &failures {
-            tracing::warn!(repo = %repo.full_name, path = %f.path, error = %f.error, "submodule failed; others synced");
+        if !failures.is_empty() {
+            // Audit G8: a partial sync used to report success with
+            // only warnings in the log — the working tree is
+            // incomplete, so the job must fail, not "succeed". The
+            // synced submodules are not re-done on retry (their
+            // checkouts are already at HEAD); the failing ones get
+            // another attempt per the retry policy.
+            let first = failures.into_iter().next().unwrap();
+            return Err(RepoNyxError::new(
+                first.error.code,
+                format!(
+                    "submodule sync partial: {synced} of {total} synced; {} failed (first: {})",
+                    total - synced,
+                    first.error.message,
+                ),
+            )
+            .with_details(format!("path={}", first.path)));
         }
         Ok(())
     }

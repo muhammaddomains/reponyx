@@ -43,6 +43,36 @@ const healthy = {
   message: "ok",
 };
 
+describe("Agent page health badge (audit F9)", () => {
+  it("shows Checking… before the first poll settles", async () => {
+    // A promise that never settles: the first poll is still in
+    // flight, so the badge must not claim "Not running" yet.
+    vi.mocked(agentHealth).mockReturnValue(new Promise(() => {}));
+    vi.mocked(autostartStatus).mockResolvedValue(false);
+    render(<Agent />);
+    expect(screen.getByText("Checking…")).toBeInTheDocument();
+  });
+
+  it("keeps the last known health when a later poll fails", async () => {
+    vi.mocked(agentHealth).mockResolvedValue(healthy);
+    vi.mocked(autostartStatus).mockResolvedValue(false);
+    render(<Agent />);
+    await screen.findByText("Running");
+    // The next poll fails (e.g. a transient probe miss): the error
+    // banner appears, but the badge keeps the last known state
+    // instead of flipping to "Not running".
+    vi.mocked(agentHealth).mockRejectedValue({
+      code: "Timeout",
+      message: "agent did not answer",
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Refresh" }));
+    expect(
+      await screen.findByText("Timeout: agent did not answer"),
+    ).toBeInTheDocument();
+    expect(screen.getByText("Running")).toBeInTheDocument();
+  });
+});
+
 describe("Agent page error rendering", () => {
   it("shows the backend error message instead of [object Object]", async () => {
     vi.mocked(agentHealth).mockRejectedValue({

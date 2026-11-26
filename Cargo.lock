@@ -4058,6 +4058,7 @@ dependencies = [
  "reponyx-core",
  "reponyx-credential-store",
  "reponyx-database",
+ "reponyx-git-engine",
  "reponyx-github-provider",
  "reponyx-ipc",
  "reponyx-logging",

@@ -213,7 +213,11 @@ async fn v1_database_upgrades_to_latest_with_data_intact() {
     let dir = tempdir().unwrap();
     let db_path = dir.path().join("reponyx.sqlite");
     let pool = SqlitePoolOptions::new()
-        .connect(&format!("sqlite://{}?mode=rwc", db_path.display()))
+        .connect_with(
+            sqlx::sqlite::SqliteConnectOptions::new()
+                .filename(&db_path)
+                .create_if_missing(true),
+        )
         .await
         .unwrap();
 
@@ -237,7 +241,13 @@ async fn v1_database_upgrades_to_latest_with_data_intact() {
             .collect();
     assert_eq!(
         applied,
-        ["init", "unique full name", "pat expiry", "queue fields"]
+        [
+            "init",
+            "unique full name",
+            "pat expiry",
+            "queue fields",
+            "phase5 indexes"
+        ]
     );
 
     // Data survived the jump.
@@ -310,11 +320,156 @@ async fn v1_database_upgrades_to_latest_with_data_intact() {
 /// actually dedupes: two active jobs for the same repository and
 /// type cannot both exist afterwards.
 #[tokio::test]
+async fn v5_indexes_and_case_insensitive_names() {
+    let dir = tempdir().unwrap();
+    let db = open_database(&dir.path().join("reponyx.sqlite"))
+        .await
+        .unwrap();
+    let pool = &db.pool;
+
+    // The V5 indexes exist.
+    let indexes: Vec<String> = sqlx::query(
+        "SELECT name FROM sqlite_master WHERE type='index' AND (name LIKE 'idx_schedules_account_id' OR name LIKE 'idx_sync_history_job_id' OR name LIKE 'idx_audit_logs_%' OR name LIKE 'idx_repositories_local_path')",
+    )
+    .fetch_all(pool)
+    .await
+    .unwrap()
+    .into_iter()
+    .map(|r| r.get::<String, _>("name"))
+    .collect();
+    for expected in [
+        "idx_schedules_account_id",
+        "idx_sync_history_job_id",
+        "idx_audit_logs_actor_created",
+        "idx_audit_logs_resource_created",
+        "idx_repositories_local_path",
+    ] {
+        assert!(
+            indexes.contains(&expected.to_string()),
+            "missing index {expected}"
+        );
+    }
+
+    // Seed one repository, then prove the case-insensitive rules:
+    // a second row whose full_name differs only by case, and a
+    // second row reusing the same local_path, must both fail.
+    let account_id = Uuid::new_v4();
+    sqlx::query(
+        "INSERT INTO accounts (id, provider, provider_account_id, username, authentication_method, created_at, updated_at)
+         VALUES (?, 'github', '123', 'octocat', 'fine_grained_pat', datetime('now'), datetime('now'))",
+    )
+    .bind(account_id.to_string())
+    .execute(pool)
+    .await
+    .unwrap();
+    let repo_id = Uuid::new_v4();
+    sqlx::query(
+        "INSERT INTO repositories (id, account_id, provider_repository_id, owner, name, full_name, clone_url, archive_status, sync_mode, local_path, created_at, updated_at)
+         VALUES (?, ?, '456', 'octocat', 'hello', 'octocat/hello', 'https://github.com/octocat/hello.git', 'synced', 'mirror', '/tmp/hello.git', datetime('now'), datetime('now'))",
+    )
+    .bind(repo_id.to_string())
+    .bind(account_id.to_string())
+    .execute(pool)
+    .await
+    .unwrap();
+    let case_variant = sqlx::query(
+        "INSERT INTO repositories (id, account_id, provider_repository_id, owner, name, full_name, clone_url, archive_status, sync_mode, created_at, updated_at)
+         VALUES (?, ?, '789', 'OctoCat', 'Hello', 'OctoCat/Hello', 'https://github.com/octocat/hello.git', 'pending', 'mirror', datetime('now'), datetime('now'))",
+    )
+    .bind(Uuid::new_v4().to_string())
+    .bind(account_id.to_string())
+    .execute(pool)
+    .await;
+    assert!(
+        case_variant.is_err(),
+        "NOCASE full_name index must reject a case-variant duplicate"
+    );
+    let same_path = sqlx::query(
+        "INSERT INTO repositories (id, account_id, provider_repository_id, owner, name, full_name, clone_url, archive_status, sync_mode, local_path, created_at, updated_at)
+         VALUES (?, ?, '999', 'octocat', 'world', 'octocat/world', 'https://github.com/octocat/world.git', 'pending', 'mirror', '/tmp/hello.git', datetime('now'), datetime('now'))",
+    )
+    .bind(Uuid::new_v4().to_string())
+    .bind(account_id.to_string())
+    .execute(pool)
+    .await;
+    assert!(
+        same_path.is_err(),
+        "local_path UNIQUE index must reject a shared archive path"
+    );
+}
+
+/// Audit DB-m2: a database whose migrations were applied without
+/// records (the old desktop bug) must open cleanly — the repair
+/// backfills the records from the embedded checksums and the
+/// normal migrator applies only what is genuinely missing.
+#[tokio::test]
+async fn open_database_repairs_unrecorded_migrations() {
+    let dir = tempdir().unwrap();
+    let db_path = dir.path().join("reponyx.sqlite");
+    // A V1-shaped database, built the old way: 0001's SQL run
+    // directly, with no `_sqlx_migrations` table at all.
+    let setup = SqlitePoolOptions::new()
+        .connect_with(
+            sqlx::sqlite::SqliteConnectOptions::new()
+                .filename(&db_path)
+                .create_if_missing(true),
+        )
+        .await
+        .unwrap();
+    let source = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../migrations/sqlite");
+    let v1 = std::fs::read_to_string(source.join("0001_init.sql")).unwrap();
+    // The file is our own migration, read from the repo — audited
+    // as safe to execute as-is.
+    sqlx::raw_sql(sqlx::AssertSqlSafe(v1.as_str()))
+        .execute(&setup)
+        .await
+        .unwrap();
+    setup.close().await;
+
+    let db = open_database(&db_path).await.unwrap();
+    let versions: Vec<i64> =
+        sqlx::query_scalar("SELECT version FROM _sqlx_migrations ORDER BY version")
+            .fetch_all(&db.pool)
+            .await
+            .unwrap();
+    assert_eq!(versions, vec![1, 2, 3, 4, 5]);
+    // The later migrations were applied, not just recorded: the V3
+    // column and the V5 index exist.
+    let pat_col: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM pragma_table_info('accounts') WHERE name = 'pat_expires_at'",
+    )
+    .fetch_one(&db.pool)
+    .await
+    .unwrap();
+    assert_eq!(pat_col, 1);
+    let v5_index: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM sqlite_master WHERE type = 'index' AND name = 'idx_repositories_local_path'",
+    )
+    .fetch_one(&db.pool)
+    .await
+    .unwrap();
+    assert_eq!(v5_index, 1);
+    // And opening it a second time is a clean no-op.
+    drop(db);
+    let again = open_database(&db_path).await.unwrap();
+    let versions_again: Vec<i64> =
+        sqlx::query_scalar("SELECT version FROM _sqlx_migrations ORDER BY version")
+            .fetch_all(&again.pool)
+            .await
+            .unwrap();
+    assert_eq!(versions_again, vec![1, 2, 3, 4, 5]);
+}
+
+#[tokio::test]
 async fn v3_database_upgrades_to_v4_and_dedupes() {
     let dir = tempdir().unwrap();
     let db_path = dir.path().join("reponyx.sqlite");
     let pool = SqlitePoolOptions::new()
-        .connect(&format!("sqlite://{}?mode=rwc", db_path.display()))
+        .connect_with(
+            sqlx::sqlite::SqliteConnectOptions::new()
+                .filename(&db_path)
+                .create_if_missing(true),
+        )
         .await
         .unwrap();
 

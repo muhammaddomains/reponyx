@@ -7,7 +7,6 @@ use reponyx_core::{ErrorCode, RepoNyxError};
 use sqlx::Row;
 use sqlx::sqlite::{SqliteConnectOptions, SqlitePool, SqlitePoolOptions};
 use std::path::{Path, PathBuf};
-use std::str::FromStr;
 
 /// A connected, migrated database.
 #[derive(Debug, Clone)]
@@ -40,9 +39,13 @@ pub async fn open_database(path: &Path) -> Result<Database, RepoNyxError> {
         std::fs::create_dir_all(parent).map_err(|e| map_error(sqlx::Error::Io(e)))?;
     }
     let existed = path.exists();
-    let url = format!("sqlite://{}?mode=rwc", path.to_string_lossy());
-    let options = SqliteConnectOptions::from_str(&url)
-        .map_err(map_error)?
+    // Audit DB-m4: the URL used to be built with `format!`, so a
+    // path containing `%`, `#` or `?` (legal on Windows) was parsed
+    // as URL syntax and the open failed or opened the wrong file.
+    // `filename()` takes the path as a path — no URL parsing, no
+    // percent-encoding to get wrong.
+    let options = SqliteConnectOptions::new()
+        .filename(path)
         .journal_mode(sqlx::sqlite::SqliteJournalMode::Wal)
         .foreign_keys(true)
         // Writers (queue workers, scheduler, desktop, agent) contend
@@ -88,12 +91,131 @@ pub async fn open_database(path: &Path) -> Result<Database, RepoNyxError> {
         );
     }
 
-    sqlx::migrate!("../../migrations/sqlite")
+    let migrator = sqlx::migrate!("../../migrations/sqlite");
+    if existed {
+        // Audit DB-m2: the desktop once applied migrations without
+        // recording them, so a database can hold the schema of
+        // V1–V5 while `_sqlx_migrations` is missing or empty — and
+        // sqlx then tries to apply 0001 from scratch and the open
+        // fails on the existing tables. Repair that state before
+        // `run()`: backfill the records from the embedded
+        // migrator's own checksums, so `run()` validates them and
+        // applies only the migrations whose effects are genuinely
+        // absent. Fresh and normally-migrated databases are
+        // untouched (see the guard inside).
+        repair_unrecorded_migrations(&pool, &migrator).await?;
+    }
+    migrator
         .run(&pool)
         .await
         .map_err(|e| map_error(sqlx::Error::from(e)))?;
     tracing::info!(path = %path.display(), existed, "database opened");
     Ok(Database { pool })
+}
+
+/// Audit DB-m2 repair — see the call site in [`open_database`].
+///
+/// The repair only fires when the records table is missing or
+/// empty AND at least one migration's schema effect is present.
+/// It records only the migrations whose effect is actually in the
+/// schema, so a partially-applied database still gets the rest
+/// applied by the normal `Migrator::run`. Checksums come from the
+/// embedded migrator, so `run()` validates them like any normally
+/// applied migration. `INSERT OR IGNORE` + `CREATE TABLE IF NOT
+/// EXISTS` make the repair safe when the desktop and the agent
+/// open the same database at the same time.
+async fn repair_unrecorded_migrations(
+    pool: &SqlitePool,
+    migrator: &sqlx::migrate::Migrator,
+) -> Result<(), RepoNyxError> {
+    let table_exists: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = '_sqlx_migrations'",
+    )
+    .fetch_one(pool)
+    .await
+    .map_err(map_error)?;
+    let applied: Vec<i64> = if table_exists == 0 {
+        Vec::new()
+    } else {
+        sqlx::query_scalar("SELECT version FROM _sqlx_migrations")
+            .fetch_all(pool)
+            .await
+            .map_err(map_error)?
+    };
+    if !applied.is_empty() {
+        return Ok(());
+    }
+    let mut to_record: Vec<&sqlx::migrate::Migration> = Vec::new();
+    for migration in migrator.migrations.iter() {
+        if migration_effect_present(pool, migration.version).await? {
+            to_record.push(migration);
+        }
+    }
+    if to_record.is_empty() {
+        return Ok(());
+    }
+    // Same DDL sqlx itself uses for the table (sqlx-sqlite 0.9),
+    // so the rows below read exactly like normally applied ones.
+    sqlx::query(
+        "CREATE TABLE IF NOT EXISTS _sqlx_migrations (
+            version BIGINT PRIMARY KEY,
+            description TEXT NOT NULL,
+            installed_on TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            success BOOLEAN NOT NULL,
+            checksum BLOB NOT NULL,
+            execution_time BIGINT NOT NULL
+        )",
+    )
+    .execute(pool)
+    .await
+    .map_err(map_error)?;
+    for migration in to_record {
+        sqlx::query(
+            "INSERT OR IGNORE INTO _sqlx_migrations (version, description, success, checksum, execution_time)
+             VALUES (?, ?, TRUE, ?, -1)",
+        )
+        .bind(migration.version)
+        .bind(&*migration.description)
+        .bind(&*migration.checksum)
+        .execute(pool)
+        .await
+        .map_err(map_error)?;
+        tracing::warn!(
+            version = migration.version,
+            description = %migration.description,
+            "backfilled an unrecorded migration (audit DB-m2 repair)"
+        );
+    }
+    Ok(())
+}
+
+/// Is this migration's schema effect present in the database?
+/// Each check names a table/index/column that only that migration
+/// creates — a cheap, stable fingerprint, no `PRAGMA user_version`
+/// (sqlx does not use it).
+async fn migration_effect_present(pool: &SqlitePool, version: i64) -> Result<bool, RepoNyxError> {
+    let sql = match version {
+        // 0001_init: the accounts table.
+        1 => "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'accounts'",
+        // 0002_unique_full_name: the full_name unique index.
+        2 => {
+            "SELECT COUNT(*) FROM sqlite_master WHERE type = 'index' AND name = 'idx_repositories_account_full_name'"
+        }
+        // 0003_pat_expiry: the accounts.pat_expires_at column.
+        3 => "SELECT COUNT(*) FROM pragma_table_info('accounts') WHERE name = 'pat_expires_at'",
+        // 0004_queue_fields: the sync_jobs.available_at column.
+        4 => "SELECT COUNT(*) FROM pragma_table_info('sync_jobs') WHERE name = 'available_at'",
+        // 0005_phase5_indexes: the local_path partial unique index.
+        5 => {
+            "SELECT COUNT(*) FROM sqlite_master WHERE type = 'index' AND name = 'idx_repositories_local_path'"
+        }
+        _ => return Ok(false),
+    };
+    let count: i64 = sqlx::query_scalar(sql)
+        .fetch_one(pool)
+        .await
+        .map_err(map_error)?;
+    Ok(count > 0)
 }
 
 /// Write a `VACUUM INTO` backup of the live database into
@@ -348,12 +470,9 @@ mod tests {
             .map(|e| e.path())
             .next()
             .unwrap();
-        let options = SqliteConnectOptions::from_str(&format!(
-            "sqlite://{}?mode=ro",
-            backup.to_string_lossy()
-        ))
-        .unwrap()
-        .read_only(true);
+        let options = SqliteConnectOptions::new()
+            .filename(&backup)
+            .read_only(true);
         let backup_pool = SqlitePoolOptions::new()
             .max_connections(1)
             .connect_with(options)

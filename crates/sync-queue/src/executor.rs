@@ -97,7 +97,36 @@ pub async fn execute_claimed_job(
         progress: events.clone(),
     };
 
-    let run_result = runner.run(ctx).await;
+    // Audit Q9: an overall job deadline. The per-operation timeout
+    // (`ctx.timeout`) bounds each git command, but a job runs
+    // several of them in sequence — clone + fetch + LFS + submodules
+    // could otherwise run 4x the limit. The deadline is the same
+    // `job_timeout` (600 s): a single-operation job behaves exactly
+    // as before, a multi-operation job is capped in total. On
+    // expiry the run is cancelled and given a short grace to unwind
+    // (kill its git children); the outcome is then timed out
+    // regardless of what the runner returns in the grace window —
+    // the job exceeded its deadline (retryable — a slow network
+    // gets another attempt, and a clone that actually finished
+    // leaves a valid archive the retry reuses).
+    let mut run_fut = std::pin::pin!(runner.run(ctx));
+    let run_result = tokio::select! {
+        r = &mut run_fut => r,
+        _ = tokio::time::sleep(config.job_timeout) => {
+            cancel.cancel();
+            tokio::select! {
+                _ = &mut run_fut => {},
+                _ = tokio::time::sleep(Duration::from_secs(10)) => {},
+            }
+            Err(RepoNyxError::new(
+                reponyx_core::ErrorCode::OperationTimedOut,
+                format!(
+                    "job exceeded its {}s overall deadline",
+                    config.job_timeout.as_secs()
+                ),
+            ))
+        }
+    };
     let duration_ms = (Utc::now() - started).num_milliseconds().max(0);
 
     match run_result {

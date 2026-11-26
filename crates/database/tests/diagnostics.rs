@@ -42,10 +42,15 @@ async fn backup_round_trip_keeps_rows() {
     assert!(dest.exists());
     // The backup is a standalone database with the same rows.
     validate_backup_file(&dest).await.unwrap();
-    let backup_pool =
-        sqlx::SqlitePool::connect(&format!("sqlite://{}?mode=ro", dest.to_string_lossy()))
-            .await
-            .unwrap();
+    let backup_pool = sqlx::sqlite::SqlitePoolOptions::new()
+        .max_connections(1)
+        .connect_with(
+            sqlx::sqlite::SqliteConnectOptions::new()
+                .filename(&dest)
+                .read_only(true),
+        )
+        .await
+        .unwrap();
     let rows: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM repositories")
         .fetch_one(&backup_pool)
         .await
@@ -94,7 +99,13 @@ async fn validate_rejects_other_sqlite_files() {
     // and integrity check pass, but there is no settings table.
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("other.sqlite");
-    let pool = sqlx::SqlitePool::connect(&format!("sqlite://{}?mode=rwc", path.to_string_lossy()))
+    let pool = sqlx::sqlite::SqlitePoolOptions::new()
+        .max_connections(1)
+        .connect_with(
+            sqlx::sqlite::SqliteConnectOptions::new()
+                .filename(&path)
+                .create_if_missing(true),
+        )
         .await
         .unwrap();
     sqlx::query("CREATE TABLE t (x INTEGER)")

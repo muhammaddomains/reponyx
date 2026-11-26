@@ -269,6 +269,89 @@ the CI installer job has not run yet either (first run is on the
 push of this commit); E4 is open until the user confirms the
 repo secrets.
 
+## Phase 5 polish (2026-11-26)
+
+Built on the user's "Haan, Phase 5 shuru karo". Closes the audit's
+Phase 5 line: loading states, stale banners, swallowed catches,
+autostart validation, spawn-path version check, and the remaining
+minors (DB-m, ST-m, Q6–Q10, G6–G10, E5–E8, F11–F16).
+
+- **Frontend (F9/F12/F13):** Agent page badge shows "Checking…"
+  until the first poll settles and keeps last-known health on a
+  failed poll; Overview shows "…" while counts load, has a Retry
+  button that clears the error on success, and its stale "Phase 1
+  foundation" / "Phase 8" text is gone; Synchronization and
+  Activity poll loops clear their error on the next success.
+  (F10 Accounts loading state and F11 swallowed catches were
+  already done — verified, no change.)
+- **Queue (Q6–Q10):** status predicates in the UPDATEs,
+  single-statement pending cancel, uncapped priority aging, an
+  overall job deadline (a slow job fails `OperationTimedOut` and
+  retries), and a 60s rate-limit defer sleep.
+- **Git (G7–G10):** diagnostic-line-only failure
+  classification, partial submodule sync fails the job, canonical
+  lock-file paths, and HEAD-before-index.lock health ordering
+  with move-aside advice. (G6 token-in-env is an accepted
+  same-user boundary, no change.)
+- **DB (DB-m1–m6):** migration `0005_phase5_indexes`; the
+  DB-m2 repair backfills unrecorded migration records from the
+  embedded checksums; NOCASE rename clash; `filename()` instead
+  of `format!` SQLite URLs (production code and tests); the
+  `datetime(started_at)` 7-day fix; and the interrupted-restore
+  recovery in the desktop startup path. Enum-column CHECK
+  constraints are impossible without a table rebuild in SQLite —
+  recorded as a limitation, enforced by the typed readers.
+- **Storage (ST-m):** root-anchored `parse_archive_path`,
+  recursive archive scan with a depth cap, real symlink checks
+  in `validate_repository_path`, normalized storage root,
+  canonical relocation comparison, and a missing-root
+  create-or-clear-error in the runner. Relocation locks are a
+  documented accepted trade-off (same audit note as B4): the
+  fetch re-acquires the same in-process lock the move held, so
+  holding the guards through the fetch would self-block; the
+  race needs two concurrent different-type jobs for one repo,
+  which the enqueue rules make near-impossible.
+- **Agent & IPC (AG-F):** accept-error backoff, client-side
+  protocol-version validation in `ping()`/`status()`, biased
+  scheduler select + post-shutdown Enqueue refusal, Windows
+  ctrl_close/ctrl_shutdown/ctrl_logoff signals, a warnings-only
+  startup self-check, and autostart validate/repair on all three
+  platforms.
+- **Release (E5–E8, F14–F16):** E5 was already done (release.yml
+  builds agent/broker before tauri-action). E7 removes the unused
+  CSP origin; E8 adds the CHANGELOG-tag CI job; F14 asserts the
+  ConfirmDialog CSS classes in the built output; F15 lists the
+  MSI; E6 adds an SPDX SBOM upload; F16 untracks the two 120KB
+  Tauri-generated schema files (capabilities.json and
+  acl-manifests.json stay tracked).
+
+Verified 2026-11-26: `cargo fmt --check` OK, clippy (workspace
+excl. desktop) clean, full workspace suite **472 passed / 0
+failed** (baseline 462; +10 new tests), typecheck clean,
+frontend tests **84 passed / 0 failed** (baseline 78; +6 new:
+2 Agent badge, 4 Overview), `pnpm -r lint` clean, vite build OK
+(the F14 classes `.fixed`, `.inset-0`, `.z-50`, `.bg-black\/50`
+are all present in the built CSS), Semgrep (exact CI command)
+**0 findings** (one `current-exe` finding on the new
+autostart code was suppressed per-site with the repo's existing
+nosemgrep convention — the path is only compared for status),
+`cargo audit` clean (0 vulnerabilities, 7 no-fix warnings).
+MinGW GNU cross-check passes for `reponyx-ipc` and
+`reponyx-background-agent` (the Windows shutdown-signal code
+compiles for the Windows target). Two verification catches, both
+fixed: the missing-root check first failed the `both_live`
+test (a fresh root is normal — the runner now creates it and
+only errors when creation fails), and the Overview lint failed
+on a `react-hooks/exhaustive-deps` disable comment for a rule
+that is not installed (restructured to `useCallback`, no disable
+needed). Honest limits: the desktop crate changes (`agent.rs`
+autostart, `storage.rs` parse, `diagnostics.rs` recovery) are
+compile-checked only by CI's windows-build job; the updater E2E
+is still unproven (needs the first release + Windows); the
+installer bundle globs are still unproven until the ZIP fix
+lands and CI runs; the SBOM action (`anchore/sbom-action@v0`)
+has not run anywhere yet.
+
 ## Windows first-run bugs (2026-11-23)
 
 First real Windows run (`target\debug\reponyx-desktop.exe`):

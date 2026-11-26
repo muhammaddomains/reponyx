@@ -286,11 +286,19 @@ async fn worker_loop(worker_id: usize, args: WorkerArgs) {
                 error!(worker_id, job_id = %job.id, error = %e.message, "defer_job failed");
             }
             drop(permit);
-            // Sleep at most 5 s: the job is not claimable before
-            // `available_at` anyway, and other work may be ready.
+            // Sleep the full wait (audit Q10): the old `min(5 s)`
+            // woke the worker while the deferred job was still not
+            // claimable, so every worker spun claim → defer → claim
+            // at the poll rate for the whole rate-limit window.
+            // Sleeping until the token is available costs nothing —
+            // the deferred job cannot be claimed before
+            // `available_at` anyway, and the other workers still
+            // pick up other accounts' work. Capped at 60 s so a
+            // long window does not delay shutdown-visible work;
+            // cancellation still wakes the sleep immediately.
             tokio::select! {
                 _ = cancel.cancelled() => break,
-                _ = tokio::time::sleep(wait.min(Duration::from_secs(5))) => continue,
+                _ = tokio::time::sleep(wait.min(Duration::from_secs(60))) => continue,
             }
         }
 

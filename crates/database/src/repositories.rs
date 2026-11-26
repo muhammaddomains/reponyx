@@ -237,9 +237,14 @@ pub async fn rename_repository(
     let new_owner = new_owner.trim();
     let new_name = new_name.trim();
     let new_full_name = full_name(new_owner, new_name);
-    if new_full_name != current.full_name {
+    // GitHub names are case-insensitive (audit DB-m3): "Foo/Bar"
+    // and "foo/bar" are the same repository, and the V5 unique
+    // index enforces that — so the clash check must compare
+    // case-insensitively too, or a rename could pass the check and
+    // then fail on the index (or, before V5, create a duplicate).
+    if !new_full_name.eq_ignore_ascii_case(&current.full_name) {
         let clash = sqlx::query(
-            "SELECT id FROM repositories WHERE account_id = ? AND full_name = ? AND id != ?",
+            "SELECT id FROM repositories WHERE account_id = ? AND full_name = ? COLLATE NOCASE AND id != ?",
         )
         .bind(account_id.to_string())
         .bind(&new_full_name)

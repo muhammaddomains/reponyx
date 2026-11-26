@@ -363,17 +363,42 @@ pub fn never_cancel() -> tokio::sync::watch::Receiver<bool> {
 /// Exit code 128 with "repository not found" hints is surfaced as
 /// `RepositoryNotFound`; a missing remote / auth failure is not retried
 /// as if it were a network blip.
+/// Classify a failed git invocation from its output.
+///
+/// Audit G7: the old code matched substrings against the whole
+/// combined stdout+stderr, so any incidental text could misclassify
+/// the failure — a file named "not found" in `ls-remote` output, a
+/// SHA containing "403", a progress line mentioning a timeout.
+/// Classification now runs on git's own diagnostic lines only
+/// (lines starting with `fatal:`, `error:` or `remote:`), falling
+/// back to the full stderr when git printed no such line; HTTP
+/// statuses are matched as `error: 403` / `403 forbidden` (and the
+/// 401 equivalents), never as a bare number anywhere in the text.
+/// The redacted stderr is still attached as details, so nothing
+/// the user could act on is lost.
 pub fn map_git_failure(cmd: &GitCommand, output: &ProcessOutput) -> RepoNyxError {
-    let combined = format!("{} {}", output.stdout, output.stderr).to_lowercase();
+    let diagnostic = diagnostic_lines(&output.stderr);
+    let combined = if diagnostic.is_empty() {
+        format!("{} {}", output.stdout, output.stderr).to_lowercase()
+    } else {
+        diagnostic
+    };
     let code = if combined.contains("repository not found")
-        || combined.contains("not found")
+        || (combined.contains("repository") && combined.contains("not found"))
         || combined.contains("does not exist")
     {
         ErrorCode::RepositoryNotFound
     } else if combined.contains("authentication failed")
         || combined.contains("permission denied")
-        || combined.contains("403")
-        || combined.contains("401")
+        || combined.contains("access denied")
+        || combined.contains("error: 403")
+        || combined.contains("error: 401")
+        || combined.contains("403 forbidden")
+        || combined.contains("401 unauthorized")
+        || combined.contains("status code 403")
+        || combined.contains("status code 401")
+        || combined.contains("http 403")
+        || combined.contains("http 401")
     {
         ErrorCode::AuthenticationRevoked
     } else if combined.contains("could not resolve host")
@@ -400,6 +425,28 @@ pub fn map_git_failure(cmd: &GitCommand, output: &ProcessOutput) -> RepoNyxError
         ),
     )
     .with_details(reponyx_logging::redact_secrets(&output.stderr))
+}
+
+/// Git's own diagnostic lines from stderr: lines starting with
+/// `fatal:`, `error:` or `remote:` (lowercased, joined). These are
+/// the lines git uses to report why a command failed; progress
+/// output, file listings and SHAs are not diagnostics and must not
+/// drive classification.
+fn diagnostic_lines(stderr: &str) -> String {
+    let mut out = String::new();
+    for line in stderr.lines() {
+        let lower = line.trim_start().to_lowercase();
+        if lower.starts_with("fatal:")
+            || lower.starts_with("error:")
+            || lower.starts_with("remote:")
+        {
+            if !out.is_empty() {
+                out.push(' ');
+            }
+            out.push_str(&lower);
+        }
+    }
+    out
 }
 
 #[cfg(test)]
@@ -450,6 +497,39 @@ mod tests {
         assert_eq!(
             map_git_failure(&cmd, &out).code,
             ErrorCode::DiskSpaceInsufficient
+        );
+    }
+
+    /// Audit G7: incidental text must not drive classification.
+    /// A filename containing "not found" in stdout and a SHA
+    /// containing "403" are not diagnostics; only git's own
+    /// `fatal:` / `error:` / `remote:` lines classify.
+    #[test]
+    fn incidental_text_does_not_misclassify() {
+        let cmd = build_ls_remote(&PathBuf::from("git"), "https://example.invalid/r.git");
+        let out = ProcessOutput {
+            success: false,
+            exit_code: Some(128),
+            stdout: "abc403def\trefs/heads/not found\n".into(),
+            stderr: "fatal: unable to connect".into(),
+        };
+        assert_eq!(map_git_failure(&cmd, &out).code, ErrorCode::GitFetchFailed);
+    }
+
+    #[test]
+    fn http_status_in_diagnostic_line_is_auth() {
+        let cmd = build_ls_remote(&PathBuf::from("git"), "https://example.invalid/r.git");
+        let out = ProcessOutput {
+            success: false,
+            exit_code: Some(128),
+            stdout: String::new(),
+            stderr: "fatal: unable to access 'https://example.invalid/r.git/': \
+                The requested URL returned error: 403"
+                .into(),
+        };
+        assert_eq!(
+            map_git_failure(&cmd, &out).code,
+            ErrorCode::AuthenticationRevoked
         );
     }
 

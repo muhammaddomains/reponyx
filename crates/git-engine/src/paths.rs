@@ -90,15 +90,17 @@ fn invalid(component: &str, reason: &str) -> RepoNyxError {
 }
 
 /// Validate a full repository path stays inside `root` (no traversal,
-/// no symlinks escaping the root — symlink check is a best-effort
-/// canonicalization when the path exists).
+/// no symlinks escaping the root).
+///
+/// Audit ST-m: the check used to be purely lexical (`starts_with`
+/// on the raw spelling), so a symlinked directory under the root
+/// could point anywhere on disk and still pass. The root and the
+/// path — or the path's nearest existing ancestor, when the
+/// destination does not exist yet (a clone target) — are now
+/// canonicalized first, so a symlink escape is caught. A path
+/// that cannot be canonicalized at all falls back to the lexical
+/// check; `..` segments are rejected outright before any of that.
 pub fn validate_repository_path(root: &Path, path: &Path) -> Result<(), RepoNyxError> {
-    if !path.starts_with(root) {
-        return Err(RepoNyxError::new(
-            ErrorCode::RepositoryPathInvalid,
-            "Repository path escapes the storage root",
-        ));
-    }
     for component in path.components() {
         if matches!(component, Component::ParentDir) {
             return Err(RepoNyxError::new(
@@ -107,7 +109,40 @@ pub fn validate_repository_path(root: &Path, path: &Path) -> Result<(), RepoNyxE
             ));
         }
     }
+    let canonical_root = std::fs::canonicalize(root).unwrap_or_else(|_| root.to_path_buf());
+    let canonical_path = canonicalize_or_nearest_ancestor(path);
+    if !canonical_path.starts_with(&canonical_root) {
+        return Err(RepoNyxError::new(
+            ErrorCode::RepositoryPathInvalid,
+            "Repository path escapes the storage root",
+        ));
+    }
     Ok(())
+}
+
+/// Canonicalize `path`; when it does not exist, canonicalize the
+/// nearest existing ancestor and re-append the remaining
+/// components (already checked above to contain no `..`, so the
+/// re-appended tail cannot escape the ancestor).
+fn canonicalize_or_nearest_ancestor(path: &Path) -> PathBuf {
+    let mut current = path;
+    let mut tail: Vec<std::ffi::OsString> = Vec::new();
+    loop {
+        if let Ok(canonical) = std::fs::canonicalize(current) {
+            let mut out = canonical;
+            for part in tail.iter().rev() {
+                out.push(part);
+            }
+            return out;
+        }
+        let Some(parent) = current.parent() else {
+            return path.to_path_buf();
+        };
+        if let Some(name) = current.file_name() {
+            tail.push(name.to_os_string());
+        }
+        current = parent;
+    }
 }
 
 /// Storage layout for one repository.
@@ -226,5 +261,24 @@ mod tests {
     #[test]
     fn path_outside_root_rejected() {
         assert!(validate_repository_path(Path::new("/data"), Path::new("/etc/passwd")).is_err());
+    }
+
+    /// Audit ST-m: a symlinked directory under the root that
+    /// points outside it must be rejected — the old lexical check
+    /// passed it. A not-yet-existing destination under a real
+    /// directory still validates (nearest-ancestor rule).
+    #[test]
+    fn symlinked_directory_escaping_the_root_is_rejected() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().join("root");
+        let outside = dir.path().join("outside");
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::create_dir_all(&outside).unwrap();
+        std::os::unix::fs::symlink(&outside, root.join("link")).unwrap();
+        assert!(
+            validate_repository_path(&root, &root.join("link").join("repo.git")).is_err(),
+            "symlink escape must be rejected"
+        );
+        assert!(validate_repository_path(&root, &root.join("real").join("repo.git")).is_ok());
     }
 }

@@ -10,13 +10,30 @@
 //! `local_path` is kept — a repo that fails to move is not lost,
 //! and the next fetch re-clones it (ST-M2).
 
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::time::Duration;
 
 use reponyx_database::accounts::get_account;
 use reponyx_database::repositories::{RepositoryFilter, list_repositories, set_local_path};
 use reponyx_git_engine::{RepoLockManager, RepositoryLayout};
 use sqlx::SqlitePool;
+
+/// Are these two paths the same location? Compares the raw paths
+/// first, then their canonical forms (a symlinked or `.`/`..`
+/// spelling of the same archive must compare equal), so a
+/// differently-spelled `local_path` is still recognized after a
+/// move. Audit ST-m: the relocation code compared `PathBuf`
+/// equality and `local_path` strings, so a differently-spelled
+/// `local_path` was never updated after its archive moved.
+pub(crate) fn same_path(a: &Path, b: &Path) -> bool {
+    if a == b {
+        return true;
+    }
+    match (std::fs::canonicalize(a), std::fs::canonicalize(b)) {
+        (Ok(a), Ok(b)) => a == b,
+        _ => false,
+    }
+}
 
 /// The outcome of one `storage.root` migration.
 #[derive(Debug, Default)]
@@ -127,8 +144,10 @@ pub async fn migrate_storage_root(
                 Ok(()) => {
                     repo_moved = true;
                     report.moved += 1;
-                    if repo.local_path.as_ref().map(PathBuf::from).as_deref()
-                        == Some(old_side.as_path())
+                    if repo
+                        .local_path
+                        .as_deref()
+                        .is_some_and(|p| same_path(Path::new(p), old_side))
                         && let Err(e) = set_local_path(pool, repo.id, Some(new_side)).await
                     {
                         report.failed.push((repo.full_name.clone(), e.message));

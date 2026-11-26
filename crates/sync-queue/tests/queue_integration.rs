@@ -66,6 +66,73 @@ async fn seed_repo(pool: &SqlitePool) -> Uuid {
 }
 
 #[tokio::test]
+async fn job_overall_deadline_fails_a_slow_job() {
+    let (_dir, db) = open_db().await;
+    let p = pool(&db);
+    let repo_id = seed_repo(p).await;
+    create_job(
+        p,
+        NewJob {
+            repository_id: repo_id,
+            job_type: JobType::Fetch,
+            priority: 0,
+        },
+    )
+    .await
+    .unwrap();
+
+    // The runner takes 5 s; the overall deadline is 200 ms. The
+    // per-operation timeout alone would allow the single op the
+    // full 200 ms — the deadline must fire and fail the job as
+    // timed out (audit Q9). max_attempts 1 so no retry row is
+    // scheduled and the terminal state is directly assertable.
+    let runner = MockJobRunner::new(vec![MockOutcome::Delay { ms: 5000 }]);
+    let config = QueueConfig::default()
+        .with_concurrency(1)
+        .with_claim_poll(Duration::from_millis(20))
+        .with_job_timeout(Duration::from_millis(200))
+        .with_max_attempts(1);
+    let handle = WorkerPool::start(p.clone(), runner, config).await.unwrap();
+
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(30);
+    loop {
+        let counts = count_jobs_by_status(p).await.unwrap();
+        let pending = counts
+            .iter()
+            .find(|c| c.status == JobStatus::Pending)
+            .map(|c| c.count)
+            .unwrap_or(0);
+        let running = counts
+            .iter()
+            .find(|c| c.status == JobStatus::Running)
+            .map(|c| c.count)
+            .unwrap_or(0);
+        if pending == 0 && running == 0 {
+            break;
+        }
+        if tokio::time::Instant::now() > deadline {
+            panic!("timeout waiting for queue drain; pending={pending} running={running}");
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    handle.shutdown();
+    handle.join().await;
+
+    let jobs = list_jobs(
+        p,
+        JobFilter {
+            repository_id: Some(repo_id),
+            status: Some(JobStatus::Failed),
+            ..Default::default()
+        },
+    )
+    .await
+    .unwrap();
+    assert_eq!(jobs.len(), 1, "the slow job must end failed");
+    assert_eq!(jobs[0].error_code.as_deref(), Some("OperationTimedOut"));
+}
+
+#[tokio::test]
 async fn hundred_jobs_complete_with_bounded_concurrency() {
     let (_dir, db) = open_db().await;
     let p = pool(&db);

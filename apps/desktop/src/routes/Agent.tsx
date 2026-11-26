@@ -30,6 +30,11 @@ function commandMessage(error: unknown): string {
 
 export default function Agent() {
   const [health, setHealth] = useState<AgentHealth | null>(null);
+  // Whether the first health poll has settled (success or failure).
+  // Before that the badge must say "Checking…" — showing "Not
+  // running" before the first poll (audit F9) is a false alarm, and
+  // a failed poll must not erase the last known health either.
+  const [checked, setChecked] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [autostart, setAutostart] = useState<boolean | null>(null);
@@ -42,8 +47,11 @@ export default function Agent() {
       const h = await agentHealth();
       setHealth(h);
     } catch (e) {
-      setHealth(null);
+      // Keep the last known health: the poll failing does not mean
+      // the agent stopped — only that this probe could not reach it.
       setError(commandMessage(e));
+    } finally {
+      setChecked(true);
     }
   }, []);
 
@@ -108,8 +116,10 @@ export default function Agent() {
             this window is closed.
           </p>
         </div>
-        <Badge variant={reachable ? "success" : "danger"}>
-          {reachable ? "Running" : "Not running"}
+        <Badge
+          variant={!checked ? "default" : reachable ? "success" : "danger"}
+        >
+          {!checked ? "Checking…" : reachable ? "Running" : "Not running"}
         </Badge>
       </header>
 

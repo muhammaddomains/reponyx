@@ -54,7 +54,10 @@ impl IpcClient {
                 agent_generation,
                 protocol_version,
                 ..
-            } => Ok((agent_generation, protocol_version)),
+            } => {
+                check_protocol_version(protocol_version)?;
+                Ok((agent_generation, protocol_version))
+            }
             ServerMessage::Error { code, message, .. } => Err(map_ipc_error(&code, &message)),
             other => Err(unexpected(&other)),
         }
@@ -69,7 +72,10 @@ impl IpcClient {
             })
             .await?
         {
-            ServerMessage::Status { status, .. } => Ok(status),
+            ServerMessage::Status { status, .. } => {
+                check_protocol_version(status.protocol_version)?;
+                Ok(status)
+            }
             ServerMessage::Error { code, message, .. } => Err(map_ipc_error(&code, &message)),
             other => Err(unexpected(&other)),
         }
@@ -278,4 +284,34 @@ fn unexpected(msg: &ServerMessage) -> RepoNyxError {
         ErrorCode::InternalError,
         format!("unexpected ipc response: {msg:?}"),
     )
+}
+
+/// Audit AG-F18: the server validates request versions, but the
+/// client never validated responses — a stale agent (older
+/// protocol) answered happily and the desktop trusted fields it
+/// did not understand. Reject a mismatched version with a message
+/// that names both sides, so the user knows to restart the agent
+/// instead of seeing a confusing downstream failure.
+fn check_protocol_version(version: u32) -> Result<(), RepoNyxError> {
+    if version != PROTOCOL_VERSION {
+        return Err(RepoNyxError::new(
+            ErrorCode::InvalidInput,
+            format!(
+                "incompatible agent protocol version {version} (expected {PROTOCOL_VERSION}) — restart the agent"
+            ),
+        ));
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn version_check_accepts_current_and_rejects_other() {
+        assert!(check_protocol_version(PROTOCOL_VERSION).is_ok());
+        let err = check_protocol_version(PROTOCOL_VERSION + 1).unwrap_err();
+        assert!(err.message.contains("incompatible agent protocol version"));
+    }
 }

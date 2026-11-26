@@ -358,10 +358,53 @@ pub async fn delete_database_backup_command(path: String) -> CommandResult<()> {
     Ok(())
 }
 
+/// Audit DB-m6: recover from a restore that was cut off between
+/// moving the live database aside and moving the staged file into
+/// place. If the live database is missing and a `pre-restore-*`
+/// fallback exists, the newest fallback is the database from
+/// before the restore — move it back so startup never sees an
+/// empty data directory. If a staged pending file also survived,
+/// the normal restore below then re-applies it on this startup.
+fn recover_interrupted_restore(data_dir: &Path) {
+    let data = data_dir.join("data");
+    let live = data.join("reponyx.sqlite");
+    if live.exists() {
+        return;
+    }
+    let Ok(entries) = std::fs::read_dir(&data) else {
+        return;
+    };
+    // Fallback names carry a `%Y%m%d-%H%M%S` stamp, so the
+    // lexicographically largest name is the newest.
+    let newest = entries
+        .flatten()
+        .map(|entry| entry.path())
+        .filter(|path| {
+            path.file_name()
+                .map(|name| {
+                    name.to_string_lossy()
+                        .starts_with("reponyx.sqlite.pre-restore-")
+                })
+                .unwrap_or(false)
+        })
+        .max();
+    let Some(newest) = newest else {
+        return;
+    };
+    match std::fs::rename(&newest, &live) {
+        Ok(()) => tracing::warn!(
+            fallback = %newest.display(),
+            "recovered the database from an interrupted restore — the previous startup was cut off mid-restore"
+        ),
+        Err(e) => tracing::error!(
+            error = %e,
+            fallback = %newest.display(),
+            "could not recover the database from an interrupted restore; the live database is missing"
+        ),
+    }
+}
+
 /// Validate a backup, stop the background agent, and stage the
-/// file for the next startup. Nothing changes until RepoNyx
-/// restarts — the staged file is applied by
-/// [`apply_pending_restore`] before the database opens.
 #[tauri::command]
 pub async fn restore_database_backup_command(path: String) -> CommandResult<RestoreStagedDto> {
     let target = resolve_under(&backups_dir(), &path)?;
@@ -399,6 +442,11 @@ pub async fn open_support_folder_command(folder: String) -> CommandResult<()> {
 /// Any failure leaves the live database untouched and logs the
 /// reason — a failed restore must never lose the working database.
 pub(crate) fn apply_pending_restore(data_dir: &Path) {
+    // Audit DB-m6: a crash between the two renames below used to
+    // leave no live database at all, and `open_database` then
+    // created a fresh empty one while the real data sat in the
+    // pre-restore fallback. Recover first, before anything else.
+    recover_interrupted_restore(data_dir);
     let pending = data_dir.join("data").join("reponyx.sqlite.restore-pending");
     if !pending.exists() {
         return;

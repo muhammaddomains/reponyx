@@ -126,6 +126,33 @@ pub async fn verify_repository(git: &Path, path: &Path, timeout: Duration) -> Re
         return not_a_repo_or_incomplete(path);
     };
 
+    // HEAD present? A missing HEAD in an otherwise Git-shaped
+    // directory means the clone never finished. This check comes
+    // BEFORE the index.lock check (audit G10): a killed clone
+    // leaves both a stale index.lock and no HEAD, and reporting
+    // "remove the lock" misdiagnoses an incomplete clone that
+    // actually needs a re-clone.
+    if !git_dir.join("HEAD").exists() {
+        return RepositoryDiagnosis::problem(
+            HealthStatus::IncompleteClone,
+            ErrorCode::RepositoryCorrupted,
+            format!("Missing HEAD in {}", git_dir.display()),
+            "The clone did not finish. Run a sync again — RepoNyx \
+             moves the partial clone aside and re-clones it \
+             automatically; do not delete the directory by hand.",
+        );
+    }
+    if !git_dir.join("objects").is_dir() {
+        return RepositoryDiagnosis::problem(
+            HealthStatus::IncompleteClone,
+            ErrorCode::RepositoryCorrupted,
+            format!("Missing objects directory in {}", git_dir.display()),
+            "The clone did not finish. Run a sync again — RepoNyx \
+             moves the partial clone aside and re-clones it \
+             automatically; do not delete the directory by hand.",
+        );
+    }
+
     // Stale index.lock? A live Git holds it only briefly.
     let index_lock = git_dir.join("index.lock");
     if index_lock.exists() {
@@ -150,29 +177,6 @@ pub async fn verify_repository(git: &Path, path: &Path, timeout: Duration) -> Re
             } else {
                 "Another Git operation is running; wait for it to finish, then retry."
             },
-        );
-    }
-
-    // HEAD present? A missing HEAD in an otherwise Git-shaped
-    // directory means the clone never finished.
-    if !git_dir.join("HEAD").exists() {
-        return RepositoryDiagnosis::problem(
-            HealthStatus::IncompleteClone,
-            ErrorCode::RepositoryCorrupted,
-            format!("Missing HEAD in {}", git_dir.display()),
-            "The clone did not finish. Delete the incomplete directory \
-             and clone again — only after confirming; RepoNyx never \
-             deletes it automatically.",
-        );
-    }
-    if !git_dir.join("objects").is_dir() {
-        return RepositoryDiagnosis::problem(
-            HealthStatus::IncompleteClone,
-            ErrorCode::RepositoryCorrupted,
-            format!("Missing objects directory in {}", git_dir.display()),
-            "The clone did not finish. Delete the incomplete directory \
-             and clone again — only after confirming; RepoNyx never \
-             deletes it automatically.",
         );
     }
 
@@ -287,9 +291,9 @@ fn not_a_repo_or_incomplete(path: &Path) -> RepositoryDiagnosis {
                     missing.join(", ")
                 }
             ),
-            "The clone did not finish. Delete the incomplete directory \
-             and clone again — only after confirming; RepoNyx never \
-             deletes it automatically.",
+            "The clone did not finish. Run a sync again — RepoNyx \
+             moves the partial clone aside and re-clones it \
+             automatically; do not delete the directory by hand.",
         );
     }
     RepositoryDiagnosis::problem(

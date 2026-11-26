@@ -58,8 +58,15 @@ pub async fn scheduler_loop(pool: SqlitePool, cancel: CancellationToken, state: 
     let mut ticker = tokio::time::interval(interval);
     loop {
         tokio::select! {
+            // Audit AG-F: biased so a shutdown requested at the
+            // same instant as a tick wins — the old unbiased select
+            // could materialize one more batch after Shutdown.
+            biased;
             _ = cancel.cancelled() => break,
             _ = ticker.tick() => {
+                if cancel.is_cancelled() {
+                    break;
+                }
                 if state.paused.load(Ordering::SeqCst) {
                     continue;
                 }
@@ -131,6 +138,20 @@ pub async fn command_loop(
                 repository_id,
                 reply,
             } => {
+                // Audit AG-F: a Shutdown cancels the token, but the
+                // loop kept processing queued Enqueues — new work
+                // created after the agent was told to stop. Refuse
+                // it; the desktop reports the refusal instead of a
+                // job that never runs.
+                if cancel.is_cancelled() {
+                    let _ = reply.send(ServerMessage::Ack {
+                        request_id,
+                        ok: false,
+                        message: Some("agent is shutting down".into()),
+                        job_id: None,
+                    });
+                    continue;
+                }
                 let result = enqueue_now(&state.pool, repository_id).await;
                 let msg = match result {
                     Ok(job_id) => ServerMessage::Ack {

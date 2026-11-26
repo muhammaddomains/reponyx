@@ -130,16 +130,20 @@ pub struct MoveArchiveResult {
 
 /// Effective storage root: the `storage.root` setting when it is set
 /// and non-empty, otherwise the product data directory (the same
-/// default the background agent seeds on start).
+/// default the background agent seeds on start). The returned
+/// path is normalized (audit ST-m): the raw setting value could
+/// carry `.`/`..` segments or a symlinked spelling, and every
+/// other path in the app is canonical — comparing the two spellings
+/// then disagreed about whether an archive was under the root.
 pub(crate) async fn effective_storage_root(
     database: &Database,
 ) -> Result<(PathBuf, bool), CommandError> {
     let setting = get_setting(&database.pool, "storage.root").await?;
     match setting {
         Some(setting) if !setting.value.trim().is_empty() => {
-            Ok((PathBuf::from(setting.value), true))
+            Ok((canonical_or_raw(&PathBuf::from(setting.value)), true))
         }
-        _ => Ok((crate::dirs_data_dir(), false)),
+        _ => Ok((canonical_or_raw(&crate::dirs_data_dir()), false)),
     }
 }
 
@@ -149,45 +153,54 @@ pub(crate) fn canonical_or_raw(path: &Path) -> PathBuf {
     std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf())
 }
 
-/// Parse an archive path into (account, owner, name, kind):
+/// Parse an archive path into (account, owner, name, kind),
+/// anchored at the storage root:
 /// `<root>/repositories/github/<account>/<owner>/<name>.git` or
 /// `<root>/working-clones/<account>/<owner>/<name>`, or the
 /// collapsed form `<account>/<name>` when the account and the
 /// owner are the same user (then owner == account). `None` for
-/// paths outside the layout.
-fn parse_archive_path(path: &Path) -> Option<(String, String, String, ArchiveKind)> {
-    let parts: Vec<String> = path
+/// paths outside the root or outside the layout.
+///
+/// Audit ST-m: the layout markers used to be searched anywhere in
+/// the path, so a repository literally named "working-clones" (or
+/// a `repositories/github` segment inside a repo name) parsed as
+/// an archive under the wrong root. The path must sit under the
+/// root and the layout must start at the root.
+fn parse_archive_path(root: &Path, path: &Path) -> Option<(String, String, String, ArchiveKind)> {
+    let root = canonical_or_raw(root);
+    let path = canonical_or_raw(path);
+    let rel = path.strip_prefix(&root).ok()?;
+    let parts: Vec<&str> = rel
         .components()
-        .map(|c| c.as_os_str().to_string_lossy().into_owned())
+        .map(|c| c.as_os_str().to_str().unwrap_or(""))
         .collect();
-    for (i, part) in parts.iter().enumerate() {
-        if part == "repositories" && parts.get(i + 1).is_some_and(|p| p == "github") {
-            let rest = &parts[i + 2..];
-            let (account, owner, name) = match rest {
-                [account, name] if name.ends_with(".git") => {
-                    (account.clone(), account.clone(), name.clone())
-                }
-                [account, owner, name] => (account.clone(), owner.clone(), name.clone()),
-                _ => return None,
-            };
-            return Some((
-                account,
-                owner,
-                name.strip_suffix(".git").unwrap_or(&name).to_string(),
-                ArchiveKind::Mirror,
-            ));
-        }
-        if part == "working-clones" {
-            let rest = &parts[i + 1..];
-            let (account, owner, name) = match rest {
-                [account, name] => (account.clone(), account.clone(), name.clone()),
-                [account, owner, name] => (account.clone(), owner.clone(), name.clone()),
-                _ => return None,
-            };
-            return Some((account, owner, name, ArchiveKind::Working));
-        }
+    match parts.as_slice() {
+        ["repositories", "github", account, name] if name.ends_with(".git") => Some((
+            account.to_string(),
+            account.to_string(),
+            name.strip_suffix(".git").unwrap_or(name).to_string(),
+            ArchiveKind::Mirror,
+        )),
+        ["repositories", "github", account, owner, name] if name.ends_with(".git") => Some((
+            account.to_string(),
+            owner.to_string(),
+            name.strip_suffix(".git").unwrap_or(name).to_string(),
+            ArchiveKind::Mirror,
+        )),
+        ["working-clones", account, name] => Some((
+            account.to_string(),
+            account.to_string(),
+            name.to_string(),
+            ArchiveKind::Working,
+        )),
+        ["working-clones", account, owner, name] => Some((
+            account.to_string(),
+            owner.to_string(),
+            name.to_string(),
+            ArchiveKind::Working,
+        )),
+        _ => None,
     }
-    None
 }
 
 /// Layout path for one side, from the row's current owner/name.
@@ -230,7 +243,7 @@ fn archive_sides_for(
     let mut sides: Vec<(PathBuf, ArchiveKind)> = Vec::new();
     if let Some(local) = &repo.local_path {
         let local = PathBuf::from(local);
-        let kind = parse_archive_path(&local)
+        let kind = parse_archive_path(root, &local)
             .map(|(_, _, _, k)| k)
             .unwrap_or_else(|| {
                 if local
@@ -246,7 +259,7 @@ fn archive_sides_for(
             sides.push((local.clone(), kind));
         }
         // The other side shares the old account/owner/name.
-        if let Some((account, owner, name, _)) = parse_archive_path(&local) {
+        if let Some((account, owner, name, _)) = parse_archive_path(root, &local) {
             let other = match kind {
                 ArchiveKind::Mirror => {
                     layout_path(root, &account, &owner, &name, ArchiveKind::Working)
@@ -412,7 +425,7 @@ pub async fn get_storage_overview_command(
         .iter()
         .filter(|dir| !known.contains(&canonical_or_raw(&dir.path)))
         .map(|dir| {
-            let (account, owner, name) = parse_archive_path(&dir.path)
+            let (account, owner, name) = parse_archive_path(&root, &dir.path)
                 .map(|(a, o, n, _)| (a, o, n))
                 .unwrap_or_default();
             OrphanDto {

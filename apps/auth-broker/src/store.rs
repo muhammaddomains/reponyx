@@ -23,7 +23,6 @@ use chrono::{DateTime, Utc};
 use sqlx::Row;
 use sqlx::sqlite::{SqliteConnectOptions, SqlitePool, SqlitePoolOptions};
 use std::path::Path;
-use std::str::FromStr;
 
 /// Audit events older than this are pruned at startup. The log is
 /// append-only by API, but a broker that runs for years would grow
@@ -53,8 +52,10 @@ impl BrokerStore {
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent).map_err(sqlx::Error::Io)?;
         }
-        let url = format!("sqlite://{}?mode=rwc", path.to_string_lossy());
-        let options = SqliteConnectOptions::from_str(&url)?
+        // Audit DB-m4: no URL string — a path containing `%`, `#`
+        // or `?` (legal on Windows) must not be parsed as URL syntax.
+        let options = SqliteConnectOptions::new()
+            .filename(path)
             .journal_mode(sqlx::sqlite::SqliteJournalMode::Wal)
             .foreign_keys(true)
             .busy_timeout(std::time::Duration::from_secs(5))

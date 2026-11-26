@@ -519,7 +519,7 @@ async fn priority_aging_promotes_old_jobs() {
     .await
     .unwrap();
 
-    // Aging (+3 after 3h) lifts the old job to effective 3 > 2.
+    // Aging (+1/hour, uncapped) lifts the old job to effective 4 > 2.
     let first = claim_next_job(pool(&db), "test-worker", TEST_LEASE)
         .await
         .unwrap()
@@ -533,6 +533,55 @@ async fn priority_aging_promotes_old_jobs() {
         .unwrap()
         .unwrap();
     assert_eq!(second.id, fresh.id);
+}
+
+#[tokio::test]
+async fn priority_aging_is_uncapped() {
+    let (_dir, db) = open_test_db().await;
+    let account = make_account(pool(&db), "octocat").await;
+    let repo_old = make_repository(pool(&db), account.id, "456", "octocat", "hello").await;
+    let repo_new = make_repository(pool(&db), account.id, "457", "octocat", "world").await;
+    // Old scheduled job (priority 0, created 101h ago): with the old
+    // +3 cap it could never overtake a priority-100 "sync now" job
+    // (audit Q8). Uncapped aging (+1/hour) lifts it to 101 > 100.
+    let old = create_job(
+        pool(&db),
+        NewJob {
+            repository_id: repo_old.id,
+            job_type: JobType::Fetch,
+            priority: 0,
+        },
+    )
+    .await
+    .unwrap();
+    let long_ago = (chrono::Utc::now() - chrono::Duration::hours(101))
+        .to_rfc3339_opts(chrono::SecondsFormat::Secs, true);
+    sqlx::query("UPDATE sync_jobs SET created_at = ? WHERE id = ?")
+        .bind(&long_ago)
+        .bind(old.id.to_string())
+        .execute(pool(&db))
+        .await
+        .unwrap();
+    let fresh = create_job(
+        pool(&db),
+        NewJob {
+            repository_id: repo_new.id,
+            job_type: JobType::Fetch,
+            priority: 100,
+        },
+    )
+    .await
+    .unwrap();
+    let _ = fresh;
+
+    let first = claim_next_job(pool(&db), "test-worker", TEST_LEASE)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        first.id, old.id,
+        "a very old job must eventually overtake sync-now priority"
+    );
 }
 
 #[tokio::test]

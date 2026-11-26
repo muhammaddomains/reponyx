@@ -18,7 +18,6 @@ use reponyx_core::RepoNyxError;
 use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions};
 use sqlx::{Row, SqlitePool};
 use std::path::Path;
-use std::str::FromStr;
 
 /// The numbers the diagnostics export reports. All counts are real
 /// queries against the live database; a fresh database returns zeros.
@@ -53,7 +52,13 @@ pub async fn diagnostics_counts(pool: &SqlitePool) -> Result<DiagnosticsCounts, 
             (SELECT COUNT(*) FROM sync_history) AS history_rows,
             (SELECT COUNT(*) FROM sync_history
                 WHERE result = 'failed'
-                AND started_at >= datetime('now', '-7 days')) AS failed_history_7d
+                -- Audit DB-m5: `started_at` is RFC3339
+                -- ("2026-11-25T07:00:00Z") while `datetime('now', ...)`
+                -- returns space format — a raw string comparison
+                -- miscounts rows on the cutoff day. Normalizing the
+                -- stored value through `datetime()` first makes the
+                -- compare a real timestamp compare.
+                AND datetime(started_at) >= datetime('now', '-7 days')) AS failed_history_7d
         "#,
     )
     .fetch_one(pool)
@@ -117,9 +122,10 @@ pub async fn validate_backup_file(path: &Path) -> Result<(), RepoNyxError> {
     if head.len() < SQLITE_MAGIC.len() || &head[..SQLITE_MAGIC.len()] != SQLITE_MAGIC {
         return Err(invalid("not a SQLite database file"));
     }
-    let url = format!("sqlite://{}?mode=ro", path.to_string_lossy());
-    let options = SqliteConnectOptions::from_str(&url)
-        .map_err(|e| invalid(format!("cannot open backup file: {e}")))?
+    // Audit DB-m4: no URL string — a path containing `%`, `#` or
+    // `?` must not be parsed as URL syntax.
+    let options = SqliteConnectOptions::new()
+        .filename(path)
         .read_only(true)
         .create_if_missing(false);
     let pool = SqlitePoolOptions::new()

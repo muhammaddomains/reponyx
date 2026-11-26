@@ -78,6 +78,15 @@ pub async fn run_agent() -> Result<(), Box<dyn std::error::Error>> {
     // (Phase 8) can change it later.
     ensure_storage_root(&pool, &data).await?;
 
+    // Startup self-check (audit AG-F): git, storage-root
+    // writability, and the credential store are the three things a
+    // running agent needs that opening the database does not prove.
+    // Warnings only — the agent still starts, because a missing git
+    // today could be a PATH problem fixed while the agent runs —
+    // but the reason a later job fails is in the log from the
+    // first minute, not discovered job by job.
+    self_check(&data, &pool).await;
+
     let (queue, _) = start_queue(pool.clone()).await?;
     let state = Arc::new(AgentState {
         pool: pool.clone(),
@@ -177,9 +186,89 @@ async fn shutdown_signal() {
             } => {}
         }
     }
-    #[cfg(not(unix))]
+    #[cfg(windows)]
+    {
+        // Audit AG-F: Ctrl+C alone missed logoff and shutdown —
+        // Windows sends ctrl_close on console close, ctrl_shutdown
+        // on system shutdown, and ctrl_logoff on logoff. Any one of
+        // them must stop the agent gracefully instead of the
+        // process being killed mid-job. A listener that fails to
+        // register waits forever instead of ending the select.
+        use tokio::signal::windows::{ctrl_c, ctrl_close, ctrl_logoff, ctrl_shutdown};
+        tokio::select! {
+            _ = async {
+                match ctrl_c() {
+                    Ok(mut s) => { let _ = s.recv().await; }
+                    Err(_) => std::future::pending::<()>().await,
+                }
+            } => {}
+            _ = async {
+                match ctrl_close() {
+                    Ok(mut s) => { let _ = s.recv().await; }
+                    Err(_) => std::future::pending::<()>().await,
+                }
+            } => {}
+            _ = async {
+                match ctrl_shutdown() {
+                    Ok(mut s) => { let _ = s.recv().await; }
+                    Err(_) => std::future::pending::<()>().await,
+                }
+            } => {}
+            _ = async {
+                match ctrl_logoff() {
+                    Ok(mut s) => { let _ = s.recv().await; }
+                    Err(_) => std::future::pending::<()>().await,
+                }
+            } => {}
+        }
+    }
+    #[cfg(not(any(unix, windows)))]
     {
         let _ = tokio::signal::ctrl_c().await;
+    }
+}
+
+/// Startup self-check — see the call site in [`run_agent`].
+async fn self_check(data: &std::path::Path, pool: &sqlx::SqlitePool) {
+    match reponyx_git_engine::detect_git().await {
+        Ok(info) => info!(
+            git = %info.path.display(),
+            version = %info.version_string,
+            "git found"
+        ),
+        Err(e) => warn!(
+            error = %e.message,
+            "git not found — sync jobs will fail until git is on PATH"
+        ),
+    }
+    let root = match get_setting(pool, "storage.root").await {
+        Ok(Some(setting)) if !setting.value.trim().is_empty() => {
+            std::path::PathBuf::from(setting.value)
+        }
+        _ => data.to_path_buf(),
+    };
+    let probe = root.join(format!(".reponyx-write-test-{}", std::process::id()));
+    match std::fs::write(&probe, b"ok") {
+        Ok(()) => {
+            let _ = std::fs::remove_file(&probe);
+            info!(root = %root.display(), "storage root is writable");
+        }
+        Err(e) => warn!(
+            error = %e,
+            root = %root.display(),
+            "storage root is not writable — sync jobs will fail"
+        ),
+    }
+    let store = reponyx_credential_store::default_store();
+    match store.get(reponyx_ipc::SERVICE_IPC, reponyx_ipc::ACCOUNT_SHARED_SECRET) {
+        Ok(Some(_)) => info!("credential store: ipc shared secret present"),
+        Ok(None) => warn!(
+            "credential store: ipc shared secret missing — the desktop cannot talk to this agent"
+        ),
+        Err(e) => warn!(
+            error = %e.message,
+            "credential store is not readable — sync jobs will fail"
+        ),
     }
 }
 

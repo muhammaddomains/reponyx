@@ -256,12 +256,21 @@ fn locked(path: &Path, reason: &str) -> RepoNyxError {
 
 /// Lock file for a repository: `<parent>/.reponyx-<name>.lock`.
 /// `None` when the path has no parent to place the file in.
+///
+/// Audit G9: the file path used to be built from the raw spelling,
+/// so two spellings of the same repository (different `..` segments,
+/// a symlinked parent, a different case on Windows) produced two
+/// different lock files and two processes could hold "the same"
+/// lock. The path is normalized exactly like [`lock_key`] first —
+/// canonical when the repository exists, lexical normalization
+/// otherwise — so both layers agree on one file per repository.
 pub fn lock_file_path(repo_path: &Path) -> Option<PathBuf> {
-    let parent = repo_path.parent()?;
+    let normalized = lock_key(repo_path);
+    let parent = normalized.parent()?;
     if parent.as_os_str().is_empty() {
         return None;
     }
-    let name = repo_path.file_name()?.to_string_lossy();
+    let name = normalized.file_name()?.to_string_lossy();
     Some(parent.join(format!(".reponyx-{name}.lock")))
 }
 
@@ -379,6 +388,32 @@ mod tests {
         let repo = dir.path().join("repo.git");
         let _guard = first.acquire(&repo, Duration::from_secs(5)).await.unwrap();
         let err = second.try_acquire(&repo).await.unwrap_err();
+        assert_eq!(err.code, ErrorCode::RepositoryLocked);
+    }
+
+    /// Audit G9: two spellings of the same repository — a `..`
+    /// segment, a symlinked parent — must map to one lock file, so
+    /// two processes cannot hold "the same" lock at once.
+    #[tokio::test]
+    async fn same_repo_different_spelling_shares_the_lock() {
+        let first = RepoLockManager::new();
+        let second = RepoLockManager::new();
+        let dir = tempfile::tempdir().unwrap();
+        let repo = dir.path().join("sub").join("repo.git");
+        std::fs::create_dir_all(&repo).unwrap();
+        let spelled = dir
+            .path()
+            .join("sub")
+            .join("..")
+            .join("sub")
+            .join("repo.git");
+        assert_eq!(
+            RepoLockManager::lock_file_path(&repo),
+            RepoLockManager::lock_file_path(&spelled),
+            "lock file must not depend on the path spelling"
+        );
+        let _guard = first.acquire(&repo, Duration::from_secs(5)).await.unwrap();
+        let err = second.try_acquire(&spelled).await.unwrap_err();
         assert_eq!(err.code, ErrorCode::RepositoryLocked);
     }
 

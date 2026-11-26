@@ -28,7 +28,8 @@ pub use agent_lock::{
 };
 
 pub use auth::{
-    IpcAuthError, SERVICE_IPC, ensure_shared_secret, load_shared_secret, store_shared_secret,
+    ACCOUNT_SHARED_SECRET, IpcAuthError, SERVICE_IPC, ensure_shared_secret, load_shared_secret,
+    store_shared_secret,
 };
 pub use client::{IpcClient, agent_reachable};
 pub use frame::{FrameError, read_frame, write_frame};

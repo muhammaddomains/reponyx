@@ -112,66 +112,56 @@ fn looks_like_working(path: &Path) -> bool {
 /// [`looks_like_mirror`] / [`looks_like_working`]) — stray folders
 /// a user dropped into the tree are ignored. Missing trees are
 /// simply empty; an unreadable level is skipped, never fatal.
+///
+/// Audit ST-m: the walk used to be exactly two levels deep, so an
+/// archive nested one level deeper (a stray folder above it, a
+/// layout migration) was invisible to the Storage page and to
+/// orphan detection. The walk is now recursive with a depth cap,
+/// and never descends into a directory it already recognized as
+/// an archive.
 pub fn scan_archive_dirs(root: &Path) -> Vec<ArchiveDir> {
     let mut found = Vec::new();
     let mirrors = root.join("repositories").join("github");
-    for account in child_dirs(&mirrors) {
-        for child in child_dirs(&account) {
-            // Collapsed layout (account == owner): the repo sits
-            // directly under the account.
-            if child
-                .file_name()
-                .is_some_and(|n| n.to_string_lossy().ends_with(".git"))
-                && looks_like_mirror(&child)
-            {
-                found.push(ArchiveDir {
-                    bytes: dir_size(&child),
-                    path: child,
-                    kind: ArchiveKind::Mirror,
-                });
-                continue;
-            }
-            for name in child_dirs(&child) {
-                if name
-                    .file_name()
-                    .is_some_and(|n| n.to_string_lossy().ends_with(".git"))
-                    && looks_like_mirror(&name)
-                {
-                    found.push(ArchiveDir {
-                        bytes: dir_size(&name),
-                        path: name,
-                        kind: ArchiveKind::Mirror,
-                    });
-                }
-            }
-        }
-    }
+    scan_tree(&mirrors, ArchiveKind::Mirror, 0, &mut found);
     let working = root.join("working-clones");
-    for account in child_dirs(&working) {
-        for child in child_dirs(&account) {
-            // Collapsed layout (account == owner): the clone sits
-            // directly under the account.
-            if looks_like_working(&child) {
-                found.push(ArchiveDir {
-                    bytes: dir_size(&child),
-                    path: child,
-                    kind: ArchiveKind::Working,
-                });
-                continue;
-            }
-            for name in child_dirs(&child) {
-                if looks_like_working(&name) {
-                    found.push(ArchiveDir {
-                        bytes: dir_size(&name),
-                        path: name,
-                        kind: ArchiveKind::Working,
-                    });
-                }
-            }
-        }
-    }
+    scan_tree(&working, ArchiveKind::Working, 0, &mut found);
     found.sort_by(|a, b| a.path.cmp(&b.path));
     found
+}
+
+/// Maximum depth below a tree root to look for archives. The
+/// layout is three levels deep at most (account/owner/name); one
+/// extra level covers a stray folder above an archive, and deeper
+/// than that is a user folder, not a layout.
+const MAX_SCAN_DEPTH: usize = 4;
+
+fn scan_tree(dir: &Path, kind: ArchiveKind, depth: usize, found: &mut Vec<ArchiveDir>) {
+    if depth > MAX_SCAN_DEPTH {
+        return;
+    }
+    for child in child_dirs(dir) {
+        let is_archive = match kind {
+            ArchiveKind::Mirror => {
+                child
+                    .file_name()
+                    .is_some_and(|n| n.to_string_lossy().ends_with(".git"))
+                    && looks_like_mirror(&child)
+            }
+            ArchiveKind::Working => looks_like_working(&child),
+        };
+        if is_archive {
+            // Do not descend into a found archive: a working
+            // clone's submodule checkout carries a `.git` FILE and
+            // would otherwise scan as a nested archive of its own.
+            found.push(ArchiveDir {
+                bytes: dir_size(&child),
+                path: child,
+                kind,
+            });
+            continue;
+        }
+        scan_tree(&child, kind, depth + 1, found);
+    }
 }
 
 /// Subdirectories of `path`, ignoring files, symlinks, and errors.
@@ -396,6 +386,48 @@ mod tests {
     fn scan_on_empty_root_is_empty() {
         let dir = tempfile::tempdir().unwrap();
         assert!(scan_archive_dirs(dir.path()).is_empty());
+    }
+
+    /// Audit ST-m: an archive nested one level deeper than the
+    /// layout (a stray folder above it) is still found, and a
+    /// working clone's submodule checkout — a directory inside
+    /// the clone carrying a `.git` file — is not reported as a
+    /// second archive.
+    #[test]
+    fn scan_finds_deeper_archives_but_not_nested_ones() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        make_mirror(
+            &root
+                .join("repositories")
+                .join("github")
+                .join("octocat")
+                .join("stray")
+                .join("hello.git"),
+        );
+        let working = root
+            .join("working-clones")
+            .join("octocat")
+            .join("octocat")
+            .join("hello");
+        make_working(&working);
+        let submodule = working.join("vendor").join("sub");
+        fs::create_dir_all(&submodule).unwrap();
+        // A submodule checkout has a `.git` FILE, not a directory.
+        write_file(&submodule.join(".git"), 20);
+
+        let found = scan_archive_dirs(root);
+        assert_eq!(found.len(), 2);
+        assert!(
+            found
+                .iter()
+                .any(|a| a.kind == ArchiveKind::Mirror && a.path.ends_with("stray/hello.git"))
+        );
+        assert!(
+            found
+                .iter()
+                .any(|a| a.kind == ArchiveKind::Working && a.path.ends_with("hello"))
+        );
     }
 
     #[test]

@@ -3,6 +3,13 @@
 **/target/
 apps/desktop/dist/
 apps/desktop/src-tauri/target/
+# Tauri-generated JSON schemas for the config (audit F16): the
+# CLI regenerates these on every build from tauri.conf.json, so
+# they are build output, not source. capabilities.json and
+# acl-manifests.json stay tracked — they are the small merged
+# manifests the build reads.
+apps/desktop/src-tauri/gen/schemas/desktop-schema.json
+apps/desktop/src-tauri/gen/schemas/windows-schema.json
 node_modules/
 .pnpm-store/
 

@@ -5,6 +5,81 @@ All notable changes to RepoNyx are documented here. Format follows
 
 ## [Unreleased]
 
+### Changed — Polish (2026-11-26, Phase 5 of the production audit)
+
+- **Loading states (F9/F13):** the Agent page badge shows
+  "Checking…" until the first health poll settles and keeps the
+  last known health when a later poll fails (it used to flash
+  "Not running"); the Overview page shows "…" while counts load
+  instead of zeros, its stale "Phase 1 foundation" / "Phase 8"
+  text is gone, and a failed load now has a Retry button that
+  clears the error on success.
+- **Stale errors clear (F12):** the Synchronization and Activity
+  poll loops clear their error banner on the next successful
+  poll instead of leaving it up forever.
+- **Queue (Q6–Q10):** job transitions now guard on the current
+  status in the UPDATE itself, so two workers can no longer both
+  claim the same transition; cancelling a pending job is one
+  atomic statement; priority aging is uncapped (an old low
+  priority job can no longer starve behind a fresh priority-100
+  one); every job now has an overall deadline on top of the
+  per-operation timeout; and a worker waiting out a rate limit
+  sleeps up to 60s instead of spinning claim attempts.
+- **Git errors (G7/G8):** failure classification reads only
+  `fatal:`/`error:`/`remote:` diagnostic lines (a "403" in a
+  branch name no longer revokes an account), and a submodule
+  sync that only partly succeeds now fails the job with the
+  count instead of silently reporting success.
+- **Git locks & health (G9/G10):** lock files are built from the
+  canonical path, so two spellings of one repository share one
+  lock; health checks a missing HEAD before a stale index.lock
+  (a killed clone is diagnosed as incomplete, not locked), and
+  the advice now says to re-sync — the partial clone is moved
+  aside and re-cloned automatically.
+- **Database (DB-m1–m6):** new migration `0005_phase5_indexes`
+  (missing indexes, a partial UNIQUE index on `local_path`, and
+  a case-insensitive unique index on repository names — GitHub
+  names are case-insensitive); a startup repair backfills
+  `_sqlx_migrations` records for databases whose migrations were
+  applied without them (DB-m2); SQLite connections no longer go
+  through a `format!` URL string, so paths with `%`, `#` or `?`
+  open correctly (DB-m4); the 7-day failed-history count
+  compares real timestamps (DB-m5); and a restore interrupted
+  mid-swap recovers the previous database on the next startup
+  instead of starting from an empty one (DB-m6). Enum-column
+  CHECK constraints are still not enforced at the SQL level —
+  SQLite cannot add them without a table rebuild — the typed
+  readers fail closed per row instead.
+- **Storage (ST-m):** archive paths are parsed anchored at the
+  storage root (a repo named "working-clones" no longer
+  misparses); the archive scan is recursive with a depth cap and
+  never descends into a found archive; repository paths are
+  validated against symlinks escaping the root; relocation
+  compares canonical paths; and a storage root that cannot be
+  created fails with a clear message naming Settings → Storage.
+  Relocation locks are documented as accepted: the fetch
+  re-acquires the same in-process lock the move held, so holding
+  the guards through the fetch would self-block.
+- **Agent & IPC (AG-F):** the IPC accept loop backs off
+  exponentially instead of spinning on a failing listener; the
+  desktop now validates the agent's protocol version in `ping()`
+  and `status()`; the scheduler cannot materialize a batch after
+  shutdown was requested and an Enqueue arriving after shutdown
+  is refused; Windows logoff/shutdown/close signals stop the
+  agent gracefully (not just Ctrl+C); startup logs a warnings
+  only self-check (git, storage-root writability, credential
+  store); and autostart status now means "an entry that launches
+  this executable" — a stale entry is repaired on Enable, on
+  Windows, Linux, and macOS.
+- **Release (E6–E8, F14–F16):** the unused
+  `https://api.reponyx.com` CSP origin is gone (E7); CI fails a
+  tag whose version has no `## [x.y.z]` CHANGELOG entry (E8);
+  CI asserts the ConfirmDialog's Tailwind classes are in the
+  built CSS (F14); the release notes list the MSI alongside the
+  NSIS installer (F15); every release uploads an SPDX SBOM
+  (E6); and the two 120KB Tauri-generated schema files are no
+  longer tracked — they are regenerated on every build (F16).
+
 ## [0.1.0] — first release (date set when the `v0.1.0` tag is cut)
 
 ### Added — Release readiness (2026-11-25, Phase 4 of the production audit)

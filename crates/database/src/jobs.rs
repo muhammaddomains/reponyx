@@ -247,11 +247,14 @@ pub async fn count_jobs_by_status(pool: &SqlitePool) -> Result<Vec<JobStatusCoun
 /// - Only jobs whose `available_at` is null or already passed are
 ///   eligible (retry backoff and rate-limit defer are enforced here,
 ///   not by whichever worker failed the job).
-/// - Priority ordering with aging: a pending job gains up to +3
-///   effective priority after 3 hours waiting
-///   (`MIN(3, hours_waiting)`), so low-priority work cannot starve
-///   forever while higher-priority work keeps arriving. FIFO is
-///   preserved within the same effective priority.
+/// - Priority ordering with aging: a pending job gains +1 effective
+///   priority per hour waited, uncapped (audit Q8 — the old +3 cap
+///   could never let scheduled work overtake a stream of
+///   priority-100 "sync now" jobs, so low-priority work starved
+///   forever). Aging is slow enough that a fresh high-priority job
+///   still wins for hours, but no job can starve forever: any
+///   pending job eventually becomes the highest-priority one. FIFO
+///   is preserved within the same effective priority.
 pub async fn claim_next_job(
     pool: &SqlitePool,
     worker_id: &str,
@@ -269,7 +272,7 @@ pub async fn claim_next_job(
             SELECT id FROM sync_jobs
             WHERE status = 'pending'
               AND (available_at IS NULL OR available_at <= ?)
-            ORDER BY (priority + COALESCE(CAST(MIN(3.0, (julianday('now') - julianday(created_at)) * 24.0) AS INTEGER), 0)) DESC,
+            ORDER BY (priority + COALESCE(CAST((julianday('now') - julianday(created_at)) * 24.0 AS INTEGER), 0)) DESC,
                      created_at ASC
             LIMIT 1
         )
@@ -343,13 +346,35 @@ pub async fn request_cancel_job(pool: &SqlitePool, id: Uuid) -> Result<SyncJob, 
         .ok_or_else(|| invalid(format!("job {id} not found")))?;
     match current.status {
         JobStatus::Pending => {
-            sqlx::query("UPDATE sync_jobs SET cancel_requested_at = ? WHERE id = ?")
-                .bind(now_utc())
-                .bind(id.to_string())
-                .execute(pool)
-                .await
-                .map_err(map_error)?;
-            transition_job(pool, id, JobStatus::Cancelled, None, None).await
+            // Audit Q7: one statement, not two — the request stamp
+            // and the move to `cancelled` land together, guarded by
+            // the status predicate, so a concurrent claim can never
+            // interleave between them.
+            let now = now_utc();
+            let affected = sqlx::query(
+                r#"
+                UPDATE sync_jobs
+                SET cancel_requested_at = ?, status = 'cancelled', completed_at = ?
+                WHERE id = ? AND status = 'pending'
+                "#,
+            )
+            .bind(now)
+            .bind(now)
+            .bind(id.to_string())
+            .execute(pool)
+            .await
+            .map_err(map_error)?
+            .rows_affected();
+            if affected != 1 {
+                // Lost the race to a claim: re-read and report the
+                // current state instead of pretending to cancel.
+                return get_job(pool, id)
+                    .await?
+                    .ok_or_else(|| invalid(format!("job {id} not found")));
+            }
+            get_job(pool, id)
+                .await?
+                .ok_or_else(|| invalid(format!("job {id} not found")))
         }
         JobStatus::Running => {
             sqlx::query(
@@ -421,11 +446,14 @@ async fn transition_job(
         JobStatus::Completed | JobStatus::Failed | JobStatus::Cancelled => Some(now_utc()),
         _ => None,
     };
+    // Audit Q6: the status predicate makes the check-then-act
+    // atomic — a concurrent transition wins the row and this one
+    // affects 0 rows instead of silently overwriting it.
     let affected = sqlx::query(
         r#"
         UPDATE sync_jobs
         SET status = ?, completed_at = ?, error_code = ?, error_message = ?
-        WHERE id = ?
+        WHERE id = ? AND status = ?
         "#,
     )
     .bind(new_status.as_str())
@@ -433,10 +461,17 @@ async fn transition_job(
     .bind(error_code)
     .bind(error_message)
     .bind(id.to_string())
+    .bind(current.status.as_str())
     .execute(pool)
     .await
     .map_err(map_error)?
     .rows_affected();
+    if affected != 1 {
+        return Err(invalid(format!(
+            "job {id} changed concurrently (was {})",
+            current.status.as_str()
+        )));
+    }
     debug_assert_eq!(affected, 1, "job {id} must exist for transition");
     get_job(pool, id)
         .await?
@@ -541,11 +576,16 @@ async fn complete_job_in_tx(
         )));
     }
     let completed_at = now_utc();
-    sqlx::query(
+    // Audit Q6: same status predicate as `transition_job` — the
+    // row must still be in the state this transaction read, or the
+    // completion is a concurrent-transition conflict, not a silent
+    // overwrite. (Inside the transaction the read already holds a
+    // shared lock; the predicate is the second line of defence.)
+    let affected = sqlx::query(
         r#"
         UPDATE sync_jobs
         SET status = ?, completed_at = ?, error_code = ?, error_message = ?
-        WHERE id = ?
+        WHERE id = ? AND status = ?
         "#,
     )
     .bind(job_status.as_str())
@@ -553,9 +593,18 @@ async fn complete_job_in_tx(
     .bind(outcome.error_code.as_deref())
     .bind(outcome.error_message.as_deref())
     .bind(job_id.to_string())
+    .bind(current.status.as_str())
     .execute(&mut *tx)
     .await
-    .map_err(map_error)?;
+    .map_err(map_error)?
+    .rows_affected();
+    if affected != 1 {
+        tx.rollback().await.map_err(map_error)?;
+        return Err(invalid(format!(
+            "job {job_id} changed concurrently (was {})",
+            current.status.as_str()
+        )));
+    }
     let history = record_history_in_tx(
         &mut tx,
         NewHistory {

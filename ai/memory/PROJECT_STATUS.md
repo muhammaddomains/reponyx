@@ -558,12 +558,35 @@ as this scope.
   omitted `-D warnings`, so the warnings passed silently — the
   push-verification skill now says to always use CI's exact
   command.
+- **CI #100 (run 45823043121, on `b25bdcc`) finished Failure
+  (2026-11-26 ~06:08 MST, browser check):** rust failed on the
+  Clippy issue above (already fixed), frontend passed (94
+  tests), and BOTH Windows jobs failed with the same compile
+  error — `error[E0599]: no method named 'state' found for
+  struct 'tauri::AppHandle'` at `auth.rs:479` (the browser
+  report mis-transcribed the path as `commands/auth.rs` and the
+  line as `handle.state::<State>().db.clone()`; the real file is
+  `src/auth.rs`, the real line is the
+  `app.state::<Option<Database>>()` call in
+  `get_broker_status_command`). Root cause: `AppHandle::state`
+  needs the `tauri::Manager` trait in scope; `auth.rs` never
+  imported it. The call arrived in `6d19792` (in-app broker
+  setup) and no local check could compile the desktop crate,
+  so CI windows-build was the first to see it. Fix (local):
+  one-line import (`use tauri::{AppHandle, Manager, State};`).
+  Verified: fmt clean; every file calling `.state()` now
+  imports `Manager`; a MinGW Windows check of the desktop crate
+  was attempted (if the VM cannot run it, CI windows-build on
+  the next push is the check, as always). CI #101 (on
+  `11122ab`) carries the same `auth.rs`, so its Windows jobs
+  will fail the same way — the 06:18 scheduled check of #101
+  was cancelled as superseded; the fix rides with the next push.
 
 Still open (user-side): the Windows verification checklist §1–§5,
 the one-agent setup test, syncing sendcms + reponyx, then tag
 v0.1.0 (needs the user's approval — publishing a release is
 gated), draft release → publish, and the updater E2E via v0.1.1.
-The seven fixes above ride with the next approved push, and the
+The fixes above ride with the next approved push, and the
 tag must then move to that new head (it still points at
 `03bf01a`, whose release run failed on the config tests). The
 user also asked for a plan to restructure the Accounts page

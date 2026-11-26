@@ -42,7 +42,7 @@ use reponyx_github_provider::GitHubProvider;
 use reponyx_github_provider::broker::{BrokerClient, BrokerTokenSource};
 use serde::Serialize;
 use std::sync::Arc;
-use tauri::{AppHandle, State};
+use tauri::{AppHandle, Manager, State};
 use uuid::Uuid;
 
 /// Error shape returned to the frontend: `{ code, message }`, using

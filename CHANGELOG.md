@@ -176,6 +176,15 @@ All notable changes to RepoNyx are documented here. Format follows
   local Clippy must run with `-D warnings`, exactly like CI —
   without it, warnings pass silently and the failure only shows
   up on the runner.
+- **CI windows-build failed to compile the desktop crate:**
+  `get_broker_status_command` calls `app.state::<...>()`, and
+  `AppHandle::state` lives on the `tauri::Manager` trait — but
+  `auth.rs` imported only `AppHandle` and `State`, never
+  `Manager`. The call arrived with the in-app broker setup and
+  was never compiled anywhere except CI windows-build (the
+  desktop crate cannot build on the Linux VM). One-line fix:
+  `use tauri::{AppHandle, Manager, State};`. Every other file
+  calling `.state()` already imported `Manager`.
 
 ### Added — Release readiness (2026-11-25, Phase 4 of the production audit)
 

@@ -5,13 +5,15 @@ import {
   createBrokerSetupState,
   deletePatAccount,
   getBrokerStatus,
+  getSettings,
   listAccounts,
   listBrokerInstallations,
+  pickBrokerKeyFile,
   reconnectPatAccount,
   removePatAccount,
   replacePatAccount,
   revokeDevicePairing,
-  setBrokerSetupToken,
+  setSetting,
   startPairing,
   validateGithubAppAccount,
   validatePatAccount,
@@ -72,8 +74,26 @@ export default function Accounts() {
   const [patAccountType, setPatAccountType] = useState<"personal" | "organization">("personal");
   const [patExpires, setPatExpires] = useState("");
   const [replacePat, setReplacePat] = useState<Record<string, string>>({});
-  const [setupToken, setSetupToken] = useState("");
   const [pairing, setPairing] = useState<PairingInfo | null>(null);
+
+  // In-app broker setup: the GitHub App id and the private-key file
+  // path, saved as settings so the desktop can start the broker it
+  // spawns — no hand-made `.env` file. Loaded once at mount, not on
+  // every refresh: a refresh after "Choose file…" must not wipe a
+  // value the user typed but has not saved yet.
+  const [brokerAppId, setBrokerAppId] = useState("");
+  const [brokerKeyPath, setBrokerKeyPath] = useState("");
+
+  // The setup form shows only when the broker has no configuration
+  // at all: no `.env` file supplies it (dev, or a hand-made file),
+  // and the App id or the key path is missing. The setup token is
+  // never part of it — it resolves itself (.env file, else the OS
+  // store, else generated per install), so there is no token
+  // field anywhere on this page.
+  const brokerNeedsSetup =
+    broker !== null &&
+    !broker.envFileConfigured &&
+    (!broker.appIdConfigured || !broker.privateKeyConfigured);
 
   // Pending destructive confirmation. The action only runs from the
   // dialog's OK button — never from `window.confirm`, which the
@@ -131,6 +151,16 @@ export default function Accounts() {
       })
       .finally(() => {
         if (!cancelled) setLoading(false);
+      });
+    getSettings()
+      .then((settings) => {
+        if (cancelled) return;
+        setBrokerAppId(settings.brokerAppId ?? "");
+        setBrokerKeyPath(settings.brokerPrivateKeyPath ?? "");
+      })
+      .catch(() => {
+        // Settings unreadable — leave the fields empty; the user
+        // can still type the values and save them.
       });
     return () => {
       cancelled = true;
@@ -433,34 +463,73 @@ export default function Accounts() {
             {broker == null
               ? (brokerError ?? "Checking the Auth Broker…")
               : broker.configured
-                ? `Broker at ${broker.baseUrl} is ${broker.reachable ? "reachable" : "not reachable"}; setup token is configured.`
-                : `Broker at ${broker.baseUrl} — enter the setup token supplied when the broker was started.`}
+                ? `Broker at ${broker.baseUrl} is ${broker.reachable ? "reachable" : "not reachable"}.`
+                : `Broker at ${broker.baseUrl} — set up the Auth Broker below to connect GitHub accounts.`}
           </p>
-          <div className="flex gap-3">
-            <input
-              className={inputClass}
-              type="password"
-              placeholder="Broker setup token"
-              autoComplete="off"
-              value={setupToken}
-              onChange={(e) => setSetupToken(e.target.value)}
-            />
-            <Button
-              variant="secondary"
-              disabled={busy || setupToken.trim().length < 16}
-              onClick={() =>
-                run(
-                  () => setBrokerSetupToken(setupToken),
-                  () => {
-                    setSetupToken("");
-                    setNotice("Broker setup token saved in the OS credential store.");
-                  },
-                )
-              }
-            >
-              Save setup token
-            </Button>
-          </div>
+          {brokerNeedsSetup && (
+            <Card className="space-y-3 border-amber-200 bg-amber-50 p-4 dark:border-amber-900 dark:bg-amber-950">
+              <p className="text-sm">
+                Set up the Auth Broker once — no .env file needed. The
+                App id and the private-key file are saved as settings;
+                the setup token is created automatically on this device
+                and never shown. The key itself never leaves its file.
+              </p>
+              <input
+                className={inputClass}
+                type="text"
+                inputMode="numeric"
+                placeholder="GitHub App id, e.g. 5896712"
+                autoComplete="off"
+                value={brokerAppId}
+                onChange={(e) => setBrokerAppId(e.target.value)}
+              />
+              <div className="flex gap-3">
+                <input
+                  className={inputClass}
+                  type="text"
+                  readOnly
+                  placeholder="No private-key file chosen"
+                  aria-label="Private-key file"
+                  value={brokerKeyPath}
+                />
+                <Button
+                  variant="secondary"
+                  disabled={busy}
+                  onClick={() =>
+                    run(
+                      () => pickBrokerKeyFile(),
+                      (path) => {
+                        if (path) setBrokerKeyPath(path);
+                      },
+                    )
+                  }
+                >
+                  Choose file…
+                </Button>
+              </div>
+              <Button
+                disabled={busy || !brokerAppId.trim() || !brokerKeyPath.trim()}
+                onClick={() =>
+                  run(
+                    async () => {
+                      await setSetting("broker.app_id", brokerAppId.trim());
+                      await setSetting(
+                        "broker.private_key_path",
+                        brokerKeyPath.trim(),
+                      );
+                    },
+                    () => {
+                      setNotice(
+                        "Broker setup saved — the broker starts with these settings.",
+                      );
+                    },
+                  )
+                }
+              >
+                Save broker setup
+              </Button>
+            </Card>
+          )}
 
           <div className="flex flex-wrap gap-3">
             <Button

@@ -263,7 +263,7 @@ export default function Agent() {
           to the Registry Run key when Task Scheduler refuses the
           task; a systemd user unit on Linux; or a LaunchAgent on
           macOS. The agent is a user-session process and does not
-          continue after logout (see ADR-006).
+          continue after logout.
         </p>
       </Card>
     </div>

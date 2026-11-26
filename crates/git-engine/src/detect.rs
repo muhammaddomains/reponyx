@@ -47,14 +47,12 @@ pub async fn detect_git() -> Result<GitInfo, RepoNyxError> {
         RepoNyxError::new(ErrorCode::GitNotFound, "Git executable not found on PATH")
     })?;
 
-    let output = tokio::process::Command::new(&path)
-        .arg("--version")
-        .output()
-        .await
-        .map_err(|e| {
-            RepoNyxError::new(ErrorCode::GitNotFound, "Failed to run git --version")
-                .with_details(e.to_string())
-        })?;
+    let mut cmd = tokio::process::Command::new(&path);
+    crate::process::hide_console(&mut cmd);
+    let output = cmd.arg("--version").output().await.map_err(|e| {
+        RepoNyxError::new(ErrorCode::GitNotFound, "Failed to run git --version")
+            .with_details(e.to_string())
+    })?;
     let stdout = String::from_utf8_lossy(&output.stdout);
     let version = parse_git_version(&stdout).ok_or_else(|| {
         RepoNyxError::new(
@@ -172,14 +170,12 @@ pub async fn detect_lfs_with_path(search_path: &str) -> Result<LfsInfo, RepoNyxE
             )
         })?;
 
-    let output = tokio::process::Command::new(&path)
-        .arg("version")
-        .output()
-        .await
-        .map_err(|e| {
-            RepoNyxError::new(ErrorCode::GitLfsFailed, "Failed to run git-lfs version")
-                .with_details(e.to_string())
-        })?;
+    let mut cmd = tokio::process::Command::new(&path);
+    crate::process::hide_console(&mut cmd);
+    let output = cmd.arg("version").output().await.map_err(|e| {
+        RepoNyxError::new(ErrorCode::GitLfsFailed, "Failed to run git-lfs version")
+            .with_details(e.to_string())
+    })?;
     let stdout = String::from_utf8_lossy(&output.stdout);
     let version = parse_lfs_version(&stdout).ok_or_else(|| {
         RepoNyxError::new(

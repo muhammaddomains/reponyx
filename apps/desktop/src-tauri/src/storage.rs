@@ -153,6 +153,27 @@ pub(crate) fn canonical_or_raw(path: &Path) -> PathBuf {
     std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf())
 }
 
+/// Display form of a path for the UI or an exported file: on
+/// Windows, `canonicalize` returns the verbatim `\\?\` prefix
+/// (`\\?\D:\...`, `\\?\UNC\server\share\...`), which is valid for
+/// the Win32 API but noise for a human — the Storage page showed
+/// `\\?\D:\github\zb\articles` instead of `D:\github\zb\articles`.
+/// Strip it back to the ordinary spelling for display only — never
+/// for filesystem operations or comparisons, which keep the
+/// canonical form. Deliberately not `#[cfg(windows)]`: a verbatim
+/// prefix is just a string, and the plain form is testable on any
+/// platform.
+pub(crate) fn display_path(path: &Path) -> String {
+    let text = path.to_string_lossy();
+    if let Some(rest) = text.strip_prefix(r"\\?\UNC\") {
+        return format!(r"\\{rest}");
+    }
+    if let Some(rest) = text.strip_prefix(r"\\?\") {
+        return rest.to_string();
+    }
+    text.into_owned()
+}
+
 /// Parse an archive path into (account, owner, name, kind),
 /// anchored at the storage root:
 /// `<root>/repositories/github/<account>/<owner>/<name>.git` or
@@ -429,7 +450,7 @@ pub async fn get_storage_overview_command(
                 .map(|(a, o, n, _)| (a, o, n))
                 .unwrap_or_default();
             OrphanDto {
-                path: dir.path.to_string_lossy().into_owned(),
+                path: display_path(&dir.path),
                 kind: dir.kind.as_str().to_string(),
                 bytes: dir.bytes,
                 account,
@@ -441,7 +462,7 @@ pub async fn get_storage_overview_command(
     let orphans_bytes = orphans.iter().map(|o| o.bytes).sum();
 
     Ok(StorageOverviewDto {
-        root: root.to_string_lossy().into_owned(),
+        root: display_path(&root),
         root_configured,
         total_bytes: disk.map(|usage| usage.total_bytes),
         available_bytes: disk.map(|usage| usage.available_bytes),
@@ -639,4 +660,30 @@ pub async fn move_archive_for_rename_command(
         moved,
         new_local_path,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::path::Path;
+
+    #[test]
+    fn display_path_strips_the_windows_verbatim_prefix() {
+        assert_eq!(
+            display_path(Path::new(r"\\?\D:\github\zb\articles")),
+            r"D:\github\zb\articles"
+        );
+        assert_eq!(
+            display_path(Path::new(r"\\?\UNC\server\share\articles")),
+            r"\\server\share\articles"
+        );
+        assert_eq!(
+            display_path(Path::new(r"D:\github\zb\articles")),
+            r"D:\github\zb\articles"
+        );
+        assert_eq!(
+            display_path(Path::new("/home/user/articles")),
+            "/home/user/articles"
+        );
+    }
 }

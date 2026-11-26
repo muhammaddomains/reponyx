@@ -32,12 +32,27 @@ fn failing_next_run(
     Err(RepoNyxError::new(ErrorCode::InvalidInput, "bad cadence"))
 }
 
+/// A `storage.root` value that is absolute on every platform.
+/// `/tmp/...` is absolute on Linux, but Rust's `Path::is_absolute`
+/// is false for it on Windows (a rooted path with no drive prefix
+/// is not absolute there) — that is exactly how the Windows
+/// `cargo test` run failed (release run 45815018729: both
+/// `export_parse_round_trip` and `apply_to_fresh_db` panicked on
+/// "storage.root must be an absolute path").
+fn test_storage_root() -> String {
+    std::env::temp_dir()
+        .join("reponyx-test-root")
+        .to_string_lossy()
+        .into_owned()
+}
+
 async fn seed_settings(db_pool: &sqlx::SqlitePool) {
+    let root = test_storage_root();
     for (key, value) in [
         ("ui.theme", "dark"),
         ("sync.default_mode", "both"),
         ("sync.concurrency", "3"),
-        ("storage.root", "/tmp/reponyx-test-root"),
+        ("storage.root", root.as_str()),
     ] {
         set_setting(db_pool, key, value).await.unwrap();
     }

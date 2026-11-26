@@ -75,6 +75,9 @@ export const brokerStatusSchema = z.object({
   configured: z.boolean(),
   reachable: z.boolean(),
   baseUrl: z.string(),
+  appIdConfigured: z.boolean(),
+  privateKeyConfigured: z.boolean(),
+  envFileConfigured: z.boolean(),
 });
 
 export const brokerInstallationSchema = z.object({
@@ -319,6 +322,8 @@ export const settingsSchema = z.object({
   theme: z.string().nullable(),
   notificationsEnabled: z.boolean().nullable(),
   deviceIdentifier: z.string().nullable(),
+  brokerAppId: z.string().nullable(),
+  brokerPrivateKeyPath: z.string().nullable(),
   dataDir: z.string(),
   appVersion: z.string(),
 });

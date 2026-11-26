@@ -82,6 +82,81 @@ All notable changes to RepoNyx are documented here. Format follows
 
 ## [0.1.0] — 2026-11-26
 
+### Fixed — Installed-app setup (2026-11-26, Phase 6)
+
+- **Auth Broker setup is now in-app, no `.env` file needed:** the
+  installed app used to show "cannot reach the Auth Broker"
+  because the broker needs its App id, private key and setup
+  token, and those lived only in the repo-root `.env` — every user
+  had to hand-create `%APPDATA%\RepoNyx\.env`. The Accounts page
+  now has a setup form: the GitHub App id and the private-key file
+  (native picker) are saved as settings, the setup token is pasted
+  or generated in-app and stored in the OS credential store, and
+  the desktop passes all three to the broker it spawns as
+  environment variables. The private key itself never passes
+  through the desktop — only its path. A repo `.env` (dev) or a
+  hand-made `<data_dir>\.env` still works as an override.
+  Verified: `cargo test` 475/0, frontend 94/94, Semgrep 0
+  findings; the desktop crate is compile-checked by CI
+  windows-build only.
+- **Schedules: proper cadence controls:** the New schedule form
+  had one free-text box for all four cadence types, so "6" sat in
+  Daily and Weekly where it means nothing. Every N hours is now a
+  dropdown of 1–24 hours; Daily is a time picker; Weekly is
+  weekday toggles by name (Monday, Thursday, …) plus a time
+  picker; switching type resets the value to a sensible default.
+  The backend string is unchanged ("6", "02:30", "1,4 02:30"),
+  and a stored hours value above 24 is kept as an option when
+  editing. Same controls in the edit form.
+- **Storage root no longer shows the `\\?\` prefix:** the Storage
+  page showed `\\?\D:\github\zb\articles` because the overview
+  returned the canonicalized root, and Windows canonicalization
+  adds the verbatim prefix. Display paths now strip it
+  (`\\?\D:\...` → `D:\...`, `\\?\UNC\...` → `\\...`) in the
+  storage overview, orphan paths and the diagnostics export;
+  filesystem operations still use the canonical form.
+- **Agent page:** removed the "(see ADR-006)" citation from the
+  autostart note — an internal architecture-record reference with
+  no meaning to a user. The ADR itself is unchanged.
+
+### Fixed — Silent background work + release test (2026-11-26, Phase 6)
+
+- **No more console windows during syncs or menu changes:** every
+  sync and every Overview/Agent page load used to flash a black
+  cmd window open and closed, because `git.exe`, `git-lfs`,
+  `schtasks`, `reg`, `taskkill` and `tasklist` were spawned
+  without `CREATE_NO_WINDOW` — from the GUI desktop and from the
+  detached agent, neither of which has a console for its children
+  to inherit. Every one of those spawns now hides its console
+  (git-engine's git runs + `git --version` / `git-lfs version`
+  detection, the agent's `taskkill`, the desktop's
+  `schtasks`/`reg`/`taskkill` autostart calls, the IPC `tasklist`
+  liveness checks). Syncs, page loads and autostart checks now
+  happen silently in the background. Verified: `cargo test`
+  475/0, MinGW Windows check passes, Semgrep 0 findings; the
+  desktop-crate half is compile-checked by CI windows-build only.
+- **Setup token is automatic — no field, no typing:** the Accounts
+  page no longer has a "Broker setup token" field or a "Save setup
+  token" button anywhere. The token resolves itself: from a broker
+  `.env` file when one exists (dev, or a hand-made file), else a
+  fresh per-install token generated on first use and kept in the
+  OS credential store, passed to the broker the desktop spawns.
+  It is deliberately NOT baked into the build: a token in the
+  binary would be identical for every user and readable from the
+  installer, so anyone could pair a device to anyone's local
+  broker. The same reason the private key can never go in the
+  build — it is the master key of the GitHub App, and baking it
+  would let anyone with the installer mint tokens for every
+  installation of the App. The App id + key file remain the one
+  per-install step (dev reads them from the repo `.env`).
+- **Release test job fixed:** the re-tagged v0.1.0 run failed in
+  `reponyx-database --test config` (`export_parse_round_trip`,
+  `apply_to_fresh_db`) — the fixture used `/tmp/reponyx-test-root`
+  as `storage.root`, which is absolute on Linux but not on
+  Windows (Rust's `is_absolute` needs a drive prefix there). The
+  fixture now builds its root from `temp_dir()`, absolute on both
+  platforms. No production code changed.
+
 ### Added — Release readiness (2026-11-25, Phase 4 of the production audit)
 
 - **CI test gate on tags (E2):** `ci.yml` now runs on `v*` tags

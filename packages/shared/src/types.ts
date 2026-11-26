@@ -86,6 +86,9 @@ export interface BrokerStatus {
   configured: boolean;
   reachable: boolean;
   baseUrl: string;
+  appIdConfigured: boolean;
+  privateKeyConfigured: boolean;
+  envFileConfigured: boolean;
 }
 
 export interface BrokerInstallation {
@@ -396,6 +399,8 @@ export interface Settings {
   theme: string | null;
   notificationsEnabled: boolean | null;
   deviceIdentifier: string | null;
+  brokerAppId: string | null;
+  brokerPrivateKeyPath: string | null;
   dataDir: string;
   appVersion: string;
 }

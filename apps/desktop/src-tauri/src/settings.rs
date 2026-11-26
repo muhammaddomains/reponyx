@@ -1,6 +1,6 @@
 //! Tauri commands for the Phase 8 Settings page.
 //!
-//! Only five keys are writable, and each value is validated here
+//! Only seven keys are writable, and each value is validated here
 //! before it is stored — the settings table is internal state, not
 //! a free-form store. Two of the keys were previously write-only
 //! values nothing consumed: `sync.default_mode` is now read by
@@ -12,6 +12,12 @@
 //! to the new root (audit ST-M1) — the migration summary comes back
 //! in the command result. `notifications.enabled` is read by the frontend's sync
 //! notification hook (on unless explicitly set to `false`).
+//! `broker.app_id` and `broker.private_key_path` are read by the
+//! desktop when it spawns the Auth Broker, so an installed app can
+//! start its own broker without a hand-made `.env` file: the App id
+//! and the key *path* (never the key itself) are ordinary settings,
+//! the setup token comes from the OS credential store, and all three
+//! reach the broker as environment variables of the spawned process.
 //!
 //! The desktop crate cannot be compiled on this VM (missing
 //! WebViewGTK system libs — the known Tauri blocker), so these
@@ -38,6 +44,8 @@ pub struct SettingsDto {
     pub theme: Option<String>,
     pub notifications_enabled: Option<bool>,
     pub device_identifier: Option<String>,
+    pub broker_app_id: Option<String>,
+    pub broker_private_key_path: Option<String>,
     pub data_dir: String,
     pub app_version: String,
 }
@@ -49,12 +57,25 @@ async fn setting_value(database: &Database, key: &str) -> CommandResult<Option<S
 }
 
 /// Validate one writable setting before it is stored. Unknown keys
-/// are refused — callers can only write the five keys the Settings
+/// are refused — callers can only write the seven keys the Settings
 /// page offers. The rules live in `reponyx-database` (`config`)
 /// so the config import validates values the same way; this just
 /// maps the error into a command error.
 fn validate_setting(key: &str, value: &str) -> CommandResult<()> {
     reponyx_database::config::validate_setting_value(key, value)
+        .map_err(|e| invalid_input(e.message.clone()))?;
+    Ok(())
+}
+
+/// The disk check for `broker.private_key_path`: the value must name
+/// an existing file. Runs before the value is stored, so a typo'd
+/// path never lands in the settings table and the broker never
+/// fails to start for a path that was never there. The config
+/// import deliberately does not run this — a config file is
+/// cross-machine, and the key file may not exist on the importing
+/// machine. The key's *contents* are never read here.
+fn validate_private_key_path_on_disk(value: &str) -> CommandResult<()> {
+    reponyx_database::config::validate_private_key_file(value)
         .map_err(|e| invalid_input(e.message.clone()))?;
     Ok(())
 }
@@ -91,6 +112,8 @@ pub async fn get_settings_command(db: State<'_, Option<Database>>) -> CommandRes
             None => None,
         },
         device_identifier: setting_value(database, "device.identifier").await?,
+        broker_app_id: setting_value(database, "broker.app_id").await?,
+        broker_private_key_path: setting_value(database, "broker.private_key_path").await?,
         data_dir: crate::dirs_data_dir().to_string_lossy().into_owned(),
         app_version: env!("CARGO_PKG_VERSION").to_string(),
     })
@@ -112,6 +135,9 @@ pub async fn set_setting_command(
     // never land in the settings table.
     if key == "storage.root" {
         validate_storage_root_on_disk(&value)?;
+    }
+    if key == "broker.private_key_path" {
+        validate_private_key_path_on_disk(&value)?;
     }
     // Audit ST-M1: changing `storage.root` moves the existing
     // archives to the new root. The setting is saved first, so a

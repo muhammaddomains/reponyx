@@ -48,8 +48,11 @@ pub const CONFIG_VERSION: u32 = 1;
 
 // -- The file format --------------------------------------------------
 
-/// One settings row in the file. Only the five non-secret keys
+/// One settings row in the file. Only the seven non-secret keys
 /// (see [`validate_setting_value`]) are ever written or accepted.
+/// The broker private-key *path* is a non-secret setting; the key
+/// material itself never enters the settings table — the broker
+/// reads the file, the desktop only stores where it is.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ConfigSetting {
     pub key: String,
@@ -175,6 +178,30 @@ pub fn validate_setting_value(key: &str, value: &str) -> Result<(), RepoNyxError
                 "ui.theme must be system, light, or dark (got {value})"
             ))),
         },
+        "broker.app_id" => {
+            // GitHub App ids are numeric. The value is not a secret —
+            // it names the App — but it must be a real id, not a
+            // label or a URL.
+            if !value.is_empty() && value.bytes().all(|b| b.is_ascii_digit()) {
+                Ok(())
+            } else {
+                Err(invalid(format!(
+                    "broker.app_id must be the numeric GitHub App id (got {value})"
+                )))
+            }
+        }
+        "broker.private_key_path" => {
+            // Non-secret: only where the key file is, never the key
+            // itself. The portable check is syntactic only — the
+            // file may not exist on an importing machine — the
+            // Settings page runs the disk check in
+            // [`validate_private_key_file`] instead.
+            if value.is_empty() {
+                Err(invalid("broker.private_key_path must not be empty"))
+            } else {
+                Ok(())
+            }
+        }
         _ => Err(invalid(format!("unknown setting: {key}"))),
     }
 }
@@ -232,6 +259,32 @@ pub fn validate_storage_root(value: &str, data_dir: &Path) -> Result<(), RepoNyx
         )));
     }
     let _ = std::fs::remove_file(&probe);
+    Ok(())
+}
+
+/// Validate a `broker.private_key_path` value against the disk, for
+/// the Settings page (same-machine only). The portable check in
+/// [`validate_setting_value`] stays syntactic on purpose: a config
+/// file is cross-machine, and the key file may not exist on the
+/// machine importing it.
+///
+/// The checks: the value must be an absolute path naming an
+/// existing regular file. The file's *contents* are never read here
+/// — the private key must never pass through the desktop process;
+/// the broker validates the PEM when it starts and reports clearly
+/// if it is not a key.
+pub fn validate_private_key_file(value: &str) -> Result<(), RepoNyxError> {
+    let path = Path::new(value);
+    if !path.is_absolute() {
+        return Err(invalid("broker.private_key_path must be an absolute path"));
+    }
+    let metadata = std::fs::metadata(path)
+        .map_err(|_| invalid(format!("broker.private_key_path does not exist: {value}")))?;
+    if !metadata.is_file() {
+        return Err(invalid(format!(
+            "broker.private_key_path is not a file: {value}"
+        )));
+    }
     Ok(())
 }
 
@@ -653,6 +706,40 @@ mod tests {
         assert!(validate_setting_value("notifications.enabled", "yes").is_err());
         assert!(validate_setting_value("notifications.enabled", "1").is_err());
         assert!(validate_setting_value("notifications.enabled", "").is_err());
+    }
+
+    #[test]
+    fn broker_app_id_accepts_digits_only() {
+        assert!(validate_setting_value("broker.app_id", "5896712").is_ok());
+        assert!(validate_setting_value("broker.app_id", "0").is_ok());
+        assert!(validate_setting_value("broker.app_id", "").is_err());
+        assert!(validate_setting_value("broker.app_id", "reponyx").is_err());
+        assert!(validate_setting_value("broker.app_id", "5896712 ").is_err());
+        assert!(validate_setting_value("broker.app_id", "589-6712").is_err());
+    }
+
+    #[test]
+    fn broker_private_key_path_accepts_any_non_empty_value() {
+        assert!(
+            validate_setting_value(
+                "broker.private_key_path",
+                "C:\\Users\\XeeBee\\.tauri\\reponyx.key.pem"
+            )
+            .is_ok()
+        );
+        assert!(validate_setting_value("broker.private_key_path", "").is_err());
+    }
+
+    #[test]
+    fn private_key_file_check_needs_an_existing_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("reponyx.private-key.pem");
+        std::fs::write(&file, b"-----BEGIN PRIVATE KEY-----\n").unwrap();
+        let s = |p: &std::path::Path| p.to_str().unwrap().to_string();
+        assert!(validate_private_key_file(&s(&file)).is_ok());
+        assert!(validate_private_key_file("relative/key.pem").is_err());
+        assert!(validate_private_key_file(&s(&dir.path().join("nope.pem"))).is_err());
+        assert!(validate_private_key_file(&s(dir.path())).is_err());
     }
 
     #[test]

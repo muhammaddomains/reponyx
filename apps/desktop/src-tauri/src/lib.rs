@@ -175,7 +175,7 @@ pub fn run() {
             auth::reconnect_pat_account_command,
             auth::validate_pat_account_command,
             auth::get_pat_expiry_status_command,
-            auth::set_broker_setup_token_command,
+            auth::pick_broker_key_file_command,
             auth::get_broker_status_command,
             auth::list_broker_installations_command,
             auth::create_broker_setup_state_command,

@@ -431,11 +431,124 @@ as this scope.
   commit before the release can run** (it points at the
   broken `757078b`); the re-tagged run is the real proof, a
   Windows `cargo test` run has never passed yet.
+- **Installed-app broker gap → in-app setup (2026-11-26 ~05:00
+  MST):** the user reported the installed app still shows
+  "cannot reach the Auth Broker" while dev works, and rightly
+  called the hand-made `%APPDATA%\RepoNyx\.env` a workaround,
+  not a professional solution. Root cause as diagnosed: the
+  broker needs App id + private key + setup token, and the
+  installed desktop only knew the repo-root `.env`. Fix (local,
+  not yet pushed): new settings `broker.app_id` (digits-only)
+  + `broker.private_key_path` (disk-checked at save: absolute,
+  existing file; contents never read — the key never passes
+  through the desktop), setup token generated in-app (only when
+  none is configured and no `.env` file supplies one) or pasted,
+  stored in the OS credential store; the desktop passes all three
+  to the spawned broker as env vars (explicit vars win over any
+  `.env` file); a repo `.env` or hand-made `<data_dir>\.env`
+  still works. New commands
+  `generate_broker_setup_token_command` +
+  `pick_broker_key_file_command` (native dialog,
+  `blocking_pick_file` on a blocking thread); status reports
+  `appIdConfigured` / `privateKeyConfigured` /
+  `envFileConfigured` and the Accounts page shows a setup form
+  only when the broker has no config at all. Verified:
+  `cargo test` 475/0 (+3 database validation tests), frontend
+  94/94 (+4 Accounts tests), Semgrep 0 findings; desktop crate
+  compile-checked by CI windows-build only. The user's
+  `%APPDATA%\RepoNyx\.env` (created on the earlier advice) still
+  works as an override and needs no change.
+- **Schedules cadence controls (user's request 2026-11-26
+  ~05:00 MST):** the New schedule form had one text box for all
+  cadence types — "6" sat in Daily/Weekly where it means nothing.
+  Now: Every N hours = dropdown 1–24; Daily = time picker;
+  Weekly = weekday toggles by full name + time picker; switching
+  type resets the value ("6" / "02:30" / "1 02:30" / "90"); a
+  stored hours value above 24 is kept as an option when editing;
+  a weekly schedule with no weekday is refused client-side
+  (backend still validates). Same controls in the edit form.
+  Frontend tests 94/94 (+6 Schedules tests).
+- **Storage root `\\?\` prefix (user's report 2026-11-26
+  ~05:02 MST):** the Storage page showed
+  `\\?\D:\github\zb\articles`. Root cause: the overview DTO
+  returned `effective_storage_root`, which canonicalizes, and
+  Windows canonicalization adds the verbatim prefix. Fix: new
+  `display_path` helper strips `\\?\` (and `\\?\UNC\` →
+  `\\`) for display only, applied to the overview root, orphan
+  paths and the diagnostics export; filesystem operations and
+  comparisons keep the canonical form. Deleting an orphan still
+  works: the backend re-canonicalizes the path the UI sends back.
+- **Agent page "(see ADR-006)" removed (user's request
+  2026-11-26 ~05:05 MST):** an internal architecture-record
+  citation with no meaning to a user. Only user-facing ADR
+  reference in the frontend; the ADR document itself is
+  unchanged. Agent tests 10/10.
+- **Console windows during syncs + menu changes (user's videos
+  2026-11-26 ~05:15/05:18 MST):** every sync and every Overview /
+  Agent page load flashed a black cmd window open and closed. Root
+  cause verified in code: `git.exe`, `git-lfs`, `schtasks`, `reg`,
+  `taskkill`, `tasklist` were spawned without `CREATE_NO_WINDOW`
+  — the agent and broker spawns already had it, these did not.
+  The video even caught the proof: the Agent page's title bar
+  went inactive (white) for a frame while a console window stole
+  focus. Fix (local, not yet pushed): the flag on every one of
+  those spawns — git-engine `run_git_command` / streaming (via
+  `spawn_in_own_group`), `detect_git` + `detect_lfs`, the
+  `taskkill` in `kill_process_tree`, the IPC `tasklist` liveness
+  checks, and all 12 `schtasks`/`reg`/`taskkill` calls in the
+  desktop's `agent.rs` (one `hidden_command` helper). The
+  `rundll32`/`explorer` "open" calls are GUI programs and need no
+  flag. Verified: `cargo test` 475/0, MinGW Windows check passes,
+  Semgrep 0 findings; desktop-crate half by CI windows-build.
+  The user still has to confirm on their machine that no window
+  flashes on a sync or a menu change.
+- **Release run on the moved tag FAILED again (run 45815018729,
+  2026-11-26 ~05:11 MST):** the user moved v0.1.0 to `03bf01a`
+  and the Release workflow ran — the `test` job failed, but NOT
+  at compile time: the code compiled and the tests ran. Only
+  `reponyx-database --test config` failed (2 tests:
+  `export_parse_round_trip`, `apply_to_fresh_db`), both panicking
+  on "storage.root must be an absolute path". Root cause: the
+  fixture used `/tmp/reponyx-test-root` — absolute on Linux, but
+  Rust's Windows `is_absolute` needs a drive prefix. Fix (local):
+  the fixture builds its root from `temp_dir()` (absolute on both
+  platforms). Verified: `cargo test` 475/0 incl. the config
+  binary 7/7. The tag must now move to the new head after the
+  push — the release has still never run green.
+- **Setup token automatic (user's request 2026-11-26 ~05:22 MST):**
+  the user pointed out the token field had to be typed from
+  `.env`, and that every user/team member would face the same
+  step — the field must not exist at all. Fix (local, not yet
+  pushed): the token resolves itself — a broker `.env` file
+  first (dev, or a hand-made file; only the token line is read,
+  never the key), else the OS store, else a fresh per-install
+  token generated and stored on first use. The "Broker setup
+  token" field, the Generate button and "Save setup token" are
+  gone from the Accounts page (both the setup form and the old
+  token row); the setup form is now App id + key file only, and
+  `configured` means "the broker can start" (`.env` file, or App
+  id + key path saved). Deliberately NOT baked into the build: a
+  token in the binary is the same for every user and readable
+  from the installer (anyone could pair to anyone's broker), and
+  the private key can never be baked in either (it is the master
+  key of the GitHub App — anyone with the installer could mint
+  tokens for every installation). Verified: frontend 94/94,
+  typecheck + lint + vite build clean, Semgrep 0 findings (one
+  finding on the first run — `temp_dir()` in the new dotenv
+  test — fixed by using `tempfile::tempdir()`); desktop-crate
+  half by CI windows-build.
 
 Still open (user-side): the Windows verification checklist §1–§5,
 the one-agent setup test, syncing sendcms + reponyx, then tag
 v0.1.0 (needs the user's approval — publishing a release is
 gated), draft release → publish, and the updater E2E via v0.1.1.
+The seven fixes above ride with the next approved push, and the
+tag must then move to that new head (it still points at
+`03bf01a`, whose release run failed on the config tests). The
+user also asked for a plan to restructure the Accounts page
+(separate "Add account" vs "Connected accounts", for 10–50
+accounts) — see `ai/phase6/accounts-page-plan.md`, awaiting
+their approval before implementation.
 
 ## Windows first-run bugs (2026-11-23)
 

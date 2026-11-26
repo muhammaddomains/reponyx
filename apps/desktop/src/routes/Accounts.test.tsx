@@ -8,13 +8,15 @@ vi.mock("@reponyx/api-client", () => ({
   createBrokerSetupState: vi.fn(),
   deletePatAccount: vi.fn(),
   getBrokerStatus: vi.fn(),
+  getSettings: vi.fn(),
   listAccounts: vi.fn(),
   listBrokerInstallations: vi.fn(),
+  pickBrokerKeyFile: vi.fn(),
   reconnectPatAccount: vi.fn(),
   removePatAccount: vi.fn(),
   replacePatAccount: vi.fn(),
   revokeDevicePairing: vi.fn(),
-  setBrokerSetupToken: vi.fn(),
+  setSetting: vi.fn(),
   startPairing: vi.fn(),
   validateGithubAppAccount: vi.fn(),
   validatePatAccount: vi.fn(),
@@ -24,8 +26,11 @@ import {
   createBrokerSetupState,
   deletePatAccount,
   getBrokerStatus,
+  getSettings,
   listAccounts,
   listBrokerInstallations,
+  pickBrokerKeyFile,
+  setSetting,
   startPairing,
 } from "@reponyx/api-client";
 import type { Account } from "@reponyx/shared";
@@ -37,6 +42,21 @@ beforeEach(() => {
     configured: true,
     reachable: true,
     baseUrl: "http://127.0.0.1:8765",
+    appIdConfigured: true,
+    privateKeyConfigured: true,
+    envFileConfigured: false,
+  });
+  vi.mocked(getSettings).mockResolvedValue({
+    defaultSyncMode: null,
+    concurrency: null,
+    storageRoot: null,
+    theme: null,
+    notificationsEnabled: null,
+    deviceIdentifier: null,
+    brokerAppId: null,
+    brokerPrivateKeyPath: null,
+    dataDir: "",
+    appVersion: "0.1.0",
   });
   vi.mocked(listBrokerInstallations).mockResolvedValue([]);
   vi.mocked(createBrokerSetupState).mockResolvedValue({
@@ -72,11 +92,14 @@ describe("Accounts page — GitHub App install", () => {
     ).toBeInTheDocument();
   });
 
-  it("disables the Install button until the setup token is configured", async () => {
+  it("disables the Install button until the broker is configured", async () => {
     vi.mocked(getBrokerStatus).mockResolvedValue({
       configured: false,
       reachable: true,
       baseUrl: "http://127.0.0.1:8765",
+      appIdConfigured: true,
+      privateKeyConfigured: true,
+      envFileConfigured: false,
     });
     render(<Accounts />);
     const install = await screen.findByRole("button", {
@@ -209,6 +232,9 @@ describe("Accounts page — broker down", () => {
       configured: true,
       reachable: false,
       baseUrl: "http://127.0.0.1:8765",
+      appIdConfigured: true,
+      privateKeyConfigured: true,
+      envFileConfigured: false,
     });
     vi.mocked(listBrokerInstallations).mockRejectedValue(
       new Error("NetworkUnavailable: cannot reach the Auth Broker"),
@@ -216,8 +242,88 @@ describe("Accounts page — broker down", () => {
     render(<Accounts />);
     expect(await screen.findByText("octocat")).toBeInTheDocument();
     expect(
-      await screen.findByText(/is not reachable; setup token is configured/),
+      await screen.findByText(/is not reachable\./),
     ).toBeInTheDocument();
     expect(screen.queryByText(/No accounts yet/)).not.toBeInTheDocument();
+  });
+});
+
+describe("Accounts page — in-app broker setup", () => {
+  const unconfigured = {
+    configured: false,
+    reachable: false,
+    baseUrl: "http://127.0.0.1:8765",
+    appIdConfigured: false,
+    privateKeyConfigured: false,
+    envFileConfigured: false,
+  };
+
+  it("shows the setup form when the broker has no configuration", async () => {
+    vi.mocked(getBrokerStatus).mockResolvedValue(unconfigured);
+    render(<Accounts />);
+    expect(
+      await screen.findByRole("button", { name: "Save broker setup" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByPlaceholderText("GitHub App id, e.g. 5896712"),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Choose file…" }),
+    ).toBeInTheDocument();
+    // The setup token is automatic (.env file, else generated per
+    // install): no token field and no Generate button anywhere.
+    expect(
+      screen.queryByPlaceholderText("Broker setup token"),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Generate" }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("hides the setup form once the broker is configured", async () => {
+    render(<Accounts />);
+    await screen.findByRole("button", { name: "Install GitHub App" });
+    expect(
+      screen.queryByRole("button", { name: "Save broker setup" }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("saves the App id and key path from the form", async () => {
+    vi.mocked(getBrokerStatus).mockResolvedValue(unconfigured);
+    vi.mocked(pickBrokerKeyFile).mockResolvedValue("C:\\keys\\reponyx.pem");
+    vi.mocked(setSetting).mockResolvedValue("saved");
+    render(<Accounts />);
+    fireEvent.change(
+      await screen.findByPlaceholderText("GitHub App id, e.g. 5896712"),
+      { target: { value: "5896712" } },
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Choose file…" }));
+    expect(
+      await screen.findByDisplayValue("C:\\keys\\reponyx.pem"),
+    ).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Save broker setup" }));
+    expect(
+      await screen.findByText(/Broker setup saved/),
+    ).toBeInTheDocument();
+    expect(vi.mocked(setSetting)).toHaveBeenCalledWith(
+      "broker.app_id",
+      "5896712",
+    );
+    expect(vi.mocked(setSetting)).toHaveBeenCalledWith(
+      "broker.private_key_path",
+      "C:\\keys\\reponyx.pem",
+    );
+  });
+
+  it("never shows a setup-token field, configured or not", async () => {
+    vi.mocked(getBrokerStatus).mockResolvedValue(unconfigured);
+    render(<Accounts />);
+    await screen.findByRole("button", { name: "Save broker setup" });
+    expect(
+      screen.queryByPlaceholderText("Broker setup token"),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Save setup token" }),
+    ).not.toBeInTheDocument();
   });
 });

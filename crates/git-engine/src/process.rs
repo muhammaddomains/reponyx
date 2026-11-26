@@ -54,8 +54,10 @@ async fn kill_process_tree(child: &mut tokio::process::Child) {
         }
         #[cfg(windows)]
         {
+            use std::os::windows::process::CommandExt;
             let _ = std::process::Command::new("taskkill")
                 .args(["/PID", &pid.to_string(), "/T", "/F"])
+                .creation_flags(CREATE_NO_WINDOW)
                 .output();
         }
     }
@@ -63,9 +65,32 @@ async fn kill_process_tree(child: &mut tokio::process::Child) {
     let _ = child.wait().await;
 }
 
+/// `CREATE_NO_WINDOW` (0x0800_0000): keep a spawned console
+/// program from opening a visible console window on Windows.
+///
+/// `git.exe`, `git-lfs` and `taskkill` are console programs. The
+/// desktop is a GUI app and the agent runs detached, so neither
+/// parent has a console for its children to inherit — without this
+/// flag Windows opens a black cmd window for every git spawn, for
+/// the whole fetch/clone, and on every Overview load
+/// (`git --version`). Unix has no console windows; nothing to do
+/// there.
+#[cfg(windows)]
+pub(crate) const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+
+/// Hide the console window of a git child. No-op off Windows (the
+/// flag does not exist there); callers never need a `cfg`.
+pub(crate) fn hide_console(cmd: &mut tokio::process::Command) {
+    #[cfg(windows)]
+    cmd.creation_flags(CREATE_NO_WINDOW);
+    #[cfg(not(windows))]
+    let _ = cmd;
+}
+
 /// Spawn a git child in its own process group (Unix) so
 /// [`kill_process_tree`] can kill the whole tree. On Windows the
-/// group is provided by `taskkill /T` at kill time instead.
+/// group is provided by `taskkill /T` at kill time instead, and the
+/// child's console window is hidden (see [`hide_console`]).
 ///
 /// Uses tokio's built-in `process_group(0)` (`setpgid(0, 0)` in
 /// the child): the child becomes its own group leader, so its
@@ -77,7 +102,11 @@ fn spawn_in_own_group(cmd: &mut tokio::process::Command) {
     {
         cmd.process_group(0);
     }
-    #[cfg(not(unix))]
+    #[cfg(windows)]
+    {
+        hide_console(cmd);
+    }
+    #[cfg(not(any(unix, windows)))]
     {
         let _ = cmd;
     }

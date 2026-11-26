@@ -4127,6 +4127,7 @@ name = "reponyx-desktop"
 version = "0.1.0"
 dependencies = [
  "chrono",
+ "rand",
  "reponyx-core",
  "reponyx-credential-store",
  "reponyx-database",
@@ -4144,6 +4145,7 @@ dependencies = [
  "tauri-plugin-dialog",
  "tauri-plugin-notification",
  "tauri-plugin-updater",
+ "tempfile",
  "tokio",
  "tracing",
  "uuid",

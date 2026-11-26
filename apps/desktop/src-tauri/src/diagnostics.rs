@@ -32,7 +32,7 @@
 use crate::agent::stop_agent_if_running;
 use crate::auth::{CommandError, CommandResult, require_db};
 use crate::repositories::open_with_os_app;
-use crate::storage::effective_storage_root;
+use crate::storage::{display_path, effective_storage_root};
 use reponyx_core::{GitStatus, LfsStatus};
 use reponyx_database::diagnostics::DiagnosticsCounts;
 use reponyx_database::settings::list_settings;
@@ -268,7 +268,7 @@ pub async fn export_diagnostics_command(
         agent_reachable: agent_reachable(&data_dir).await,
         counts: counts.into(),
         storage: StorageSummaryDto {
-            root: root.to_string_lossy().into_owned(),
+            root: display_path(&root),
             mirrors_bytes: dir_size(&root.join("repositories"))
                 + dir_size(&root.join("working-clones")),
             database_bytes: std::fs::metadata(data_dir.join("data").join("reponyx.sqlite"))

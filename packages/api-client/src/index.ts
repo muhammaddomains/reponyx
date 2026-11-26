@@ -185,8 +185,13 @@ export async function getPatExpiryStatus(
   );
 }
 
-export async function setBrokerSetupToken(token: string): Promise<void> {
-  await invokeCommand("set_broker_setup_token_command", { token });
+/** Open the native file picker for the GitHub App private-key file.
+ *  Returns the chosen path, or `null` when the user cancels. */
+export async function pickBrokerKeyFile(): Promise<string | null> {
+  return z
+    .string()
+    .nullable()
+    .parse(await invokeCommand("pick_broker_key_file_command"));
 }
 
 export async function getBrokerStatus(): Promise<BrokerStatus> {

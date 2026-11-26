@@ -22,6 +22,7 @@ reponyx-logging.workspace = true
 reponyx-provider-abstractions.workspace = true
 reponyx-scheduler.workspace = true
 reponyx-sync-queue.workspace = true
+rand.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 tauri.workspace = true
@@ -34,3 +35,6 @@ uuid.workspace = true
 
 [build-dependencies]
 tauri-build.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true

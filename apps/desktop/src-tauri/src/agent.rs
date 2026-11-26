@@ -16,6 +16,31 @@ use std::time::Duration;
 use tauri::{AppHandle, Emitter, State};
 use uuid::Uuid;
 
+/// `CREATE_NO_WINDOW` (0x0800_0000): keep a spawned console
+/// program from opening a visible console window on Windows.
+///
+/// `schtasks`, `reg` and `taskkill` are console programs. The
+/// desktop is a GUI app, so a child console program gets its own
+/// window unless this flag is set — it flashes open on every Agent
+/// page load (the autostart status runs `schtasks /Query` + `reg
+/// query`) and on every Enable / Disable / Stop click. The agent
+/// and broker spawns already set it (see `spawn_agent_process` and
+/// `broker.rs`); these are the ones that were missed.
+#[cfg(windows)]
+const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+
+/// A `Command` for a Windows console program, already hidden.
+/// On Unix this is just `Command::new` (no console windows).
+fn hidden_command(program: &str) -> Command {
+    let mut cmd = Command::new(program);
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        cmd.creation_flags(CREATE_NO_WINDOW);
+    }
+    cmd
+}
+
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AgentHealthView {
@@ -152,7 +177,7 @@ fn kill_agent_by_lock() -> bool {
     }
     #[cfg(windows)]
     {
-        let killed = Command::new("taskkill")
+        let killed = hidden_command("taskkill")
             .args(["/PID", &lock.pid.to_string(), "/F"])
             .output()
             .map(|o| o.status.success())
@@ -345,7 +370,6 @@ fn spawn_agent_process(app: Option<&AppHandle>) -> Result<Child, CommandError> {
     #[cfg(windows)]
     {
         use std::os::windows::process::CommandExt;
-        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
         const DETACHED_PROCESS: u32 = 0x0000_0008;
         cmd.creation_flags(CREATE_NO_WINDOW | DETACHED_PROCESS);
     }
@@ -441,7 +465,7 @@ fn autostart_target_is_current_exe(target: &str, exe: &Path) -> bool {
 
 #[cfg(windows)]
 fn task_scheduler_task_present(task: &str) -> bool {
-    Command::new("schtasks")
+    hidden_command("schtasks")
         .args(["/Query", "/TN", task])
         .output()
         .map(|o| o.status.success())
@@ -453,7 +477,7 @@ fn task_scheduler_task_present(task: &str) -> bool {
 /// task is missing or its XML has no command.
 #[cfg(windows)]
 fn task_command(task: &str) -> Option<String> {
-    let output = Command::new("schtasks")
+    let output = hidden_command("schtasks")
         .args(["/Query", "/TN", task, "/XML"])
         .output()
         .ok()?;
@@ -470,7 +494,7 @@ fn task_command(task: &str) -> Option<String> {
 /// (`<name>    REG_SZ    <value>`). `None` when the entry is missing.
 #[cfg(windows)]
 fn run_key_value(value: &str) -> Option<String> {
-    let output = Command::new("reg")
+    let output = hidden_command("reg")
         .args(["query", RUN_KEY, "/v", value])
         .output()
         .ok()?;
@@ -488,7 +512,7 @@ fn run_key_value(value: &str) -> Option<String> {
 
 #[cfg(windows)]
 fn run_key_present(value: &str) -> bool {
-    Command::new("reg")
+    hidden_command("reg")
         .args(["query", RUN_KEY, "/v", value])
         .output()
         .map(|o| o.status.success())
@@ -498,7 +522,7 @@ fn run_key_present(value: &str) -> bool {
 #[cfg(windows)]
 fn register_run_key(exe: &Path, value: &str) -> Result<(), String> {
     let value_arg = format!("\"{}\"", exe.display());
-    let output = Command::new("reg")
+    let output = hidden_command("reg")
         .args([
             "add", RUN_KEY, "/v", value, "/t", "REG_SZ", "/d", &value_arg, "/f",
         ])
@@ -513,7 +537,7 @@ fn register_run_key(exe: &Path, value: &str) -> Result<(), String> {
 
 #[cfg(windows)]
 fn unregister_run_key(value: &str) -> bool {
-    Command::new("reg")
+    hidden_command("reg")
         .args(["delete", RUN_KEY, "/v", value, "/f"])
         .output()
         .map(|o| o.status.success())
@@ -522,7 +546,7 @@ fn unregister_run_key(value: &str) -> bool {
 
 #[cfg(windows)]
 fn remove_legacy_autostart() {
-    let _ = Command::new("schtasks")
+    let _ = hidden_command("schtasks")
         .args(["/Delete", "/TN", LEGACY_TASK_NAME, "/F"])
         .output();
     unregister_run_key(LEGACY_RUN_VALUE_NAME);
@@ -545,7 +569,7 @@ fn register_autostart(desktop_exe: &Path) -> CommandResult<String> {
     }
     let had_stale = task_scheduler_task_present(TASK_NAME) || run_key_present(RUN_VALUE_NAME);
     if had_stale {
-        let _ = Command::new("schtasks")
+        let _ = hidden_command("schtasks")
             .args(["/Delete", "/TN", TASK_NAME, "/F"])
             .output();
         unregister_run_key(RUN_VALUE_NAME);
@@ -558,7 +582,7 @@ fn register_autostart(desktop_exe: &Path) -> CommandResult<String> {
     // The previous version passed /RL LIMITED and schtasks refused
     // the task with "ERROR: Access is denied." when the app ran
     // non-elevated.
-    let output = Command::new("schtasks")
+    let output = hidden_command("schtasks")
         .args([
             "/Create",
             "/TN",
@@ -606,7 +630,7 @@ fn register_autostart(desktop_exe: &Path) -> CommandResult<String> {
 #[cfg(windows)]
 fn unregister_autostart() -> CommandResult<String> {
     let mut removed = Vec::new();
-    let task_gone = Command::new("schtasks")
+    let task_gone = hidden_command("schtasks")
         .args(["/Delete", "/TN", TASK_NAME, "/F"])
         .output()
         .map(|o| o.status.success())
@@ -618,7 +642,7 @@ fn unregister_autostart() -> CommandResult<String> {
         removed.push("Registry Run key");
     }
     // Also drop the legacy agent-only entries.
-    let legacy_task_gone = Command::new("schtasks")
+    let legacy_task_gone = hidden_command("schtasks")
         .args(["/Delete", "/TN", LEGACY_TASK_NAME, "/F"])
         .output()
         .map(|o| o.status.success())

@@ -50,6 +50,20 @@ fn valid_pid(pid: u32) -> bool {
     pid > 0 && pid <= i32::MAX as u32
 }
 
+/// A `Command` for a Windows console program (`tasklist`), already
+/// hidden: the desktop is a GUI app and the agent runs detached,
+/// so a child console program would otherwise open a visible cmd
+/// window on every liveness check. No-op off Windows.
+fn hidden_command(program: &str) -> std::process::Command {
+    let mut cmd = std::process::Command::new(program);
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        cmd.creation_flags(0x0800_0000);
+    }
+    cmd
+}
+
 /// Is this PID a live process? Same-user only — the agent and the
 /// desktop always run as the same user.
 pub fn pid_alive(pid: u32) -> bool {
@@ -60,7 +74,7 @@ pub fn pid_alive(pid: u32) -> bool {
     {
         // `tasklist` prints the row when the PID exists, and
         // "INFO: No tasks are running..." when it does not.
-        let output = std::process::Command::new("tasklist")
+        let output = hidden_command("tasklist")
             .args(["/FI", &format!("PID eq {pid}"), "/NH"])
             .output();
         match output {
@@ -94,7 +108,7 @@ pub fn pid_is_agent(pid: u32) -> bool {
     }
     #[cfg(windows)]
     {
-        let output = std::process::Command::new("tasklist")
+        let output = hidden_command("tasklist")
             .args(["/FI", &format!("PID eq {pid}"), "/NH", "/FO", "CSV"])
             .output();
         let Ok(out) = output else {

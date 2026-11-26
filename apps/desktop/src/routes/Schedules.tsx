@@ -96,6 +96,161 @@ function TimezoneSelect({
   );
 }
 
+const WEEKDAY_NAMES = [
+  "Monday",
+  "Tuesday",
+  "Wednesday",
+  "Thursday",
+  "Friday",
+  "Saturday",
+  "Sunday",
+];
+
+/** Sensible value when the user switches to a cadence type, so the
+ *  previous type's value (e.g. "6") never leaks into the new one —
+ *  that was the old bug: the one text box kept "6" for Daily and
+ *  Weekly, where "6" means nothing. */
+function defaultIntervalValue(intervalType: IntervalType): string {
+  switch (intervalType) {
+    case "interval_hours":
+      return "6";
+    case "daily":
+      return "02:30";
+    case "weekly":
+      return "1 02:30";
+    case "custom":
+      return "90";
+  }
+}
+
+/** Parse a stored weekly value ("1,3,5 02:30") into its days
+ *  (1=Mon … 7=Sun) and time. Malformed parts fall back to Monday
+ *  at 02:30 — the backend rejects anything still invalid on save,
+ *  so this never invents a schedule. */
+function parseWeeklyValue(value: string): { days: number[]; time: string } {
+  const [daysPart, timePart] = value.split(" ");
+  const days = (daysPart ?? "")
+    .split(",")
+    .map((day) => Number(day))
+    .filter((day) => Number.isInteger(day) && day >= 1 && day <= 7);
+  const time = /^\d{2}:\d{2}$/.test(timePart ?? "") ? timePart! : "02:30";
+  return { days, time };
+}
+
+/** The cadence value, as a proper control for the chosen type
+ *  instead of one free-text box for all four: a dropdown of 1–24
+ *  hours, a time picker for Daily, weekday toggles by name plus a
+ *  time picker for Weekly. "Every N minutes" keeps its text box —
+ *  its range (1–10080) is too wide for a dropdown. The value the
+ *  component reports is always the backend string ("6", "02:30",
+ *  "1,4 02:30", "90"), so create/update need no change. */
+function CadenceInput({
+  intervalType,
+  value,
+  onChange,
+}: {
+  intervalType: IntervalType;
+  value: string;
+  onChange: (value: string) => void;
+}) {
+  if (intervalType === "interval_hours") {
+    // A stored value outside 1–24 (made by the old text box) is
+    // kept as an option, like TimezoneSelect does — the select must
+    // never render blank or silently drop the current value.
+    const hours = Array.from({ length: 24 }, (_, i) => i + 1);
+    const current = Number(value);
+    const options =
+      Number.isInteger(current) && current >= 1 && !hours.includes(current)
+        ? [...hours, current].sort((a, b) => a - b)
+        : hours;
+    return (
+      <select
+        className={inputClass}
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        aria-label="Hours between runs"
+      >
+        {options.map((hour) => (
+          <option key={hour} value={String(hour)}>
+            {hour} hour{hour === 1 ? "" : "s"}
+          </option>
+        ))}
+      </select>
+    );
+  }
+  if (intervalType === "daily") {
+    return (
+      <input
+        className={inputClass}
+        type="time"
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        aria-label="Time of day"
+      />
+    );
+  }
+  if (intervalType === "weekly") {
+    const { days, time } = parseWeeklyValue(value);
+    const toggleDay = (day: number) => {
+      const next = days.includes(day)
+        ? days.filter((d) => d !== day)
+        : [...days, day].sort((a, b) => a - b);
+      onChange(`${next.join(",")} ${time}`);
+    };
+    return (
+      <div className="space-y-3">
+        <div className="flex flex-wrap gap-2" role="group" aria-label="Weekdays">
+          {WEEKDAY_NAMES.map((name, index) => {
+            const day = index + 1;
+            const selected = days.includes(day);
+            return (
+              <button
+                key={name}
+                type="button"
+                aria-pressed={selected}
+                onClick={() => toggleDay(day)}
+                className={
+                  selected
+                    ? "rounded-md bg-zinc-900 px-3 py-2 text-sm text-white dark:bg-white dark:text-zinc-900"
+                    : "rounded-md border border-zinc-300 bg-white px-3 py-2 text-sm dark:border-zinc-700 dark:bg-zinc-900"
+                }
+              >
+                {name}
+              </button>
+            );
+          })}
+        </div>
+        <input
+          className={inputClass}
+          type="time"
+          value={time}
+          onChange={(e) => onChange(`${days.join(",")} ${e.target.value}`)}
+          aria-label="Time of day"
+        />
+      </div>
+    );
+  }
+  return (
+    <input
+      className={inputClass}
+      type="text"
+      placeholder={cadenceHint(intervalType)}
+      value={value}
+      onChange={(e) => onChange(e.target.value)}
+    />
+  );
+}
+
+/** The one invalid value the new controls can still produce: a
+ *  weekly schedule with no weekday picked. The backend would
+ *  reject it too, but naming it here saves a round trip. */
+function cadenceError(intervalType: IntervalType, value: string): string | null {
+  if (intervalType === "weekly" && parseWeeklyValue(value).days.length === 0) {
+    return "Pick at least one weekday for a weekly schedule.";
+  }
+  return null;
+}
+
 /** Human-readable cadence. Falls back to the raw value when the
  *  stored cadence does not parse — the backend is the source of
  *  truth for validity, never this display helper. */
@@ -122,11 +277,11 @@ function cadenceDescription(schedule: ScheduleWithNextRun): string {
 function cadenceHint(intervalType: IntervalType): string {
   switch (intervalType) {
     case "interval_hours":
-      return "Hours between runs, e.g. 6 (1–168).";
+      return "Hours between runs, e.g. 6 (1–24).";
     case "daily":
       return "Time of day, 24-hour, e.g. 02:30.";
     case "weekly":
-      return "Weekdays (1=Mon … 7=Sun) and time, e.g. 1,3,5 02:30.";
+      return "Pick weekdays by name and a time — e.g. Monday and Thursday at 02:30.";
     case "custom":
       return "Minutes between runs, e.g. 90 (1–10080).";
   }
@@ -262,6 +417,11 @@ export default function Schedules() {
       setError("Enter the cadence value.");
       return;
     }
+    const valueError = cadenceError(intervalType, intervalValue);
+    if (valueError) {
+      setError(valueError);
+      return;
+    }
     if (!timezone.trim()) {
       setError("Enter a timezone (IANA name, e.g. America/Phoenix).");
       return;
@@ -299,6 +459,11 @@ export default function Schedules() {
 
   async function handleSaveEdit() {
     if (!editing) return;
+    const valueError = cadenceError(editing.intervalType, editing.intervalValue);
+    if (valueError) {
+      setError(valueError);
+      return;
+    }
     await run(
       () =>
         updateSchedule({
@@ -477,28 +642,25 @@ export default function Schedules() {
                     <select
                       className={inputClass}
                       value={editing.intervalType}
-                      onChange={(e) =>
+                      onChange={(e) => {
+                        const next = e.target.value as IntervalType;
                         setEditing({
                           ...editing,
-                          intervalType: e.target.value as IntervalType,
-                        })
-                      }
+                          intervalType: next,
+                          intervalValue: defaultIntervalValue(next),
+                        });
+                      }}
                     >
                       <option value="interval_hours">Every N hours</option>
                       <option value="daily">Daily</option>
                       <option value="weekly">Weekly</option>
                       <option value="custom">Every N minutes</option>
                     </select>
-                    <input
-                      className={inputClass}
-                      type="text"
-                      placeholder={cadenceHint(editing.intervalType)}
+                    <CadenceInput
+                      intervalType={editing.intervalType}
                       value={editing.intervalValue}
-                      onChange={(e) =>
-                        setEditing({
-                          ...editing,
-                          intervalValue: e.target.value,
-                        })
+                      onChange={(value) =>
+                        setEditing({ ...editing, intervalValue: value })
                       }
                     />
                   </div>
@@ -637,9 +799,11 @@ export default function Schedules() {
             <select
               className={inputClass}
               value={intervalType}
-              onChange={(e) =>
-                setIntervalType(e.target.value as IntervalType)
-              }
+              onChange={(e) => {
+                const next = e.target.value as IntervalType;
+                setIntervalType(next);
+                setIntervalValue(defaultIntervalValue(next));
+              }}
             >
               <option value="interval_hours">Every N hours</option>
               <option value="daily">Daily</option>
@@ -679,12 +843,10 @@ export default function Schedules() {
               onChange={(e) => setRepositoryId(e.target.value)}
             />
           )}
-          <input
-            className={inputClass}
-            type="text"
-            placeholder={cadenceHint(intervalType)}
+          <CadenceInput
+            intervalType={intervalType}
             value={intervalValue}
-            onChange={(e) => setIntervalValue(e.target.value)}
+            onChange={setIntervalValue}
           />
           <p className="text-xs text-zinc-500">
             {cadenceHint(intervalType)} The backend validates the cadence

@@ -40,7 +40,16 @@ done
 
 echo "== desktop sources: broker key references =="
 # The desktop must never read the broker's private key, in any form.
-for needle in "REPONYX_BROKER_PRIVATE_KEY" "private_key_pem" "from_rsa_pem"; do
+# The one exception is the key FILE PATH: the desktop hands the path
+# (a setting the user picked) to the broker it spawns, and the broker
+# alone opens the file — the desktop never reads the key itself. So
+# the bare variable is banned, but the _PATH suffix is allowed.
+if grep -rn -E --include='*.rs' --include='*.ts' --include='*.tsx' \
+    'REPONYX_BROKER_PRIVATE_KEY([^_]|$)' "$REPO_ROOT/apps/desktop" 2>/dev/null; then
+  echo "FAIL: desktop source references broker key material ('REPONYX_BROKER_PRIVATE_KEY')" >&2
+  fail=1
+fi
+for needle in "private_key_pem" "from_rsa_pem"; do
   if grep -rn -F --include='*.rs' --include='*.ts' --include='*.tsx' \
       "$needle" "$REPO_ROOT/apps/desktop" 2>/dev/null; then
     echo "FAIL: desktop source references broker key material ('$needle')" >&2

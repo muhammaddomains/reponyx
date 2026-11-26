@@ -122,9 +122,8 @@ async fn resolve_spawn_config(app: &AppHandle) -> BrokerSpawnConfig {
 /// names a usable one: the data-dir file first (an installed app's
 /// hand-made file), then the repo checkout's `.env` in dev. Only
 /// the token is read — never the private key: a `.env` holding the
-/// key itself (`REPONYX_BROKER_PRIVATE_KEY`) belongs to a broker
-/// the user started by hand, and the desktop never touches key
-/// material.
+/// key itself belongs to a broker the user started by hand, and the
+/// desktop never touches key material.
 pub(crate) fn setup_token_from_env_file() -> Option<SecretString> {
     let mut candidates = vec![data_env_file()];
     if let Some(root) = exe::find_repo_root_with_env() {

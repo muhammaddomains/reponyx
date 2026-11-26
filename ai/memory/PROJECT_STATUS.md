@@ -537,6 +537,27 @@ as this scope.
   finding on the first run — `temp_dir()` in the new dotenv
   test — fixed by using `tempfile::tempdir()`); desktop-crate
   half by CI windows-build.
+- **CI on `b25bdcc` FAILED in two places (2026-11-26 ~05:50 MST,
+  browser check of the Actions page):** Lint + Security audit
+  failed the `check-no-private-key.sh` scan — the new broker-setup
+  code passes `REPONYX_BROKER_PRIVATE_KEY_PATH` to the spawned
+  broker, and the script's substring match banned any mention of
+  the key variable. CI's `rust` job failed Clippy on
+  `crates/ipc`: the new `hidden_command` helper is only called
+  from Windows-only code, so on Linux it was dead code (and its
+  `mut` unused) — an error under `-D warnings`. CodeQL passed;
+  Semgrep passed; frontend passed (13 files / 94 tests). The
+  windows-build + windows-installer jobs were still running when
+  checked; the `rust` failure already decided the run. Fixes
+  (local, not yet pushed): the scan now bans the bare key variable
+  only (regex excluding the `_PATH` suffix, with the reason
+  documented in the script) + the broker.rs comment reworded;
+  `hidden_command` is now `#[cfg(windows)]`. Verified with the
+  exact CI commands (`cargo clippy ... -- -D warnings`, the scan
+  script): both pass. The local Clippy runs before this push had
+  omitted `-D warnings`, so the warnings passed silently — the
+  push-verification skill now says to always use CI's exact
+  command.
 
 Still open (user-side): the Windows verification checklist §1–§5,
 the one-agent setup test, syncing sendcms + reponyx, then tag

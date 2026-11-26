@@ -157,6 +157,26 @@ All notable changes to RepoNyx are documented here. Format follows
   fixture now builds its root from `temp_dir()`, absolute on both
   platforms. No production code changed.
 
+### Fixed — CI failures on the Phase 6 push (2026-11-26)
+
+- **Lint + Security audit failed the private-key scan:** the
+  guard script banned the literal `REPONYX_BROKER_PRIVATE_KEY`
+  anywhere in the desktop, and the new broker-setup code
+  legitimately passes `REPONYX_BROKER_PRIVATE_KEY_PATH` — the key
+  file's path, never the key itself — to the broker it spawns.
+  The script now bans the bare variable only (a regex that
+  excludes the `_PATH` suffix, with the reason documented in the
+  script), and the one comment naming the bare variable was
+  reworded. The guarantee is unchanged: no key material, no PEM
+  text, no broker dependency in the desktop.
+- **CI Clippy failed on `crates/ipc`:** the new `hidden_command`
+  helper was only called from Windows-only code, so on Linux it
+  was dead code (and its `mut` unused) — an error under
+  `-D warnings`. It is now `#[cfg(windows)]`. Lesson recorded:
+  local Clippy must run with `-D warnings`, exactly like CI —
+  without it, warnings pass silently and the failure only shows
+  up on the runner.
+
 ### Added — Release readiness (2026-11-25, Phase 4 of the production audit)
 
 - **CI test gate on tags (E2):** `ci.yml` now runs on `v*` tags

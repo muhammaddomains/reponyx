@@ -53,14 +53,15 @@ fn valid_pid(pid: u32) -> bool {
 /// A `Command` for a Windows console program (`tasklist`), already
 /// hidden: the desktop is a GUI app and the agent runs detached,
 /// so a child console program would otherwise open a visible cmd
-/// window on every liveness check. No-op off Windows.
+/// window on every liveness check. Windows-only — off Windows the
+/// liveness checks use `kill` instead, so this helper does not
+/// exist there (an ungated helper would be dead code on Linux and
+/// fail Clippy with `-D warnings`).
+#[cfg(windows)]
 fn hidden_command(program: &str) -> std::process::Command {
+    use std::os::windows::process::CommandExt;
     let mut cmd = std::process::Command::new(program);
-    #[cfg(windows)]
-    {
-        use std::os::windows::process::CommandExt;
-        cmd.creation_flags(0x0800_0000);
-    }
+    cmd.creation_flags(0x0800_0000);
     cmd
 }
 

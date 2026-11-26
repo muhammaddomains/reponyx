@@ -157,9 +157,11 @@ jobs:
             ## Download
 
             - **Installer**: `RepoNyx_${{ github.ref_name }}_x64-setup.exe` (NSIS, per-user install, no admin needed)
+            - **Installer (MSI)**: `RepoNyx_${{ github.ref_name }}_x64_en-US.msi` (same per-user install, for managed deployment)
             - **Portable ZIP**: `reponyx-desktop-x64.zip` (unzip and run `reponyx-desktop.exe`; README.md included — the agent and broker binaries are inside the same folder)
             - **Agent**: `reponyx-agent-x64.zip` (`reponyx-agent.exe` — the background agent; included in the installer and the portable ZIP, and the desktop starts it automatically)
             - **Auth Broker**: `reponyx-auth-broker-x64.zip` (`reponyx-auth-broker.exe` — mints GitHub App tokens; included in the installer and the portable ZIP, and the desktop starts it automatically)
+            - **SBOM**: `reponyx-sbom.spdx.json` (SPDX inventory of the dependencies in this release)
             - **Requires**: Windows 10 / 11 (x64)
 
             ## Notes
@@ -176,7 +178,7 @@ jobs:
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force -Path portable | Out-Null
-          Copy-Item apps/desktop/src-tauri/target/release/reponyx-desktop.exe portable/
+          Copy-Item target/release/reponyx-desktop.exe portable/
           Copy-Item target/release/reponyx-agent.exe portable/
           Copy-Item target/release/reponyx-auth-broker.exe portable/
           Copy-Item README.md portable/
@@ -188,3 +190,18 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: gh release upload ${{ github.ref_name }} reponyx-desktop-x64.zip reponyx-agent-x64.zip reponyx-auth-broker-x64.zip --clobber
+
+      # SBOM (audit E6): a machine-readable inventory of what went
+      # into this release, so a vulnerability in a dependency can
+      # be traced to the release that shipped it.
+      - name: Generate SBOM
+        uses: anchore/sbom-action@v0
+        with:
+          path: .
+          format: spdx-json
+          output-file: reponyx-sbom.spdx.json
+
+      - name: Upload SBOM to the release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh release upload ${{ github.ref_name }} reponyx-sbom.spdx.json --clobber

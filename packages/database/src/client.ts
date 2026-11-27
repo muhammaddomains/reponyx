@@ -11,7 +11,10 @@ import { Pool, type PoolConfig } from "pg";
  * Queries are plain parameterized SQL ($1, $2, ...), identical for both.
  */
 export interface DbClient {
-  query<T = Record<string, unknown>>(text: string, params?: unknown[]): Promise<T[]>;
+  query<T = Record<string, unknown>>(
+    text: string,
+    params?: unknown[]
+  ): Promise<T[]>;
   /** Release the underlying pool, if the driver holds one (pg). No-op for Neon. */
   close?(): Promise<void>;
 }
@@ -47,7 +50,7 @@ function pgSslConfig(databaseUrl: string): PoolConfig["ssl"] {
 export function createDbClient(databaseUrl: string | undefined): DbClient {
   if (!databaseUrl) {
     throw new Error(
-      "DATABASE_URL is not set. Create a Postgres database (Neon, Prisma Postgres, or any Postgres) and copy its connection string into .env.local (see apps/web/.env.example).",
+      "DATABASE_URL is not set. Create a Postgres database (Neon, Prisma Postgres, or any Postgres) and copy its connection string into .env.local (see apps/web/.env.example)."
     );
   }
   if (isNeonHost(databaseUrl)) {

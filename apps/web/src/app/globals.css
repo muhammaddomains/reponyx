@@ -1,0 +1,12 @@
+@import "tailwindcss";
+
+@custom-variant dark (&:is(.dark *));
+
+@layer base {
+  button,
+  [role="button"] {
+    cursor: pointer;
+  }
+}
+
+@import "./design-tokens.css";

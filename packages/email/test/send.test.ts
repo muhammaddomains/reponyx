@@ -10,10 +10,18 @@ test("Resend path posts to api.resend.com with Bearer auth", async () => {
     return new Response(JSON.stringify({ id: "resend-123" }), { status: 200 });
   }) as typeof fetch;
   const sender = createEmailSender(
-    { EMAIL_PROVIDER: "resend", RESEND_API_KEY: "re_test", RESEND_FROM: "RepoNyx <hi@reponyx.bond>" },
-    { fetchImpl },
+    {
+      EMAIL_PROVIDER: "resend",
+      RESEND_API_KEY: "re_test",
+      RESEND_FROM: "RepoNyx <hi@reponyx.bond>",
+    },
+    { fetchImpl }
   );
-  const sent = await sender.send({ to: "a@example.com", subject: "Hi", html: "<p>Hi</p>" });
+  const sent = await sender.send({
+    to: "a@example.com",
+    subject: "Hi",
+    html: "<p>Hi</p>",
+  });
   assert.equal(sent.provider, "resend");
   assert.equal(sent.messageId, "resend-123");
   assert.equal(seen.length, 1);
@@ -26,21 +34,32 @@ test("Resend path posts to api.resend.com with Bearer auth", async () => {
 });
 
 test("Resend failure throws with the status", async () => {
-  const fetchImpl = (async () => new Response("bad key", { status: 401 })) as typeof fetch;
+  const fetchImpl = (async () =>
+    new Response("bad key", { status: 401 })) as typeof fetch;
   const sender = createEmailSender(
     { EMAIL_PROVIDER: "resend", RESEND_API_KEY: "re_bad" },
-    { fetchImpl },
+    { fetchImpl }
   );
-  await assert.rejects(sender.send({ to: "a@example.com", subject: "Hi", html: "Hi" }), /401/);
+  await assert.rejects(
+    sender.send({ to: "a@example.com", subject: "Hi", html: "Hi" }),
+    /401/
+  );
 });
 
 test("SMTP path sends through the transport", async () => {
-  const transport = nodemailer.createTransport({ streamTransport: true, buffer: true });
+  const transport = nodemailer.createTransport({
+    streamTransport: true,
+    buffer: true,
+  });
   const sender = createEmailSender(
     { EMAIL_PROVIDER: "smtp", SMTP_HOST: "h", SMTP_USER: "u", SMTP_PASS: "p" },
-    { smtpTransport: transport },
+    { smtpTransport: transport }
   );
-  const sent = await sender.send({ to: "a@example.com", subject: "Hi", html: "<p>Hi</p>" });
+  const sent = await sender.send({
+    to: "a@example.com",
+    subject: "Hi",
+    html: "<p>Hi</p>",
+  });
   assert.equal(sent.provider, "smtp");
   assert.match(sent.messageId, /@/);
 });

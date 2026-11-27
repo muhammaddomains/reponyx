@@ -24,7 +24,7 @@ export function hashIp(ip: string): string {
 /** Registration: 1 per IP per 24 hours (plan §7). Counts only successful registrations. */
 export async function checkRegistrationAllowed(
   client: DbClient,
-  ipHash: string,
+  ipHash: string
 ): Promise<void> {
   const since = new Date(Date.now() - DAY_MS);
   const count = await countRecentRegistrations(client, { ipHash, since });
@@ -33,7 +33,9 @@ export async function checkRegistrationAllowed(
   const retryAt = oldest
     ? new Date(new Date(oldest.created_at).getTime() + DAY_MS)
     : new Date(Date.now() + DAY_MS);
-  throw new ApiError("registration_rate_limited", 429, { retry_at: retryAt.toISOString() });
+  throw new ApiError("registration_rate_limited", 429, {
+    retry_at: retryAt.toISOString(),
+  });
 }
 
 /**
@@ -43,11 +45,14 @@ export async function checkRegistrationAllowed(
  */
 export async function checkAccountSwitchAllowed(
   client: DbClient,
-  args: { userId: string; deviceKey: string | null; ipHash: string | null },
+  args: { userId: string; deviceKey: string | null; ipHash: string | null }
 ): Promise<void> {
   const since = new Date(Date.now() - HOUR_MS);
   const byDevice = args.deviceKey
-    ? await findRecentLogoutForDevice(client, { deviceKey: args.deviceKey, since })
+    ? await findRecentLogoutForDevice(client, {
+        deviceKey: args.deviceKey,
+        since,
+      })
     : null;
   const byIp =
     !byDevice && args.ipHash
@@ -56,6 +61,8 @@ export async function checkAccountSwitchAllowed(
   const recent = byDevice ?? byIp;
   if (recent && recent.user_id !== args.userId) {
     const retryAt = new Date(new Date(recent.created_at).getTime() + HOUR_MS);
-    throw new ApiError("account_switch_blocked", 403, { retry_at: retryAt.toISOString() });
+    throw new ApiError("account_switch_blocked", 403, {
+      retry_at: retryAt.toISOString(),
+    });
   }
 }

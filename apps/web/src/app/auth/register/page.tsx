@@ -1,6 +1,12 @@
 import Link from "next/link";
-import { getErrorStrings, getRequestLocale, getWebTranslator } from "@/lib/i18n";
+import {
+  getErrorStrings,
+  getRequestLocale,
+  getWebTranslator,
+} from "@/lib/i18n";
+import { AuthShell } from "@/components/auth/AuthShell";
 import { RegisterForm } from "@/components/auth/RegisterForm";
+import { link } from "@/components/ui";
 
 export default async function RegisterPage() {
   const locale = await getRequestLocale();
@@ -12,13 +18,20 @@ export default async function RegisterPage() {
     registerSuccess: tAuth("registerSuccess"),
   };
   return (
-    <main>
-      <h1>{tAuth("registerTitle")}</h1>
-      <p>{tAuth("registerSubtitle")}</p>
-      <RegisterForm strings={strings} errors={await getErrorStrings()} locale={locale} />
-      <p>
-        <Link href="/auth/login">{tAuth("alreadyHaveAccount")}</Link>
+    <AuthShell
+      title={tAuth("registerTitle")}
+      description={tAuth("registerSubtitle")}
+    >
+      <RegisterForm
+        strings={strings}
+        errors={await getErrorStrings()}
+        locale={locale}
+      />
+      <p className="text-center">
+        <Link href="/auth/login" className={link}>
+          {tAuth("alreadyHaveAccount")}
+        </Link>
       </p>
-    </main>
+    </AuthShell>
   );
 }

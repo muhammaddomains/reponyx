@@ -3,6 +3,13 @@
 import { useState, type FormEvent } from "react";
 import { errorMessage, postJson } from "./api";
 import type { AuthFormProps } from "./RegisterForm";
+import {
+  alertError,
+  fieldLabel,
+  fieldWrapper,
+  primaryButton,
+  textInput,
+} from "@/components/ui";
 
 export function LoginForm({ strings, errors, locale }: AuthFormProps) {
   const [email, setEmail] = useState("");
@@ -25,22 +32,39 @@ export function LoginForm({ strings, errors, locale }: AuthFormProps) {
   }
 
   return (
-    <form onSubmit={onSubmit}>
-      <label>
-        {strings.email}
-        <input type="email" value={email} onChange={(e) => setEmail(e.target.value)} required />
-      </label>
-      <label>
-        {strings.password}
+    <form onSubmit={onSubmit} className="space-y-4">
+      <div className={fieldWrapper}>
+        <label htmlFor="login-email" className={fieldLabel}>
+          {strings.email}
+        </label>
         <input
+          id="login-email"
+          type="email"
+          value={email}
+          onChange={(e) => setEmail(e.target.value)}
+          required
+          className={textInput}
+        />
+      </div>
+      <div className={fieldWrapper}>
+        <label htmlFor="login-password" className={fieldLabel}>
+          {strings.password}
+        </label>
+        <input
+          id="login-password"
           type="password"
           value={password}
           onChange={(e) => setPassword(e.target.value)}
           required
+          className={textInput}
         />
-      </label>
-      {message ? <p role="alert">{message}</p> : null}
-      <button type="submit" disabled={busy}>
+      </div>
+      {message ? (
+        <p role="alert" className={alertError}>
+          {message}
+        </p>
+      ) : null}
+      <button type="submit" disabled={busy} className={primaryButton}>
         {strings.loginButton}
       </button>
     </form>

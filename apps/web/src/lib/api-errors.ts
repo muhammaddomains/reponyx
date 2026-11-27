@@ -6,7 +6,7 @@ export class ApiError extends Error {
   constructor(
     public code: string,
     public status: number,
-    public data?: Record<string, unknown>,
+    public data?: Record<string, unknown>
   ) {
     super(code);
   }
@@ -16,17 +16,20 @@ export function errorResponse(err: unknown): NextResponse {
   if (err instanceof ApiError) {
     return NextResponse.json(
       { error: { code: err.code, data: err.data ?? {} } },
-      { status: err.status },
+      { status: err.status }
     );
   }
   console.error(err);
   return NextResponse.json(
     { error: { code: "internal_error", data: {} } },
-    { status: 500 },
+    { status: 500 }
   );
 }
 
-export async function parseJsonBody<T>(req: Request, schema: z.ZodType<T>): Promise<T> {
+export async function parseJsonBody<T>(
+  req: Request,
+  schema: z.ZodType<T>
+): Promise<T> {
   let body: unknown;
   try {
     body = await req.json();

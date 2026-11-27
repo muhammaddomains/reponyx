@@ -8,7 +8,7 @@ import { createDbClient, migrate } from "../src/index";
 const migrationsDir = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
   "..",
-  "migrations",
+  "migrations"
 );
 
 const files = (await readdir(migrationsDir))

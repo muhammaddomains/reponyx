@@ -24,12 +24,18 @@ function appUrl(): string {
   return process.env.NEXT_PUBLIC_APP_URL ?? "http://localhost:3000";
 }
 
-export async function sendVerificationEmail(to: string, token: string): Promise<void> {
+export async function sendVerificationEmail(
+  to: string,
+  token: string
+): Promise<void> {
   const url = `${appUrl()}/auth/verify?token=${encodeURIComponent(token)}`;
   await getEmailSender().send({ to, ...verificationEmail(url) });
 }
 
-export async function sendPasswordResetEmail(to: string, token: string): Promise<void> {
+export async function sendPasswordResetEmail(
+  to: string,
+  token: string
+): Promise<void> {
   const url = `${appUrl()}/auth/reset/confirm?token=${encodeURIComponent(token)}`;
   await getEmailSender().send({ to, ...passwordResetEmail(url) });
 }

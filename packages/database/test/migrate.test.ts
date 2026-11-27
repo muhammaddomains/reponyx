@@ -23,9 +23,15 @@ test("migrate applies pending migrations in order, then skips them", async () =>
   const db = new RecordingDbClient();
   const migrations = [
     { version: "0001_init", sql: "CREATE TABLE users (id uuid);" },
-    { version: "0002_seed_packages", sql: "INSERT INTO packages VALUES ('Free');" },
+    {
+      version: "0002_seed_packages",
+      sql: "INSERT INTO packages VALUES ('Free');",
+    },
   ];
-  assert.deepEqual(await migrate(db, migrations), ["0001_init", "0002_seed_packages"]);
+  assert.deepEqual(await migrate(db, migrations), [
+    "0001_init",
+    "0002_seed_packages",
+  ]);
   assert.deepEqual(await migrate(db, migrations), []);
   assert.deepEqual(db.appliedVersions, ["0001_init", "0002_seed_packages"]);
 });
@@ -35,7 +41,10 @@ test("migrate skips already-applied versions", async () => {
   db.appliedVersions = ["0001_init"];
   const applied = await migrate(db, [
     { version: "0001_init", sql: "CREATE TABLE users (id uuid);" },
-    { version: "0002_seed_packages", sql: "INSERT INTO packages VALUES ('Free');" },
+    {
+      version: "0002_seed_packages",
+      sql: "INSERT INTO packages VALUES ('Free');",
+    },
   ]);
   assert.deepEqual(applied, ["0002_seed_packages"]);
 });

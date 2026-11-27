@@ -4,7 +4,10 @@ import { hashPassword, verifyPassword } from "../src/password";
 
 test("hashPassword verifies the same password", async () => {
   const hash = await hashPassword("correct horse battery staple");
-  assert.equal(await verifyPassword("correct horse battery staple", hash), true);
+  assert.equal(
+    await verifyPassword("correct horse battery staple", hash),
+    true
+  );
 });
 
 test("hashPassword rejects a wrong password", async () => {

@@ -19,7 +19,10 @@ test("explicit selector wins when both credential sets are present", () => {
     SMTP_PASS: "pass",
   };
   assert.equal(resolveEmailProvider(both), "resend");
-  assert.equal(resolveEmailProvider({ ...both, EMAIL_PROVIDER: "smtp" }), "smtp");
+  assert.equal(
+    resolveEmailProvider({ ...both, EMAIL_PROVIDER: "smtp" }),
+    "smtp"
+  );
 });
 
 test("selector naming a provider without credentials resolves to none", () => {
@@ -29,12 +32,19 @@ test("selector naming a provider without credentials resolves to none", () => {
 
 test("no selector falls back Resend, then SMTP, then none", () => {
   assert.equal(resolveEmailProvider({ RESEND_API_KEY: "re_test" }), "resend");
-  assert.equal(resolveEmailProvider({ SMTP_HOST: "h", SMTP_USER: "u", SMTP_PASS: "p" }), "smtp");
+  assert.equal(
+    resolveEmailProvider({ SMTP_HOST: "h", SMTP_USER: "u", SMTP_PASS: "p" }),
+    "smtp"
+  );
   assert.equal(resolveEmailProvider({}), "none");
 });
 
 test("describeEmailConfig never exposes keys", () => {
-  const described = describeEmailConfig({ ...resendEnv, ...smtpEnv, EMAIL_PROVIDER: "smtp" });
+  const described = describeEmailConfig({
+    ...resendEnv,
+    ...smtpEnv,
+    EMAIL_PROVIDER: "smtp",
+  });
   assert.equal(described.provider, "smtp");
   assert.equal(described.resendConfigured, true);
   assert.equal(described.smtpConfigured, true);

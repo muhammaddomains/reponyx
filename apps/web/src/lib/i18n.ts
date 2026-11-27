@@ -54,5 +54,7 @@ export async function getErrorStrings(): Promise<Record<string, string>> {
     internalError: t("internalError"),
     sessionExpired: t("sessionExpired"),
     notConfigured: t("notConfigured"),
+    oauthFailed: t("oauthFailed"),
+    twoFactorRequired: t("twoFactorRequired"),
   };
 }

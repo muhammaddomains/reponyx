@@ -42,3 +42,35 @@ and Vercel) and the first Vercel deploy — both need the Neon project
 to exist. OAuth (W2), desktop login (W3), broker↔web minting (W4),
 packages + admin (W5), billing (W6, separate approval) land in order —
 see `ai/phase6/web-platform-plan.md`.
+
+## Formatting
+
+Prettier 3.10.1 + `prettier-plugin-tailwindcss` (root `.prettierrc`;
+`pnpm format` / `pnpm format:check`, scoped to the web platform).
+Every file is properly formatted — JSON pretty-printed (2-space, keys
+alphabetical, final newline), never a single-line dump.
+
+## Design
+
+Tailwind v4 + the sendcms dashboard design tokens
+(`src/app/design-tokens.css`, OKLCH teal/emerald, light + dark) +
+Geist + `next-themes`. Auth pages use the two-column `AuthShell`;
+shared classes live in `src/components/ui.ts`.
+
+## Public assets
+
+`public/` holds the favicon set, `logo.png`, `apple-touch-icon.png`,
+`icon-192.png` / `icon-512.png`, `og-image.png` (1200×630) and
+`site.webmanifest` — all generated from the desktop app icon
+(`apps/desktop/src-tauri/icons/icon.png`, 1024px) with the exact token
+colors. The root layout wires them into metadata (icons, manifest,
+Open Graph, theme color).
+
+## Status
+
+W2 done 2026-11-27 (local, not pushed yet): Google + GitHub OAuth
+(start routes + callbacks at the exact registered URLs, HMAC-signed
+state via `SESSION_SECRET`, no auto-create), sendcms design + proper
+pages, public folder, Prettier formatting. Verified: package tests
+25/25, web tests 14/14 (5 auth-flow + 9 OAuth), i18n validate 95 keys
+0 failures, typechecks clean, `next build` clean (22 routes).

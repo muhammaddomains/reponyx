@@ -15,7 +15,10 @@ import { POST as logoutPost } from "../src/app/api/auth/logout/route";
 import { POST as resetPost } from "../src/app/api/auth/reset/route";
 import { POST as resetConfirmPost } from "../src/app/api/auth/reset/confirm/route";
 import { GET as limitsGet } from "../src/app/api/me/limits/route";
-import { GET as devicesGet, POST as devicesPost } from "../src/app/api/devices/route";
+import {
+  GET as devicesGet,
+  POST as devicesPost,
+} from "../src/app/api/devices/route";
 
 /**
  * End-to-end auth flow against real Postgres (PGlite, the WASM build)
@@ -31,7 +34,10 @@ const client: DbClient = {
   async query<T>(text: string, params: unknown[] = []): Promise<T[]> {
     // Multi-statement migration files go through exec(); parameterized
     // statements through query().
-    if (params.length === 0 && text.split(";").filter((s) => s.trim()).length > 1) {
+    if (
+      params.length === 0 &&
+      text.split(";").filter((s) => s.trim()).length > 1
+    ) {
       await db.exec(text);
       return [];
     }
@@ -47,9 +53,11 @@ const migrationsDir = path.resolve(
   "..",
   "packages",
   "database",
-  "migrations",
+  "migrations"
 );
-const files = (await readdir(migrationsDir)).filter((f) => f.endsWith(".sql")).sort();
+const files = (await readdir(migrationsDir))
+  .filter((f) => f.endsWith(".sql"))
+  .sort();
 const migrations = [];
 for (const file of files) {
   migrations.push({
@@ -78,14 +86,14 @@ interface CallResult {
 async function call(
   handler: (req: Request) => Promise<Response>,
   path: string,
-  init: { method?: string; body?: unknown; headers?: Record<string, string> },
+  init: { method?: string; body?: unknown; headers?: Record<string, string> }
 ): Promise<CallResult> {
   const res = await handler(
     new Request(`http://localhost${path}`, {
       method: init.method ?? "POST",
       headers: { "Content-Type": "application/json", ...(init.headers ?? {}) },
       body: init.body === undefined ? undefined : JSON.stringify(init.body),
-    }),
+    })
   );
   const json = (await res.json().catch(() => ({}))) as Record<string, unknown>;
   return { status: res.status, json, headers: res.headers };
@@ -139,25 +147,44 @@ test("full flow: register → verify → login → limits → devices → logout
   const cookie = login.headers.get("set-cookie") ?? "";
   assert.match(cookie, /reponyx-session=/);
 
-  const limits = await call(limitsGet, "/api/me/limits", { method: "GET", headers: { cookie } });
+  const limits = await call(limitsGet, "/api/me/limits", {
+    method: "GET",
+    headers: { cookie },
+  });
   assert.equal(limits.status, 200);
   assert.equal((limits.json.package as { name: string }).name, "Free");
   assert.deepEqual(limits.json.usage, { linkedAccounts: 0, devices: 0 });
 
   const dev = await call(devicesPost, "/api/devices", {
-    body: { deviceKey: "dev-1", machineName: "DESKTOP-TEST", platform: "win32", appVersion: "0.1.0" },
+    body: {
+      deviceKey: "dev-1",
+      machineName: "DESKTOP-TEST",
+      platform: "win32",
+      appVersion: "0.1.0",
+    },
     headers: { authorization: `Bearer ${sessionToken}` },
   });
   assert.equal(dev.status, 200);
-  const list = await call(devicesGet, "/api/devices", { method: "GET", headers: { cookie } });
+  const list = await call(devicesGet, "/api/devices", {
+    method: "GET",
+    headers: { cookie },
+  });
   assert.equal(list.status, 200);
   assert.equal((list.json.devices as unknown[]).length, 1);
-  const limits2 = await call(limitsGet, "/api/me/limits", { method: "GET", headers: { cookie } });
+  const limits2 = await call(limitsGet, "/api/me/limits", {
+    method: "GET",
+    headers: { cookie },
+  });
   assert.deepEqual(limits2.json.usage, { linkedAccounts: 0, devices: 1 });
 
-  const out = await call(logoutPost, "/api/auth/logout", { headers: { cookie } });
+  const out = await call(logoutPost, "/api/auth/logout", {
+    headers: { cookie },
+  });
   assert.equal(out.status, 200);
-  const after = await call(limitsGet, "/api/me/limits", { method: "GET", headers: { cookie } });
+  const after = await call(limitsGet, "/api/me/limits", {
+    method: "GET",
+    headers: { cookie },
+  });
   assert.equal(after.status, 401);
   assert.equal(errorCode(after), "unauthorized");
 });
@@ -169,7 +196,8 @@ test("registration limit: 1 per IP per 24 hours", async () => {
   });
   assert.equal(blocked.status, 429);
   assert.equal(errorCode(blocked), "registration_rate_limited");
-  const retryAt = (blocked.json.error as { data: { retry_at: string } }).data.retry_at;
+  const retryAt = (blocked.json.error as { data: { retry_at: string } }).data
+    .retry_at;
   assert.ok(retryAt);
 
   const ok = await call(registerPost, "/api/auth/register", {
@@ -182,27 +210,43 @@ test("registration limit: 1 per IP per 24 hours", async () => {
 test("account-switch limit: same account can return, a different one waits 1 hour", async () => {
   const ipB = { "x-forwarded-for": "203.0.113.20" };
   const tokenB = tokenFromEmail(sent[1].html);
-  const ver = await call(verifyPost, "/api/auth/verify", { body: { token: tokenB } });
+  const ver = await call(verifyPost, "/api/auth/verify", {
+    body: { token: tokenB },
+  });
   assert.equal(ver.status, 200);
 
   const loginB = await call(loginPost, "/api/auth/login", {
-    body: { email: "b@example.com", password: "correct horse battery staple", deviceKey: "shared-device" },
+    body: {
+      email: "b@example.com",
+      password: "correct horse battery staple",
+      deviceKey: "shared-device",
+    },
     headers: ipB,
   });
   assert.equal(loginB.status, 200);
   const cookieB = loginB.headers.get("set-cookie") ?? "";
 
-  await call(logoutPost, "/api/auth/logout", { headers: { cookie: cookieB, ...ipB } });
+  await call(logoutPost, "/api/auth/logout", {
+    headers: { cookie: cookieB, ...ipB },
+  });
 
   const blocked = await call(loginPost, "/api/auth/login", {
-    body: { email: "a@example.com", password: "correct horse battery staple", deviceKey: "shared-device" },
+    body: {
+      email: "a@example.com",
+      password: "correct horse battery staple",
+      deviceKey: "shared-device",
+    },
     headers: ipB,
   });
   assert.equal(blocked.status, 403);
   assert.equal(errorCode(blocked), "account_switch_blocked");
 
   const back = await call(loginPost, "/api/auth/login", {
-    body: { email: "b@example.com", password: "correct horse battery staple", deviceKey: "shared-device" },
+    body: {
+      email: "b@example.com",
+      password: "correct horse battery staple",
+      deviceKey: "shared-device",
+    },
     headers: ipB,
   });
   assert.equal(back.status, 200);
@@ -210,7 +254,9 @@ test("account-switch limit: same account can return, a different one waits 1 hou
 
 test("password reset: request → confirm → new password works, old one does not", async () => {
   const before = sent.length;
-  const req = await call(resetPost, "/api/auth/reset", { body: { email: "a@example.com" } });
+  const req = await call(resetPost, "/api/auth/reset", {
+    body: { email: "a@example.com" },
+  });
   assert.equal(req.status, 200);
   assert.equal(sent.length, before + 1);
   const token = tokenFromEmail(sent[before].html);

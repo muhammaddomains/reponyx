@@ -1,6 +1,12 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { DAY_MS, expiresIn, hashToken, isExpired, randomToken } from "../src/tokens";
+import {
+  DAY_MS,
+  expiresIn,
+  hashToken,
+  isExpired,
+  randomToken,
+} from "../src/tokens";
 
 test("randomToken is URL-safe and unique", () => {
   const a = randomToken();

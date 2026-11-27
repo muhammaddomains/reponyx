@@ -2611,3 +2611,83 @@ W1 built on the 2nd branch, main untouched.
   tests 5/5, i18n validate 0 failures, typechecks clean,
   `next build` clean.
 - Still open: email provider (Resend key / SMTP) + first deploy.
+
+## Web platform — first deploy (2026-11-27, branch `feature/admin-control-plane`)
+
+- The user set all remaining env vars in the Vercel dashboard
+  themselves: Google/GitHub OAuth client IDs + secrets, Resend key
+  + sender, EMAIL_PROVIDER, SMTP host/port/user/pass/from, and the
+  GitHub App id + private key. Email and OAuth are now configured.
+- The user changed the Production branch tracking from `main` to
+  `feature/admin-control-plane`.
+- Push snapshot `47c52b2` (sync 68) auto-triggered a production
+  deployment that FAILED (`NEXT_NO_VERSION` — Root Directory was
+  `./`, so Vercel could not find Next.js at the repo root). Fixed:
+  Root Directory `apps/web`, Output Directory `.next` (build command
+  unchanged: `pnpm --filter @reponyx/web build`).
+- Redeploy `dpl_Ci5vDkCKQxpATSNNzqVCg27sHB2K` is READY at
+  `reponyx-qf643fyqp-stylies.vercel.app` (branch alias only — NOT
+  reponyx.bond). Login page verified live (200). The deployment is
+  behind Vercel Authentication (SSO), so curl checks hit the
+  protection, not the app.
+- Still open: a successful production deployment to reponyx.bond +
+  a live register→verify→login test with a real email.
+
+- Browser login-form smoke test PASSED 2026-11-27 ~01:09 MST:
+  nonexistent email → "Email or password is incorrect", stayed on
+  the login page, no 500 — the live app reaches the Prisma database
+  and handles login normally.
+
+## Web platform — production deploy live (2026-11-27)
+
+- Production deployment `dpl_6YcHm1iZZVuUmFfNqxjRa9NKyRBK`
+  (commit `47c52b2`) is READY, target production, aliases include
+  `reponyx.bond`. Verified live: home 200, login page 200, login API
+  with a nonexistent email returns the app's own
+  `invalid_credentials` — the production app reaches the Prisma
+  database. Custom domains are exempt from the Vercel SSO wall, so
+  reponyx.bond is publicly reachable.
+- Still open: a live register→verify→login test with a real email
+  (tests the Resend/SMTP path end to end). W2 (OAuth) has not
+  started.
+
+## Web platform — live register→verify→login PASSED (2026-11-27)
+
+- The user registered, verified and logged in themselves on
+  reponyx.bond (owner account admin@csofts.com). Dashboard shows
+  Package Free, Linked accounts 0/2, Devices 0/2, Expires: No
+  expiry, Joined 11/27/2026. The email (Resend/SMTP) path works end
+  to end. Devices 0/2 is expected — a device registers only on
+  desktop-app login (W3 scope). W1 is now fully proven live.
+
+## Web platform — W2 OAuth + sendcms design (2026-11-27, local only)
+
+- **Formatting fixed (user's call-out):** the 12 locale JSON files were
+  single-line dumps. Prettier 3.10.1 + prettier-plugin-tailwindcss
+  adopted (root `.prettierrc`, `pnpm format` / `format:check`,
+  scoped to the web platform); all locale files are now
+  pretty-printed (2-space, keys alphabetical, final newline) and
+  `format:check` passes. i18n validate: 6 domains, 95 keys, 0 failures.
+- **Design from sendcms:** Tailwind v4 + the sendcms dashboard design
+  tokens (OKLCH teal/emerald, light + dark) + Geist + next-themes.
+  Proper pages: AuthShell (two-column brand panel + form), styled
+  forms (shared `ui.ts` classes), dashboard cards + sticky header,
+  centered home page. `apps/web/public/` holds favicon.ico,
+  favicon-16/32, apple-touch-icon, icon-192/512, logo.png,
+  og-image.png (1200x630) and site.webmanifest — all generated from
+  the desktop app icon (1024px) with exact token colors.
+- **W2 OAuth DONE:** Google + GitHub login, callbacks at the exact
+  registered URLs, HMAC-signed state (SESSION_SECRET, 10 min),
+  no auto-create, provider-verified email satisfies verification,
+  same account-switch limit + 2FA step as password login. Tests:
+  web 14/14 (5 auth-flow + 9 OAuth), packages 7/7 + 10/10 + 8/8;
+  typecheck clean; `next build` clean (22 routes). Local smoke test
+  on `next start`: home 200, login 200 (both OAuth buttons render),
+  start routes 307 to the providers, bad callback → login
+  `oauth_failed`, favicon/og/manifest 200.
+- **Skills brought from sendcms:** `next-best-practices` (19 files,
+  verbatim) + a RepoNyx-adapted `reponyx-project-guidelines` skill
+  (SKILL.md + 7 references from RepoNyx's own conventions), both in
+  `~/workspace/custom-skills/`.
+- Still open: push + preview/production deploy of this batch (needs
+  user approval); a live Google/GitHub click-through on reponyx.bond.

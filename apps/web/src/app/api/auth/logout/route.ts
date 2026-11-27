@@ -1,6 +1,11 @@
 import { NextResponse } from "next/server";
 import { hashToken } from "@reponyx/auth";
-import { findDeviceById, recordAudit, recordLogout, revokeSession } from "@reponyx/database";
+import {
+  findDeviceById,
+  recordAudit,
+  recordLogout,
+  revokeSession,
+} from "@reponyx/database";
 import { errorResponse } from "@/lib/api-errors";
 import { clearSessionCookie, getSessionFromRequest } from "@/lib/auth";
 import { getDb } from "@/lib/db";
@@ -22,7 +27,11 @@ export async function POST(req: Request) {
         deviceKey: device?.device_key ?? null,
         ipHash,
       });
-      await recordAudit(client, { userId: session.user.id, action: "auth.logout", ipHash });
+      await recordAudit(client, {
+        userId: session.user.id,
+        action: "auth.logout",
+        ipHash,
+      });
     }
     const res = NextResponse.json({ ok: true });
     res.headers.set("Set-Cookie", clearSessionCookie());

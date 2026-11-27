@@ -25,7 +25,8 @@ class FakeDbClient implements DbClient {
     this.calls.push({ text, params });
     const marker = text.match(/\/\*\s*(\w+)\s*\*\//)?.[1];
     const handler = marker ? this.handlers.get(marker) : undefined;
-    if (!handler) throw new Error(`no fake handler for query: ${text.slice(0, 80)}`);
+    if (!handler)
+      throw new Error(`no fake handler for query: ${text.slice(0, 80)}`);
     return handler(params) as T[];
   }
 }
@@ -33,9 +34,17 @@ class FakeDbClient implements DbClient {
 test("createUser lowercases the email and returns the row", async () => {
   const db = new FakeDbClient();
   db.on("createUser", (params) => [
-    { id: "u1", email: params[0], password_hash: params[1], email_verified: false },
+    {
+      id: "u1",
+      email: params[0],
+      password_hash: params[1],
+      email_verified: false,
+    },
   ]);
-  const row = await createUser(db, { email: "USER@Example.com", passwordHash: "hash" });
+  const row = await createUser(db, {
+    email: "USER@Example.com",
+    passwordHash: "hash",
+  });
   assert.equal(row.email, "user@example.com");
   assert.match(db.calls[0].text, /INSERT INTO users/);
 });
@@ -88,7 +97,7 @@ test("registration limit counts recent attempts for the IP hash", async () => {
   await recordRegistrationAttempt(db, "iphash");
   assert.equal(
     await countRecentRegistrations(db, { ipHash: "iphash", since: new Date() }),
-    1,
+    1
   );
   assert.match(db.calls[1].text, /registration_attempts/);
 });

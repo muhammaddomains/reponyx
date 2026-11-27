@@ -1,6 +1,12 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
-import { DAY_MS, expiresIn, hashPassword, hashToken, randomToken } from "@reponyx/auth";
+import {
+  DAY_MS,
+  expiresIn,
+  hashPassword,
+  hashToken,
+  randomToken,
+} from "@reponyx/auth";
 import {
   createEmailVerificationToken,
   createUser,
@@ -45,10 +51,14 @@ export async function POST(req: Request) {
       throw new ApiError("email_unavailable", 503);
     }
     if (ipHash) await recordRegistrationAttempt(client, ipHash);
-    await recordAudit(client, { userId: user.id, action: "auth.register", ipHash });
+    await recordAudit(client, {
+      userId: user.id,
+      action: "auth.register",
+      ipHash,
+    });
     return NextResponse.json(
       { user: { id: user.id, email: user.email } },
-      { status: 201 },
+      { status: 201 }
     );
   } catch (err) {
     return errorResponse(err);

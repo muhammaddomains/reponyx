@@ -14,14 +14,20 @@ export async function GET(req: Request) {
     const client = getDb();
     const { user } = await requireSession(client, req);
     const subscription = await findActiveSubscriptionForUser(client, user.id);
-    const pkg = subscription?.package ?? (await findPackageByName(client, "Free"));
+    const pkg =
+      subscription?.package ?? (await findPackageByName(client, "Free"));
     if (!pkg) throw new ApiError("not_configured", 503);
     const [linkedAccounts, devices] = await Promise.all([
       countLinkedAccountsForUser(client, user.id),
       countDevicesForUser(client, user.id),
     ]);
     return NextResponse.json({
-      user: { id: user.id, email: user.email, locale: user.locale, createdAt: user.created_at },
+      user: {
+        id: user.id,
+        email: user.email,
+        locale: user.locale,
+        createdAt: user.created_at,
+      },
       package: {
         name: pkg.name,
         maxLinkedAccounts: pkg.max_linked_accounts,

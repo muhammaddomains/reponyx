@@ -1,8 +1,10 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import Link from "next/link";
 import { errorMessage, postJson } from "./api";
 import type { AuthFormProps } from "./RegisterForm";
+import { alertError, alertSuccess, link } from "@/components/ui";
 
 export function VerifyClient({
   token,
@@ -30,6 +32,19 @@ export function VerifyClient({
   }, [token, errors, locale]);
 
   if (state === "pending") return <p>{strings.loading}</p>;
-  if (state === "ok") return <p>{strings.verifySuccess}</p>;
-  return <p role="alert">{message ?? strings.verifyFailed}</p>;
+  if (state === "ok") {
+    return (
+      <div className="space-y-4">
+        <p className={alertSuccess}>{strings.verifySuccess}</p>
+        <Link href="/auth/login" className={link}>
+          {strings.loginButton}
+        </Link>
+      </div>
+    );
+  }
+  return (
+    <p role="alert" className={alertError}>
+      {message ?? strings.verifyFailed}
+    </p>
+  );
 }

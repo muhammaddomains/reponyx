@@ -18,12 +18,16 @@ export function registerTranslations(
   locale: Locale,
   app: AppSurface,
   domain: string,
-  messages: Messages,
+  messages: Messages
 ): void {
   registry.set(registryKey(locale, app, domain), messages);
 }
 
-export function getTranslator(locale: Locale, app: AppSurface, domain: string): Translator {
+export function getTranslator(
+  locale: Locale,
+  app: AppSurface,
+  domain: string
+): Translator {
   const messages = registry.get(registryKey(locale, app, domain));
   if (messages === undefined) return createTranslator({});
   return createTranslator(messages);
@@ -33,7 +37,7 @@ export function getTranslator(locale: Locale, app: AppSurface, domain: string): 
 export async function loadLocaleDomain(
   locale: Locale,
   app: AppSurface,
-  domain: string,
+  domain: string
 ): Promise<Messages> {
   const mod = await import(`../locales/${locale}/${app}/${domain}.json`, {
     with: { type: "json" },

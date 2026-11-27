@@ -1,4 +1,9 @@
-import { getErrorStrings, getRequestLocale, getWebTranslator } from "@/lib/i18n";
+import {
+  getErrorStrings,
+  getRequestLocale,
+  getWebTranslator,
+} from "@/lib/i18n";
+import { AuthShell } from "@/components/auth/AuthShell";
 import { ResetRequestForm } from "@/components/auth/ResetRequestForm";
 
 export default async function ResetPage() {
@@ -10,10 +15,12 @@ export default async function ResetPage() {
     resetSent: tAuth("resetSent"),
   };
   return (
-    <main>
-      <h1>{tAuth("resetTitle")}</h1>
-      <p>{tAuth("resetSubtitle")}</p>
-      <ResetRequestForm strings={strings} errors={await getErrorStrings()} locale={locale} />
-    </main>
+    <AuthShell title={tAuth("resetTitle")} description={tAuth("resetSubtitle")}>
+      <ResetRequestForm
+        strings={strings}
+        errors={await getErrorStrings()}
+        locale={locale}
+      />
+    </AuthShell>
   );
 }

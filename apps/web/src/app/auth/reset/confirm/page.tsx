@@ -1,5 +1,11 @@
-import { getErrorStrings, getRequestLocale, getWebTranslator } from "@/lib/i18n";
+import {
+  getErrorStrings,
+  getRequestLocale,
+  getWebTranslator,
+} from "@/lib/i18n";
+import { AuthShell } from "@/components/auth/AuthShell";
 import { ResetConfirmForm } from "@/components/auth/ResetConfirmForm";
+import { alertError } from "@/components/ui";
 
 export default async function ResetConfirmPage(props: {
   searchParams: Promise<{ token?: string }>;
@@ -16,13 +22,19 @@ export default async function ResetConfirmPage(props: {
     resetSuccess: tAuth("resetSuccess"),
   };
   return (
-    <main>
-      <h1>{tAuth("resetTitle")}</h1>
+    <AuthShell title={tAuth("resetTitle")} description={tAuth("resetSubtitle")}>
       {token ? (
-        <ResetConfirmForm token={token} strings={strings} errors={await getErrorStrings()} locale={locale} />
+        <ResetConfirmForm
+          token={token}
+          strings={strings}
+          errors={await getErrorStrings()}
+          locale={locale}
+        />
       ) : (
-        <p>{tErrors("invalidToken")}</p>
+        <p role="alert" className={alertError}>
+          {tErrors("invalidToken")}
+        </p>
       )}
-    </main>
+    </AuthShell>
   );
 }

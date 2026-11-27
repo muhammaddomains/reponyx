@@ -12,16 +12,16 @@ export interface Migration {
  */
 export async function migrate(
   client: DbClient,
-  migrations: Migration[],
+  migrations: Migration[]
 ): Promise<string[]> {
   await client.query(
     `CREATE TABLE IF NOT EXISTS schema_migrations (
        version text PRIMARY KEY,
        applied_at timestamptz NOT NULL DEFAULT now()
-     )`,
+     )`
   );
   const applied = await client.query<{ version: string }>(
-    `SELECT version FROM schema_migrations ORDER BY version`,
+    `SELECT version FROM schema_migrations ORDER BY version`
   );
   const appliedSet = new Set(applied.map((row) => row.version));
   const newly: string[] = [];

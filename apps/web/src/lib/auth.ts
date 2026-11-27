@@ -24,7 +24,7 @@ export const DUMMY_PASSWORD_HASH =
 export async function createSessionForUser(
   client: DbClient,
   user: UserRow,
-  deviceId: string | null,
+  deviceId: string | null
 ): Promise<{ token: string; session: SessionRow }> {
   const token = randomToken();
   const session = await createSession(client, {
@@ -53,7 +53,7 @@ export interface AuthedSession {
 
 export async function getSessionFromToken(
   client: DbClient,
-  token: string | undefined | null,
+  token: string | undefined | null
 ): Promise<AuthedSession | null> {
   if (!token) return null;
   const found = await findSessionByHash(client, hashToken(token));
@@ -64,12 +64,17 @@ export async function getSessionFromToken(
 
 export async function getSessionFromRequest(
   client: DbClient,
-  req: Request,
+  req: Request
 ): Promise<AuthedSession | null> {
   const cookieHeader = req.headers.get("cookie") ?? "";
-  const match = cookieHeader.match(new RegExp(`(?:^|;\\s*)${SESSION_COOKIE}=([^;]+)`));
+  const match = cookieHeader.match(
+    new RegExp(`(?:^|;\\s*)${SESSION_COOKIE}=([^;]+)`)
+  );
   if (match) {
-    const fromCookie = await getSessionFromToken(client, decodeURIComponent(match[1]));
+    const fromCookie = await getSessionFromToken(
+      client,
+      decodeURIComponent(match[1])
+    );
     if (fromCookie) return fromCookie;
   }
   const auth = req.headers.get("authorization");
@@ -79,12 +84,17 @@ export async function getSessionFromRequest(
   return null;
 }
 
-export async function getSessionFromCookies(client: DbClient): Promise<AuthedSession | null> {
+export async function getSessionFromCookies(
+  client: DbClient
+): Promise<AuthedSession | null> {
   const cookieStore = await cookies();
   return getSessionFromToken(client, cookieStore.get(SESSION_COOKIE)?.value);
 }
 
-export async function requireSession(client: DbClient, req: Request): Promise<AuthedSession> {
+export async function requireSession(
+  client: DbClient,
+  req: Request
+): Promise<AuthedSession> {
   const session = await getSessionFromRequest(client, req);
   if (!session) throw new ApiError("unauthorized", 401);
   return session;

@@ -1,11 +1,5 @@
 {
   "extends": "@reponyx/config/typescript/base.json",
-  "include": [
-    "src"
-  ],
-  "exclude": [
-    "node_modules",
-    "test",
-    "scripts"
-  ]
+  "include": ["src"],
+  "exclude": ["node_modules", "test", "scripts"]
 }

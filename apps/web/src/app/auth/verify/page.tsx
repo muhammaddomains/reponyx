@@ -1,5 +1,11 @@
-import { getErrorStrings, getRequestLocale, getWebTranslator } from "@/lib/i18n";
+import {
+  getErrorStrings,
+  getRequestLocale,
+  getWebTranslator,
+} from "@/lib/i18n";
+import { AuthShell } from "@/components/auth/AuthShell";
 import { VerifyClient } from "@/components/auth/VerifyClient";
+import { alertError } from "@/components/ui";
 
 export default async function VerifyPage(props: {
   searchParams: Promise<{ token?: string }>;
@@ -12,15 +18,25 @@ export default async function VerifyPage(props: {
     loading: tCommon("loading"),
     verifySuccess: tAuth("verifySuccess"),
     verifyFailed: tAuth("verifyFailed"),
+    loginButton: tAuth("loginButton"),
   };
   return (
-    <main>
-      <h1>{tAuth("verifyTitle")}</h1>
+    <AuthShell
+      title={tAuth("verifyTitle")}
+      description={tAuth("verifySubtitle")}
+    >
       {token ? (
-        <VerifyClient token={token} strings={strings} errors={await getErrorStrings()} locale={locale} />
+        <VerifyClient
+          token={token}
+          strings={strings}
+          errors={await getErrorStrings()}
+          locale={locale}
+        />
       ) : (
-        <p>{tAuth("verifyFailed")}</p>
+        <p role="alert" className={alertError}>
+          {tAuth("verifyFailed")}
+        </p>
       )}
-    </main>
+    </AuthShell>
   );
 }

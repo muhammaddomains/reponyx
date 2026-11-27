@@ -5,7 +5,10 @@ export interface ApiResult {
   data: Record<string, unknown>;
 }
 
-export async function postJson(path: string, body: unknown): Promise<ApiResult> {
+export async function postJson(
+  path: string,
+  body: unknown
+): Promise<ApiResult> {
   const res = await fetch(path, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -33,19 +36,24 @@ const CODE_TO_MESSAGE_KEY: Record<string, string> = {
 export function errorMessage(
   errors: Record<string, string>,
   locale: string,
-  data: Record<string, unknown>,
+  data: Record<string, unknown>
 ): string {
-  const err = (data.error ?? {}) as { code?: string; data?: Record<string, unknown> };
+  const err = (data.error ?? {}) as {
+    code?: string;
+    data?: Record<string, unknown>;
+  };
   const code = err.code ?? "internal_error";
   const key = CODE_TO_MESSAGE_KEY[code] ?? "internalError";
-  let message = errors[key] ?? errors.internalError ?? "Something went wrong — try again";
+  let message =
+    errors[key] ?? errors.internalError ?? "Something went wrong — try again";
   const retryAt = (err.data as { retry_at?: string } | undefined)?.retry_at;
   if (retryAt) {
     message = message.replace(
       "{retryAt}",
-      new Intl.DateTimeFormat(locale, { dateStyle: "medium", timeStyle: "short" }).format(
-        new Date(retryAt),
-      ),
+      new Intl.DateTimeFormat(locale, {
+        dateStyle: "medium",
+        timeStyle: "short",
+      }).format(new Date(retryAt))
     );
   }
   return message;

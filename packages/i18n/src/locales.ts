@@ -11,20 +11,32 @@ export interface LocaleEntry {
 }
 
 export const SUPPORTED_LOCALES: readonly LocaleEntry[] = [
-  { code: "en", name: "English", nativeName: "English", dir: "ltr", status: "complete" },
-  { code: "ur", name: "Urdu", nativeName: "اردو", dir: "rtl", status: "complete" },
+  {
+    code: "en",
+    name: "English",
+    nativeName: "English",
+    dir: "ltr",
+    status: "complete",
+  },
+  {
+    code: "ur",
+    name: "Urdu",
+    nativeName: "اردو",
+    dir: "rtl",
+    status: "complete",
+  },
 ];
 
 export const DEFAULT_LOCALE: Locale = "en";
 
 /** Only complete locales are selectable in the language switcher. */
-export const SELECTABLE_LOCALES: readonly LocaleEntry[] = SUPPORTED_LOCALES.filter(
-  (locale) => locale.status === "complete",
-);
+export const SELECTABLE_LOCALES: readonly LocaleEntry[] =
+  SUPPORTED_LOCALES.filter((locale) => locale.status === "complete");
 
 export function isSupportedLocale(value: unknown): value is Locale {
   return (
-    typeof value === "string" && SUPPORTED_LOCALES.some((locale) => locale.code === value)
+    typeof value === "string" &&
+    SUPPORTED_LOCALES.some((locale) => locale.code === value)
   );
 }
 
@@ -33,6 +45,8 @@ export function getLocaleDirection(code: Locale): LocaleDirection {
 }
 
 /** Browser locale → our locale: Urdu if the primary subtag is ur, else English. */
-export function detectLocaleFromBrowserLanguage(language: string | undefined): Locale {
+export function detectLocaleFromBrowserLanguage(
+  language: string | undefined
+): Locale {
   return language?.toLowerCase().startsWith("ur") ? "ur" : "en";
 }

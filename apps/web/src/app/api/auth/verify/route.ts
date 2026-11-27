@@ -17,7 +17,10 @@ export async function POST(req: Request) {
   try {
     const body = await parseJsonBody(req, VerifyBody);
     const client = getDb();
-    const token = await findValidVerificationToken(client, hashToken(body.token));
+    const token = await findValidVerificationToken(
+      client,
+      hashToken(body.token)
+    );
     if (!token) throw new ApiError("invalid_token", 404);
     await markUserVerified(client, token.user_id);
     await consumeVerificationToken(client, token.id);

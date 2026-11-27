@@ -116,6 +116,28 @@ describe("Login page", () => {
     expect(baseProps.onAuthenticated).not.toHaveBeenCalled();
   });
 
+  it("shows the database-unavailable message when the database is down", async () => {
+    vi.mocked(webLogin).mockRejectedValue({
+      code: "DatabaseError",
+      message: "database is unavailable",
+      retryAt: null,
+    });
+    render(<Login {...baseProps} />);
+    fireEvent.change(screen.getByLabelText("Email"), {
+      target: { value: "user@example.com" },
+    });
+    fireEvent.change(screen.getByLabelText("Password"), {
+      target: { value: "correct horse battery staple" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Log in" }));
+    expect(
+      await screen.findByText(
+        "Database unavailable — close other RepoNyx windows and try again",
+      ),
+    ).toBeInTheDocument();
+    expect(baseProps.onAuthenticated).not.toHaveBeenCalled();
+  });
+
   it("shows the session-expired notice when the session died", () => {
     render(<Login {...baseProps} sessionExpired={true} />);
     expect(

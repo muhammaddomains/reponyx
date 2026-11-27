@@ -2,6 +2,7 @@
   "accountNotFound": "No account found — please register on the web first",
   "accountSwitchBlocked": "You logged out of a different account recently — you can log in with a different account after {retryAt}",
   "alreadyLinked": "That account is already linked to another RepoNyx account",
+  "databaseUnavailable": "Database unavailable — close other RepoNyx windows and try again",
   "emailMismatch": "That account uses a different email — link an account with the same email as your RepoNyx account",
   "emailNotVerified": "Please verify your email first",
   "emailTaken": "An account with this email already exists",

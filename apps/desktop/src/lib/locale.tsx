@@ -146,6 +146,8 @@ export function errorMessageKey(code: string): string {
       return "internalError";
     case "internal_error":
       return "internalError";
+    case "DatabaseError":
+      return "databaseUnavailable";
     case "InvalidInput":
       return "invalidBody";
     case "invalid_body":

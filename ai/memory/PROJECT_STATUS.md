@@ -2895,8 +2895,18 @@ profile is complete before login is allowed.
   changes for it; a future DB with an unverifiable cert under
   `require`/`prefer` would now fail to connect instead of
   silently skipping verification.
-- **Auth fixes batch (user-approved 2026-11-27 ~07:45 MST,
-  local only, NOT pushed — push needs its own approval):**
+- **Auth fixes batch (user-approved 2026-11-27 ~07:45 MST):
+  pushed + deployed 2026-11-27 ~07:55 MST (snapshot
+  `42e662a`, sync 74):** Vercel production deployment READY
+  (reponyx.bond; home + /login 200; `/reset/confirm?token=
+  doesnotexist` shows the invalid-link message, proving the
+  page-level validation is live — the "Change password" button
+  itself only renders with a real valid token, so it needs a
+  real reset link to verify). CI #105 ALL GREEN (12m 3s): rust
+  3m 5s, frontend 44s (126/126 tests), windows-build 11m 40s,
+  windows-installer 11m 59s (56.6 MB), Lint #77, CodeQL #103,
+  Security audit #76 (Semgrep clean). Warnings only: Node.js 20
+  deprecation.
   `/login` + `/register` redirect a signed-in user to
   `/dashboard`; desktop clears a stale deep-link error on a new
   attempt and maps `internal_error` / `invalid_body` /
@@ -2913,9 +2923,35 @@ profile is complete before login is allowed.
   OAuth attempt (installed from `pnpm build:all`, so the
   `reponyx://` protocol is registered) reached the Google
   start route once but never the callback or the exchange, with
-  no server error in Vercel logs — needs a retest after these
-  fixes, when the real error will show instead of the generic
-  banner.
+  no server error in Vercel logs — the user rebuilt from the
+  pulled sync-74 code and is retesting; the real error should
+  now show instead of the generic banner. **ROOT CAUSE FOUND
+  2026-11-27 ~08:18 MST (user's app log + Vercel logs + code):
+  the OAuth flow never failed — the app's database would not
+  open** (`failed to open database` 3× at startup; the old
+  instance is still running and holds the SQLite lock —
+  the agent exited with code 1, "another agent is probably
+  already running"). The app runs degraded by design
+  (`db_state = None`); login AND the desktop-code exchange
+  both call `require_db` FIRST (web_auth.rs:459, :634), so both
+  die before any server call — code `DatabaseError`, which the
+  frontend does NOT map, so it renders the generic
+  "Something went wrong". Server proof: Google start 15:16:12Z
+  + GitHub start 15:16:17Z hit the NEW sync-74 deployment,
+  zero callbacks, zero exchanges, zero runtime errors. The
+  broker "not configured" warning in the same log is a
+  knock-on (broker settings live in the unreadable DB). **User
+  action:** fully quit the old RepoNyx (tray → Quit; Task
+  Manager: end RepoNyx.exe + reponyx-agent.exe if present),
+  then launch the new build and retry. **Follow-up fix
+  (user-approved 2026-11-27 ~08:25 MST, local only):**
+  `DatabaseError` maps to a new `databaseUnavailable` message
+  (en+ur) in `errorMessageKey`, so a dead DB shows "Database
+  unavailable — close other RepoNyx windows and try again"
+  instead of the generic banner. Verified: i18n 158 keys 0
+  failures, typecheck clean, desktop frontend 15 files 127/127,
+  lint + vite build clean, Prettier clean, local Semgrep 0
+  findings.
 
 ## Accounts page restructure — DONE (2026-11-27, branch `feature/admin-control-plane`, local only)
 

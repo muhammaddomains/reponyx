@@ -15,9 +15,9 @@ name: Lint
 
 on:
   push:
-    branches: [main]
+    branches: [main, feature/admin-control-plane]
   pull_request:
-    branches: [main]
+    branches: [main, feature/admin-control-plane]
 
 # Least privilege: these jobs only read the repository and run local
 # checks. No secrets are used anywhere in this workflow, so

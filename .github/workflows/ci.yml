@@ -1,6 +1,7 @@
 name: CI
 
-# CI checks for every push to main, every pull request, and every
+# CI checks for every push to main and `feature/admin-control-plane`,
+# every pull request, and every
 # release tag (`v*`) — a tag must run the same tests as a push, so
 # an untested commit can never be released (audit E2).
 #
@@ -36,10 +37,10 @@ name: CI
 
 on:
   push:
-    branches: ["main"]
+    branches: ["main", "feature/admin-control-plane"]
     tags: ["v*"]
   pull_request:
-    branches: ["main"]
+    branches: ["main", "feature/admin-control-plane"]
 
 env:
   CARGO_TERM_COLOR: always

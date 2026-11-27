@@ -12,9 +12,9 @@ name: Security audit
 
 on:
   push:
-    branches: [main]
+    branches: [main, feature/admin-control-plane]
   pull_request:
-    branches: [main]
+    branches: [main, feature/admin-control-plane]
   schedule:
     # Weekly, Monday 06:00 UTC
     - cron: "0 6 * * 1"

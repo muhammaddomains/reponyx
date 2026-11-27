@@ -51,6 +51,7 @@ beforeEach(() => {
     concurrency: null,
     storageRoot: null,
     theme: null,
+    locale: null,
     notificationsEnabled: null,
     deviceIdentifier: null,
     brokerAppId: null,

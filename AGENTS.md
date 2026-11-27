@@ -96,6 +96,30 @@ The GNU check caught real errors the Linux build never saw
 consts). Run it (and clippy with the same target) before pushing
 any change to Windows-only code.
 
+The desktop crate itself can also be checked with the GNU target
+(proven 2026-11-27, W3) — `tauri-build` needs the two bundled
+binaries to exist at `target/release/reponyx-agent.exe` and
+`target/release/reponyx-auth-broker.exe`, so build them first and
+copy them there (they are gitignored build artifacts; delete the
+copies afterwards so a later native build is not confused by
+Windows PE files):
+
+```bash
+CC_x86_64_pc_windows_gnu=x86_64-w64-mingw32-gcc cargo build -p reponyx-background-agent -p reponyx-auth-broker --release --target x86_64-pc-windows-gnu
+cp target/x86_64-pc-windows-gnu/release/reponyx-agent.exe target/x86_64-pc-windows-gnu/release/reponyx-auth-broker.exe target/release/
+CC_x86_64_pc_windows_gnu=x86_64-w64-mingw32-gcc cargo check -p reponyx-desktop --target x86_64-pc-windows-gnu
+```
+
+This caught 4 real W3 errors the Linux build never saw
+(`set_setting`/`delete_setting` return values, the missing
+`CommandExt` import for `creation_flags`, `focus()` →
+`set_focus()`). Clippy on the desktop crate with this target
+currently shows 11 pre-existing findings (10× `collapsible_if`
+in agent/auth/broker/diagnostics/lib + `too_many_arguments` on
+`create_schedule_command`) — none of them is gated by CI (the
+windows-build job runs `cargo check` only), so they are left for
+a cleanup pass, not fixed drive-by.
+
 ## Layout
 
 - `apps/desktop` — React frontend + Tauri backend (`src-tauri`)

@@ -8,13 +8,23 @@ import {
 export async function GET(req: Request) {
   const url = new URL(req.url);
   const intentParam = url.searchParams.get("intent");
+  const isDesktop = url.searchParams.get("client") === "desktop";
+  // The desktop only logs in (registration stays on the web), so a
+  // desktop start always signs a login intent.
   const intent =
-    intentParam === "register" || intentParam === "link"
+    !isDesktop && (intentParam === "register" || intentParam === "link")
       ? intentParam
       : "login";
   const config = getOAuthProviderConfig("google");
-  const state = config ? createOAuthState("google", intent) : null;
+  const state = config
+    ? createOAuthState("google", intent, isDesktop ? "desktop" : "web")
+    : null;
   if (!config || !state) {
+    if (isDesktop) {
+      return NextResponse.redirect(
+        new URL("reponyx://auth?error=oauth_not_configured")
+      );
+    }
     return NextResponse.redirect(
       new URL(
         intent === "register"

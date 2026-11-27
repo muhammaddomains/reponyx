@@ -116,8 +116,7 @@ verified by unit/integration tests only, not on Windows yet.
 Correction: during Phase 2 verification the agent deleted the
 whole `crates/database/tests/` directory (13 integration-test
 files) while removing a probe test file — caught by the test
-count dropping 433 → 369, restored from HEAD, count back to
-449. The broker flake test (`broker_logs_never_contain_a_token`)
+count dropping 433 → 369, restored from HEAD, count back to 449. The broker flake test (`broker_logs_never_contain_a_token`)
 still failed once in a full-suite run after the first
 (`current_thread`) fix, so the test was rewritten: the capture
 is now the process-global default and the mint uses a unique
@@ -376,7 +375,7 @@ as this scope.
 - **dev:all failure on a fresh clone (2026-11-26 ~03:47 MST):**
   the user's Windows run of `pnpm dev:all` failed at build.rs —
   `resource path ..\..\..\target\release\reponyx-agent.exe
-  doesn't exist`. Root cause: `tauri.conf.json` lists the
+doesn't exist`. Root cause: `tauri.conf.json` lists the
   release agent/broker exes as bundle resources, but `dev:all`
   only ran the debug binaries (`cargo run`) and never built the
   release ones — the same failure CI run #80 hit. Immediate
@@ -439,25 +438,25 @@ as this scope.
   broker needs App id + private key + setup token, and the
   installed desktop only knew the repo-root `.env`. Fix (local,
   not yet pushed): new settings `broker.app_id` (digits-only)
-  + `broker.private_key_path` (disk-checked at save: absolute,
-  existing file; contents never read — the key never passes
-  through the desktop), setup token generated in-app (only when
-  none is configured and no `.env` file supplies one) or pasted,
-  stored in the OS credential store; the desktop passes all three
-  to the spawned broker as env vars (explicit vars win over any
-  `.env` file); a repo `.env` or hand-made `<data_dir>\.env`
-  still works. New commands
-  `generate_broker_setup_token_command` +
-  `pick_broker_key_file_command` (native dialog,
-  `blocking_pick_file` on a blocking thread); status reports
-  `appIdConfigured` / `privateKeyConfigured` /
-  `envFileConfigured` and the Accounts page shows a setup form
-  only when the broker has no config at all. Verified:
-  `cargo test` 475/0 (+3 database validation tests), frontend
-  94/94 (+4 Accounts tests), Semgrep 0 findings; desktop crate
-  compile-checked by CI windows-build only. The user's
-  `%APPDATA%\RepoNyx\.env` (created on the earlier advice) still
-  works as an override and needs no change.
+  - `broker.private_key_path` (disk-checked at save: absolute,
+    existing file; contents never read — the key never passes
+    through the desktop), setup token generated in-app (only when
+    none is configured and no `.env` file supplies one) or pasted,
+    stored in the OS credential store; the desktop passes all three
+    to the spawned broker as env vars (explicit vars win over any
+    `.env` file); a repo `.env` or hand-made `<data_dir>\.env`
+    still works. New commands
+    `generate_broker_setup_token_command` +
+    `pick_broker_key_file_command` (native dialog,
+    `blocking_pick_file` on a blocking thread); status reports
+    `appIdConfigured` / `privateKeyConfigured` /
+    `envFileConfigured` and the Accounts page shows a setup form
+    only when the broker has no config at all. Verified:
+    `cargo test` 475/0 (+3 database validation tests), frontend
+    94/94 (+4 Accounts tests), Semgrep 0 findings; desktop crate
+    compile-checked by CI windows-build only. The user's
+    `%APPDATA%\RepoNyx\.env` (created on the earlier advice) still
+    works as an override and needs no change.
 - **Schedules cadence controls (user's request 2026-11-26
   ~05:00 MST):** the New schedule form had one text box for all
   cadence types — "6" sat in Daily/Weekly where it means nothing.
@@ -563,7 +562,7 @@ as this scope.
   Clippy issue above (already fixed), frontend passed (94
   tests), and BOTH Windows jobs failed with the same compile
   error — `error[E0599]: no method named 'state' found for
-  struct 'tauri::AppHandle'` at `auth.rs:479` (the browser
+struct 'tauri::AppHandle'` at `auth.rs:479` (the browser
   report mis-transcribed the path as `commands/auth.rs` and the
   line as `handle.state::<State>().db.clone()`; the real file is
   `src/auth.rs`, the real line is the
@@ -620,7 +619,7 @@ accountType`, and the Agent page showed "[object Object]".
   without the `commandMessage` helper. Added it (covered by
   `Agent.test.tsx`).
 - **Database failure**: the user's log showed `migration 1
-  was previously applied but has been modified`. The only
+was previously applied but has been modified`. The only
   difference is the comment rename `-- Gitora V1` →
   `-- RepoNyx V1` in `0001_init.sql` (`49a44bf` vs `main`);
   sqlx checksums the whole file including comments, and the
@@ -631,7 +630,7 @@ accountType`, and the Agent page showed "[object Object]".
 - **Agent not running**: a desktop-only build never builds
   `reponyx-agent.exe`, so `resolve_agent_exe` finds nothing
   next to the desktop exe. Source-checkout fix: `cargo build
-  -p reponyx-background-agent`. Release-workflow bundling of
+-p reponyx-background-agent`. Release-workflow bundling of
   the agent is still an open packaging gap.
 
 ## Auth Broker runs with the app; release ships all binaries (2026-11-23)
@@ -642,7 +641,7 @@ and `release.yml` shipped only the desktop, so GitHub App auth
 could not work from a release install.
 
 - Root scripts added: `broker` (`cargo run -p
-  reponyx-auth-broker`), `broker:build`, `agent:build`, and
+reponyx-auth-broker`), `broker:build`, `agent:build`, and
   `dev:all` (concurrently 10.0.7 runs broker + `tauri:dev`
   together, `-k` so one exiting stops the other). The broker
   needs its env vars in the shell (`REPONYX_BROKER_APP_ID`,
@@ -657,7 +656,7 @@ could not work from a release install.
   desktop) — the desktop's `ensure_agent_running_command`
   checks health first, so it never spawns a duplicate. New
   `build:all` runs `broker:build && agent:build &&
-  tauri:build` in sequence (one cargo target-dir lock).
+tauri:build` in sequence (one cargo target-dir lock).
   Proven by a live smoke test: `.env`-only start serves
   `/health`, an OS var beats a bad `.env` value, and no
   `.env` + no vars still exits 2 with the same error.
@@ -683,7 +682,7 @@ could not work from a release install.
   helper installed so HTTP remotes authenticate like a normal
   fetch, then verifies every object; `verify_lfs_objects` checks
   each pointer oid against the object file under
-  `<git-dir>/lfs/objects/` and its SHA-256 (the LFS oid *is* the
+  `<git-dir>/lfs/objects/` and its SHA-256 (the LFS oid _is_ the
   content hash, streamed so large objects are never fully in
   memory). A corrupt object is deleted and re-downloaded —
   `git lfs fetch` silently skips a file that merely exists, so
@@ -723,7 +722,7 @@ could not work from a release install.
   reads gitlinks (`ls-tree -r HEAD`, mode 160000) joined with the
   `.gitmodules` blob at HEAD; `sync_submodules_mirror` fetches
   each gitlink commit into the mirror's object database (`git
-  fetch --no-tags <url> <sha>`, verified with `cat-file -e`,
+fetch --no-tags <url> <sha>`, verified with `cat-file -e`,
   objects already present are skipped) and `sync_submodules_working`
   runs `git submodule update --init --recursive` per submodule —
   one at a time so an inaccessible (e.g. private) submodule never
@@ -775,7 +774,7 @@ could not work from a release install.
   (fmt, clippy, tests, typecheck, lint, windows-build), `lint.yml`
   (private-key scan), `security-audit.yml` (Semgrep), `codeql.yml`,
   and `scheduled-maintenance.yml` (weekly `cargo audit` + `pnpm
-  audit`, also runnable on demand) — all green on the last four
+audit`, also runnable on demand) — all green on the last four
   pushes. Release workflow: tag-triggered, Windows NSIS + MSI,
   signed updater artifacts; it will fail at signing until
   `TAURI_SIGNING_PRIVATE_KEY` (+ password) are set in repo
@@ -844,9 +843,9 @@ could not work from a release install.
   assistant):** the broker no longer loses everything on restart.
   New `apps/auth-broker/src/store.rs` (`BrokerStore`, sqlx SQLite,
   WAL, own migration `apps/auth-broker/migrations/
-  0001_broker_store.sql` — 5 tables: installations, pairing codes,
+0001_broker_store.sql` — 5 tables: installations, pairing codes,
   setup states, device tokens, audit events) plus `REPONYX_BROKER_
-  DATA_DIR` (default `broker-data`, `broker.sqlite` inside).
+DATA_DIR` (default `broker-data`, `broker.sqlite` inside).
   `BrokerState::open` prunes expired codes/states + audit events
   older than 90 days, then loads every record into the memory maps;
   every mutation writes through to the store first, then updates
@@ -1106,7 +1105,7 @@ could not work from a release install.
   denial stops polling. Nothing in the hook may break the app —
   every failure is swallowed. **Frontend tests:** Vitest 5.1.1 +
   Testing Library 16 + jsdom 31, `pnpm --filter @reponyx/desktop
-  test`, 41 tests in 6 files (theme, zod schemas, shared UI
+test`, 41 tests in 6 files (theme, zod schemas, shared UI
   components, Settings page incl. validation + error state,
   notification hook incl. fake timers, virtualized Repositories
   list); CI frontend job now runs the suite (the old "no JS unit
@@ -1279,11 +1278,11 @@ could not work from a release install.
     entries, no paging past them; no frontend tests yet.
   - **Verification (actual, 2026-11-21):** `cargo fmt --check`
     pass; `cargo clippy --workspace --exclude reponyx-desktop
-    --all-targets` pass, **0 warnings**; `cargo test --workspace
-    --exclude reponyx-desktop` **332 passed, 0 failed** (was 331 —
+--all-targets` pass, **0 warnings**; `cargo test --workspace
+--exclude reponyx-desktop` **332 passed, 0 failed** (was 331 —
     the +1 is the new `recent_history_is_newest_first_and_limited`
     test, run on its own too); `pnpm -r typecheck` pass; `pnpm
-    --filter @reponyx/desktop build` pass (1.61 s); desktop eslint
+--filter @reponyx/desktop build` pass (1.61 s); desktop eslint
     pass on the touched files (exit 0). One typo fixed during
     verification (`.map_error` → `.map_err` in `history.rs`) — the
     first full run caught it as a compile error; the suite was
@@ -1317,9 +1316,9 @@ could not work from a release install.
     renders the first 100 rows); no frontend tests yet.
   - **Verification (actual, 2026-11-21):** `cargo fmt --check`
     pass; `cargo clippy --workspace --exclude reponyx-desktop
-    --all-targets` pass, **0 warnings**; `cargo test --workspace
-    --exclude reponyx-desktop` **331 passed, 0 failed**; `pnpm -r
-    typecheck` pass; `pnpm --filter @reponyx/desktop build` pass;
+--all-targets` pass, **0 warnings**; `cargo test --workspace
+--exclude reponyx-desktop` **331 passed, 0 failed**; `pnpm -r
+typecheck` pass; `pnpm --filter @reponyx/desktop build` pass;
     desktop eslint pass on the touched files (exit 0, after removing
     one unused constant the linter flagged).
 
@@ -1353,9 +1352,9 @@ could not work from a release install.
     no frontend tests yet.
   - **Verification (actual, 2026-11-21):** `cargo fmt --check`
     pass; `cargo clippy --workspace --exclude reponyx-desktop
-    --all-targets` pass, **0 warnings**; `cargo test --workspace
-    --exclude reponyx-desktop` **331 passed, 0 failed**; `pnpm -r
-    typecheck` pass; `pnpm --filter @reponyx/desktop build` pass
+--all-targets` pass, **0 warnings**; `cargo test --workspace
+--exclude reponyx-desktop` **331 passed, 0 failed**; `pnpm -r
+typecheck` pass; `pnpm --filter @reponyx/desktop build` pass
     (1.77 s); desktop eslint pass on the touched files (exit 0).
     `cargo tree -p reponyx-desktop` confirms the new
     `reponyx-sync-queue` dependency resolves; `Cargo.lock`
@@ -1387,7 +1386,7 @@ could not work from a release install.
     eslint only, as with the other pages).
   - **Verification (actual, 2026-11-21):** `cargo fmt --check`
     pass (no Rust changes); `pnpm -r typecheck` pass; `pnpm
-    --filter @reponyx/desktop build` pass (1.88 s); desktop eslint
+--filter @reponyx/desktop build` pass (1.88 s); desktop eslint
     pass on the two touched files (exit 0). No Rust tests change:
     the suite stands at 331 passed / 0 failed. The desktop itself
     still needs its first Windows compile check.
@@ -1400,11 +1399,11 @@ could not work from a release install.
     logic, no raw SQL in the crate, no schema change — no V4
     migration was needed). Dependencies are `reponyx-core` +
     `reponyx-database` only (proven by `cargo tree -p
-    reponyx-scheduler`: no git-engine, no provider, no queue) — the
+reponyx-scheduler`: no git-engine, no provider, no queue) — the
     crate creates job rows and never runs a sync.
   - **Cadence (`cadence.rs`):** `interval_value` encoding, plain or
     JSON. Plain: `"6"` (hours), `"02:30"` (daily `HH:MM`), `"1,3,5
-    02:30"` (weekly, ISO weekday numbers 1 = Monday .. 7 =
+02:30"` (weekly, ISO weekday numbers 1 = Monday .. 7 =
     Sunday), `"90"` (custom minutes). JSON: `{"hours": 6}`,
     `{"time": "02:30"}`, `{"minutes": 90}`, plus optional
     `"weekdays": [1..7]` and `"window": {"start", "end"}`. A window
@@ -1457,7 +1456,7 @@ could not work from a release install.
     repository (next 3 runs). Typed api-client wrappers + zod
     schemas in `packages/shared` / `packages/api-client`. No
     scheduler UI page — Phase 8. **Desktop Rust verified by `cargo
-    fmt` + review only (gdk blocker), not by a build — stated
+fmt` + review only (gdk blocker), not by a build — stated
     honestly.**
   - **Dependencies added (latest stable, verified on crates.io
     2026-11-19):** `chrono-tz` 0.10.4 (resolved from `"0.10"`).
@@ -1480,16 +1479,16 @@ could not work from a release install.
     Phase 6 lands.
   - **Verification (actual, 2026-11-19):** `cargo fmt --check`
     pass; clippy (`--workspace --exclude reponyx-desktop
-    --all-targets`) pass, 0 warnings (1 collapsible-`if` warning
+--all-targets`) pass, 0 warnings (1 collapsible-`if` warning
     and 1 unused-workspace-dependency warning found and fixed
     during the run); `cargo test --workspace --exclude
-    reponyx-desktop` **302 passed, 0 failed** (baseline 262; new:
+reponyx-desktop` **302 passed, 0 failed** (baseline 262; new:
     scheduler 40 — lib 8, dst 5, materialize 10, next_run 14,
     precedence 3; all other crates unchanged); `cargo tree -p
-    reponyx-scheduler` confirms no execution dependencies (chrono,
+reponyx-scheduler` confirms no execution dependencies (chrono,
     chrono-tz, core, database, serde, serde_json, sqlx, uuid only);
     `pnpm -r typecheck` pass (Node 26.13.1); `pnpm --filter
-    @reponyx/desktop build` pass; desktop eslint pass. No flakes
+@reponyx/desktop build` pass; desktop eslint pass. No flakes
     observed in the full-suite runs. Tauri binary build still
     blocked on this VM by missing `gdk-3.0` / WebViewGTK system
     libraries — not claimed passed.
@@ -1523,9 +1522,9 @@ could not work from a release install.
   - **Workspace (FAILED):** `crates/sync-queue`, `crates/ipc`,
     `apps/background-agent` are not workspace members; `Cargo.lock`
     has zero entries for them. `cargo check --manifest-path
-    crates/sync-queue/Cargo.toml` and `.../crates/ipc/Cargo.toml`
+crates/sync-queue/Cargo.toml` and `.../crates/ipc/Cargo.toml`
     both fail with the workspace-membership error. `cargo test
-    --workspace` silently skips all three crates.
+--workspace` silently skips all three crates.
   - **Existing code still green:** `cargo fmt --check` pass; clippy
     (`--workspace --exclude reponyx-desktop --all-targets`) 0
     warnings; `cargo test --workspace --exclude reponyx-desktop`
@@ -1698,13 +1697,13 @@ could not work from a release install.
     retry budget, rate limiter defers, lease-driven recovery).
   - **Verification (actual, 2026-11-21):** `cargo fmt --check`
     pass; clippy (`--workspace --exclude reponyx-desktop
-    --all-targets`) pass, 0 warnings (5 warnings found and fixed
+--all-targets`) pass, 0 warnings (5 warnings found and fixed
     during the run: `map_or` → `is_some_and`, redundant closure,
     identity `map_err`, 9-arg worker function bundled into a
     `WorkerArgs` struct, unused imports, `len() > 0` →
     `!is_empty()`); `cargo test --workspace --exclude
-    reponyx-desktop` **328 passed, 0 failed** (was 302); `pnpm -r
-    typecheck` pass; `pnpm --filter @reponyx/desktop build` pass
+reponyx-desktop` **328 passed, 0 failed** (was 302); `pnpm -r
+typecheck` pass; `pnpm --filter @reponyx/desktop build` pass
     (1.76 s); desktop eslint pass. Tauri binary build still blocked
     on this VM by missing `gdk-3.0` / WebViewGTK system libraries —
     not claimed passed.
@@ -1787,7 +1786,7 @@ could not work from a release install.
     the fix and passes with it. Uncommitted — needs a push.
   - **Verification after the fix:** `cargo fmt --check` pass;
     clippy 0 warnings; `cargo test --workspace --exclude
-    reponyx-desktop` **331 passed, 0 failed**; `pnpm -r typecheck`
+reponyx-desktop` **331 passed, 0 failed**; `pnpm -r typecheck`
     pass; desktop vite build pass; desktop eslint pass.
 
 - **Phase 5 — Authentication (actual, 2026-11-18, on `main`):**
@@ -1804,9 +1803,9 @@ could not work from a release install.
     `POST /setup/state` (one-time CSRF `state` + install URL);
     `GET /github/callback` (validates `state` — single-use,
     10-minute TTL — records the installation); `POST
-    /pairing/request`, `POST /pairing/confirm`, `GET
-    /pairing/status`, `POST /pairing/revoke`; `POST
-    /installations/{id}/token` (mint); `GET /installations`;
+/pairing/request`, `POST /pairing/confirm`, `GET
+/pairing/status`, `POST /pairing/revoke`; `POST
+/installations/{id}/token` (mint); `GET /installations`;
     `GET /audit`. Errors are `{ error: { code, message } }` with
     `RepoNyxError` codes; rate limits return 429 with
     `Retry-After`.
@@ -1822,7 +1821,7 @@ could not work from a release install.
     broker issues a random 32-byte device token, stored server-side
     only as a SHA-256 hash; the desktop stores the raw token in
     the OS credential store and presents it as `Authorization:
-    Bearer <device_token>` when minting. Broker state is in-memory
+Bearer <device_token>` when minting. Broker state is in-memory
     (installations, codes, `state` values, device tokens, token
     cache, audit log); a restart forgets everything and devices
     must re-pair — durable broker storage is a deployment-phase
@@ -1830,7 +1829,7 @@ could not work from a release install.
   - **Token minting (`tokens.rs`):** App JWT, RS256 (`jsonwebtoken`
     12.0.0 with the `rust_crypto` feature), `iss` = App id, `iat`
     = now − 60 s, `exp` = now + 9 min; `POST
-    /app/installations/{id}/access_tokens`; minted tokens cached
+/app/installations/{id}/access_tokens`; minted tokens cached
     per installation until 5 minutes before expiry;
     `force_refresh` bypasses the cache (used after a 401).
   - **Rate limiting:** hand-rolled per-key token buckets (no extra
@@ -1963,9 +1962,9 @@ could not work from a release install.
     generated in-memory.
   - **Verification (actual, 2026-11-18):** `cargo fmt --check`
     pass; clippy (`--workspace --exclude reponyx-desktop
-    --all-targets`) pass, 0 warnings (4 collapsible-`if`
+--all-targets`) pass, 0 warnings (4 collapsible-`if`
     warnings found and fixed during the run); `cargo test
-    --workspace --exclude reponyx-desktop` **262 passed, 0
+--workspace --exclude reponyx-desktop` **262 passed, 0
     failed** (auth-broker 22 — lib 7, broker integration 15;
     core 11; credential-store 20 — lib 6, mixed_auth 1, pat_flow
     10, store 3; database 55; git-engine 87; github-provider 63
@@ -1992,7 +1991,7 @@ could not work from a release install.
   `provider()`. API client (`client.rs`): reqwest with a 30 s
   request timeout, `Authorization` header per token kind (`Bearer`
   for installation tokens, `token` for PATs), `User-Agent:
-  RepoNyx/<version>`, retries with exponential backoff + jitter
+RepoNyx/<version>`, retries with exponential backoff + jitter
   (max 3 attempts) for 5xx / network errors only — never for
   401/403. Error mapping: 401 → `AuthenticationExpired`, 403 with
   a revoked/suspended message → `AuthenticationRevoked`, other 403
@@ -2060,7 +2059,7 @@ could not work from a release install.
   — lib 26, discovery 8, errors 8, installations 4, rate_limit 4,
   redaction 6, sync 2 — logging 4, provider-abstractions 0);
   `pnpm -r typecheck` pass (Node 26.13.1); `pnpm --filter
-  @reponyx/desktop build` pass (2305 modules, 1.56 s). Tauri
+@reponyx/desktop build` pass (2305 modules, 1.56 s). Tauri
   binary build still blocked on this VM by missing `gdk-3.0` /
   WebViewGTK system libraries — not claimed passed. Deliberately
   NOT done in Phase 4: GitHub App JWT signing / private-key
@@ -2152,8 +2151,8 @@ could not work from a release install.
   freshly written, and git's own startup latency covers the
   credential helper). **Verification (actual, 2026-11-18):**
   `cargo fmt --check` pass; clippy (`--workspace --exclude
-  reponyx-desktop --all-targets`) pass, 0 warnings; `cargo test
-  --workspace --exclude reponyx-desktop` **156 passed, 0 failed**
+reponyx-desktop --all-targets`) pass, 0 warnings; `cargo test
+--workspace --exclude reponyx-desktop` **156 passed, 0 failed**
   (core 11, database 54, git-engine 87 — lib 58, cancellation 3,
   credentials 4, disk_full 1, health 6, locks 3, mirror 6,
   mirror_clone 1, refs 1, working 4 — logging 4,
@@ -2184,7 +2183,7 @@ could not work from a release install.
   rename/ownership-change with full_name collision detection;
   effective-schedule resolution (repository > account > global) +
   `due_schedules`; atomic job claim via single `UPDATE ...
-  RETURNING` statement; job finish + history entry in one
+RETURNING` statement; job finish + history entry in one
   transaction (`complete_job_with_history`); audit logs append-only
   by design (no update/delete API). **Migration V2 was needed:**
   `migrations/sqlite/0002_unique_full_name.sql` adds a UNIQUE index
@@ -2210,7 +2209,7 @@ could not work from a release install.
   (4 packages); `pnpm --filter @reponyx/desktop build` pass
   (1.81 s). `cargo test --workspace` exits 101 on this VM solely
   because the desktop crate cannot build (`gdk-sys`: `Package
-  gdk-3.0 was not found`) — the known blocker, not claimed passed.
+gdk-3.0 was not found`) — the known blocker, not claimed passed.
   pnpm had vanished from this VM again and was reinstalled at
   12.21.0 (latest stable).
 - Toolchains installed and verified: Rust 1.100.0, pnpm 12.21.0,
@@ -2232,8 +2231,8 @@ could not work from a release install.
   - `ac5e87e` `tauri.conf.json`: pretty-printed; centered window;
     expanded CSP (incl. `connect-src https://api.reponyx.com` — a
     future endpoint; the domain is not bought yet); updater artifacts
-    + updater plugin config with a minisign pubkey; icon list
-    (the icon files did not exist — generated, see below); NSIS/WiX.
+    - updater plugin config with a minisign pubkey; icon list
+      (the icon files did not exist — generated, see below); NSIS/WiX.
   - `254700a` `build.rs`: Windows app manifest + `try_build` with
     `Attributes` (API valid for tauri-build 2.7.6); formatting fixed
     with `cargo fmt` (leading blank line, wrapping).
@@ -2248,58 +2247,58 @@ could not work from a release install.
     `"2"` (fine).
   - `8727c65` desktop `package.json`: removed `plugin-sql` (safe —
     no code references it).
-  Fixes made in this re-check: root `package.json` comma;
-  `packageManager` back to pnpm@12.21.0; `tauri "=2"` → `"2"`;
-  `sqlx` 0.8 → 0.9 (latest stable 0.9.1, compiles and tests clean);
-  wired the updater the user configured — added
-  `tauri-plugin-updater = "2"` (workspace + `src-tauri`) and
-  `.plugin(tauri_plugin_updater::Builder::new().build())` in
-  `lib.rs`, so the `updater:default` capability and plugin config
-  are no longer dangling; generated the missing app icons
-  (`apps/desktop/src-tauri/icons/`: 32x32.png, 128x128.png,
-  128x128@2x.png, icon.ico, icon.icns, plus 1024px icon.png source);
-  `cargo fmt` on `build.rs`. Node 26.13.1 (latest stable v26;
-  v27 is alpha, not used) installed at
-  `~/.local/node-v26.13.1-linux-x64` for verification — the system
-  Node is still 24.22.1; pnpm had vanished from this VM and was
-  reinstalled at 12.21.0. `pnpm install` also added a
-  `minimumReleaseAgeExclude` block to `pnpm-workspace.yaml`
-  (pnpm 12's auto-generated supply-chain policy for packages
-  published within the last day); kept as generated.
-  **Dependency updates (old → latest stable):** TypeScript 5.9.3 →
-  6.0.3 (see "deliberately not updated" below); zod 4.3.5 → 4.6.7;
-  react 19.3.0 → 19.3.1; react-dom 19.3.0 → 19.3.1; react-router
-  8.4.0 → 8.5.2; @tauri-apps/api 2.9.0 → 2.12.5 (api-client);
-  @types/react 19.2.0 → 19.3.0; sqlx 0.8.6 → 0.9.1; all other Rust
-  crates already at latest stable in the lockfile (tokio 1.54.1,
-  serde 1.0.229, serde_json 1.0.154, chrono 0.4.45, thiserror 2.0.21,
-  tracing 0.1.44, tracing-appender 0.2.5, tracing-subscriber 0.3.23,
-  uuid 1.29.3, async-trait 0.1.92, tempfile 3.27.0, tauri 2.12.7,
-  tauri-build 2.7.6); desktop npm deps were already latest stable
-  (lucide-react 1.75.0, eslint 10.15.0, vite 8.3.8, tailwindcss
-  4.3.5, @vitejs/plugin-react 6.3.0, typescript-eslint 8.73.0,
-  @tauri-apps/cli 2.12.6, @tauri-apps/plugin-updater 2.14.1).
-  **Re-verification (actual, 2026-11-18):** `cargo fmt --check`
-  pass; clippy (5 crates) pass, 0 warnings; `cargo test`
-  **36 passed, 0 failed** (same breakdown as Phase 1);
-  `pnpm install` pass (Node 26.13.1, pnpm 12.21.0, no peer issues
-  after the TS pin); `pnpm -r typecheck` pass (4 packages);
-  desktop eslint pass; `pnpm -r lint` pass;
-  `pnpm --filter @reponyx/desktop build` pass (2305 modules,
-  ~1 s). `cargo check -p reponyx-desktop` still fails with the
-  same missing `gdk-3.0` / `gdk-pixbuf-sys` system libraries —
-  Tauri binary build remains BLOCKED on this VM, not claimed
-  passed; no tauri-build, capability, icon, or updater error
-  appeared before that failure.
-  **Deliberately NOT updated:** TypeScript stays at 6.0.3, not
-  latest stable 7.0.2 — tried 7.0.2 first (typecheck passed), but
-  typescript-eslint 8.73.0 (latest stable) hard-fails with
-  "typescript-eslint does not support TS 7.0" (peer range
-  `>=4.8.4 <6.1.0`); TS 7.1 stable, which typescript-eslint will
-  support, is not released yet (only 7.1.0-beta exists — pre-release,
-  forbidden). Revisit when TS 7.1 stable lands. Tauri stays at
-  2.12.7 — 3.0.0-alpha.6 exists but is alpha. Rust stays at 1.100.0
-  (`rustup check`: stable up to date).
+    Fixes made in this re-check: root `package.json` comma;
+    `packageManager` back to pnpm@12.21.0; `tauri "=2"` → `"2"`;
+    `sqlx` 0.8 → 0.9 (latest stable 0.9.1, compiles and tests clean);
+    wired the updater the user configured — added
+    `tauri-plugin-updater = "2"` (workspace + `src-tauri`) and
+    `.plugin(tauri_plugin_updater::Builder::new().build())` in
+    `lib.rs`, so the `updater:default` capability and plugin config
+    are no longer dangling; generated the missing app icons
+    (`apps/desktop/src-tauri/icons/`: 32x32.png, 128x128.png,
+    128x128@2x.png, icon.ico, icon.icns, plus 1024px icon.png source);
+    `cargo fmt` on `build.rs`. Node 26.13.1 (latest stable v26;
+    v27 is alpha, not used) installed at
+    `~/.local/node-v26.13.1-linux-x64` for verification — the system
+    Node is still 24.22.1; pnpm had vanished from this VM and was
+    reinstalled at 12.21.0. `pnpm install` also added a
+    `minimumReleaseAgeExclude` block to `pnpm-workspace.yaml`
+    (pnpm 12's auto-generated supply-chain policy for packages
+    published within the last day); kept as generated.
+    **Dependency updates (old → latest stable):** TypeScript 5.9.3 →
+    6.0.3 (see "deliberately not updated" below); zod 4.3.5 → 4.6.7;
+    react 19.3.0 → 19.3.1; react-dom 19.3.0 → 19.3.1; react-router
+    8.4.0 → 8.5.2; @tauri-apps/api 2.9.0 → 2.12.5 (api-client);
+    @types/react 19.2.0 → 19.3.0; sqlx 0.8.6 → 0.9.1; all other Rust
+    crates already at latest stable in the lockfile (tokio 1.54.1,
+    serde 1.0.229, serde_json 1.0.154, chrono 0.4.45, thiserror 2.0.21,
+    tracing 0.1.44, tracing-appender 0.2.5, tracing-subscriber 0.3.23,
+    uuid 1.29.3, async-trait 0.1.92, tempfile 3.27.0, tauri 2.12.7,
+    tauri-build 2.7.6); desktop npm deps were already latest stable
+    (lucide-react 1.75.0, eslint 10.15.0, vite 8.3.8, tailwindcss
+    4.3.5, @vitejs/plugin-react 6.3.0, typescript-eslint 8.73.0,
+    @tauri-apps/cli 2.12.6, @tauri-apps/plugin-updater 2.14.1).
+    **Re-verification (actual, 2026-11-18):** `cargo fmt --check`
+    pass; clippy (5 crates) pass, 0 warnings; `cargo test`
+    **36 passed, 0 failed** (same breakdown as Phase 1);
+    `pnpm install` pass (Node 26.13.1, pnpm 12.21.0, no peer issues
+    after the TS pin); `pnpm -r typecheck` pass (4 packages);
+    desktop eslint pass; `pnpm -r lint` pass;
+    `pnpm --filter @reponyx/desktop build` pass (2305 modules,
+    ~1 s). `cargo check -p reponyx-desktop` still fails with the
+    same missing `gdk-3.0` / `gdk-pixbuf-sys` system libraries —
+    Tauri binary build remains BLOCKED on this VM, not claimed
+    passed; no tauri-build, capability, icon, or updater error
+    appeared before that failure.
+    **Deliberately NOT updated:** TypeScript stays at 6.0.3, not
+    latest stable 7.0.2 — tried 7.0.2 first (typecheck passed), but
+    typescript-eslint 8.73.0 (latest stable) hard-fails with
+    "typescript-eslint does not support TS 7.0" (peer range
+    `>=4.8.4 <6.1.0`); TS 7.1 stable, which typescript-eslint will
+    support, is not released yet (only 7.1.0-beta exists — pre-release,
+    forbidden). Revisit when TS 7.1 stable lands. Tauri stays at
+    2.12.7 — 3.0.0-alpha.6 exists but is alpha. Rust stays at 1.100.0
+    (`rustup check`: stable up to date).
 - Repo initialized on `feature/reponyx-foundation`; nothing pre-existing
   to preserve (empty workspace).
 - Monorepo scaffold: Cargo workspace (edition 2024, resolver 2) +
@@ -2340,7 +2339,7 @@ could not work from a release install.
   `gdk-3.0` / WebViewGTK system libraries — Tauri binary build
   remains BLOCKED on this VM, not claimed passed.
 - Two real bugs found and fixed during verification: (1) `tauri-build
-  =2.12.6` does not exist — corrected to 2.7.6, `tauri` to 2.12.7
+=2.12.6` does not exist — corrected to 2.7.6, `tauri` to 2.12.7
   (verified against the crates.io index); (2) an infinite loop in
   `logging::redact_secrets` Bearer-header redaction (re-searching from
   the start re-found the prefix forever) — fixed with a search cursor.
@@ -2363,32 +2362,32 @@ Actual results, 2026-11-18 (all commands run, not inferred).
 Every check in this table was re-run after the Gitora → RepoNyx
 rename with the same results (desktop build 1.39 s on the re-run).
 
-| Check | Result |
-| --- | --- |
-| cargo fmt --check | pass (after `cargo fmt`) |
-| cargo clippy -p core,logging,git-engine,provider-abstractions,database --all-targets | pass, 0 warnings |
-| cargo test (same 5 crates) | **36 passed, 0 failed** — core 7, database migrations 3, git-engine unit 21 + mirror-clone integration 1, logging 4, provider-abstractions 0 |
-| pnpm install | pass (151 packages; pnpm-lock.yaml committed) |
-| pnpm -r typecheck | pass (shared, ui, api-client, desktop) |
-| pnpm --filter @reponyx/desktop lint (eslint) | pass |
-| pnpm --filter @reponyx/desktop build (vite) | pass (1844 modules, 1.03 s) |
-| cargo check -p reponyx-desktop | **FAIL — blocked**: `gdk-sys v0.18.2` build script: `Package gdk-3.0 was not found in the pkg-config search path` |
-| cargo tauri build (Linux) | **not run to completion — blocked** by the same missing system libraries; see below |
+| Check                                                                                | Result                                                                                                                                       |
+| ------------------------------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------- |
+| cargo fmt --check                                                                    | pass (after `cargo fmt`)                                                                                                                     |
+| cargo clippy -p core,logging,git-engine,provider-abstractions,database --all-targets | pass, 0 warnings                                                                                                                             |
+| cargo test (same 5 crates)                                                           | **36 passed, 0 failed** — core 7, database migrations 3, git-engine unit 21 + mirror-clone integration 1, logging 4, provider-abstractions 0 |
+| pnpm install                                                                         | pass (151 packages; pnpm-lock.yaml committed)                                                                                                |
+| pnpm -r typecheck                                                                    | pass (shared, ui, api-client, desktop)                                                                                                       |
+| pnpm --filter @reponyx/desktop lint (eslint)                                         | pass                                                                                                                                         |
+| pnpm --filter @reponyx/desktop build (vite)                                          | pass (1844 modules, 1.03 s)                                                                                                                  |
+| cargo check -p reponyx-desktop                                                       | **FAIL — blocked**: `gdk-sys v0.18.2` build script: `Package gdk-3.0 was not found in the pkg-config search path`                            |
+| cargo tauri build (Linux)                                                            | **not run to completion — blocked** by the same missing system libraries; see below                                                          |
 
 ### Phase 5 — 2026-11-18 (Authentication, on `main`)
 
 All commands actually run. Node 26.13.1, pnpm 12.21.0, Rust 1.100.0.
 
-| Check | Result |
-| --- | --- |
-| cargo fmt --check | pass |
-| cargo clippy --workspace --exclude reponyx-desktop --all-targets | pass, 0 warnings (4 collapsible-`if` warnings found and fixed during the run) |
-| cargo test --workspace --exclude reponyx-desktop | **262 passed, 0 failed** — auth-broker 22 (lib 7, broker integration 15), core 11, credential-store 20 (lib 6, mixed_auth 1, pat_flow 10, store 3), database 55, git-engine 87, github-provider 63 (lib 26, broker_source 5, discovery 8, errors 8, installations 4, rate_limit 4, redaction 6, sync 2), logging 4, provider-abstractions 0 |
-| scripts/check-no-private-key.sh | **pass** on desktop sources + dependency tree; **binary part SKIPPED** — no desktop binary can be built on this VM (WebViewGTK blocker) |
-| pnpm -r typecheck | pass (shared, ui, api-client, desktop) |
-| pnpm --filter @reponyx/desktop build (vite) | pass (2306 modules, 1.95 s) |
-| pnpm --filter @reponyx/desktop lint (eslint) | pass |
-| cargo check -p reponyx-desktop | **FAIL — blocked**: same missing `gdk-3.0` / WebViewGTK system libraries as Phase 1 (desktop auth commands verified by `cargo fmt` + review only) |
+| Check                                                            | Result                                                                                                                                                                                                                                                                                                                                      |
+| ---------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| cargo fmt --check                                                | pass                                                                                                                                                                                                                                                                                                                                        |
+| cargo clippy --workspace --exclude reponyx-desktop --all-targets | pass, 0 warnings (4 collapsible-`if` warnings found and fixed during the run)                                                                                                                                                                                                                                                               |
+| cargo test --workspace --exclude reponyx-desktop                 | **262 passed, 0 failed** — auth-broker 22 (lib 7, broker integration 15), core 11, credential-store 20 (lib 6, mixed_auth 1, pat_flow 10, store 3), database 55, git-engine 87, github-provider 63 (lib 26, broker_source 5, discovery 8, errors 8, installations 4, rate_limit 4, redaction 6, sync 2), logging 4, provider-abstractions 0 |
+| scripts/check-no-private-key.sh                                  | **pass** on desktop sources + dependency tree; **binary part SKIPPED** — no desktop binary can be built on this VM (WebViewGTK blocker)                                                                                                                                                                                                     |
+| pnpm -r typecheck                                                | pass (shared, ui, api-client, desktop)                                                                                                                                                                                                                                                                                                      |
+| pnpm --filter @reponyx/desktop build (vite)                      | pass (2306 modules, 1.95 s)                                                                                                                                                                                                                                                                                                                 |
+| pnpm --filter @reponyx/desktop lint (eslint)                     | pass                                                                                                                                                                                                                                                                                                                                        |
+| cargo check -p reponyx-desktop                                   | **FAIL — blocked**: same missing `gdk-3.0` / WebViewGTK system libraries as Phase 1 (desktop auth commands verified by `cargo fmt` + review only)                                                                                                                                                                                           |
 
 One transient failure during verification: the untouched Phase 3
 test `healthy_mirror_and_working_clone` failed once under full
@@ -2399,16 +2398,16 @@ re-run (262 passed, 0 failed) — recorded as a flake, not fixed here.
 
 All commands actually run. Node 26.13.1, pnpm 12.21.0, Rust 1.100.0.
 
-| Check | Result |
-| --- | --- |
-| cargo fmt --check | pass |
-| cargo clippy --workspace --exclude reponyx-desktop --all-targets | pass, 0 warnings (1 collapsible-`if` + 1 unused-workspace-dependency warning found and fixed during the run) |
-| cargo test --workspace --exclude reponyx-desktop | **302 passed, 0 failed** — scheduler 40 new (lib 8, dst 5, materialize 10, next_run 14, precedence 3); auth-broker 22, core 11, credential-store 20, database 55, git-engine 87, github-provider 63, logging 4, provider-abstractions 0 |
-| cargo tree -p reponyx-scheduler | core + database only (chrono, chrono-tz, serde, serde_json, sqlx, uuid) — no git-engine, no provider, no queue |
-| pnpm -r typecheck | pass (shared, ui, api-client, desktop) |
-| pnpm --filter @reponyx/desktop build (vite) | pass |
-| pnpm --filter @reponyx/desktop lint (eslint) | pass |
-| cargo check -p reponyx-desktop | **FAIL — blocked**: same missing `gdk-3.0` / WebViewGTK system libraries as Phase 1 (desktop schedule commands verified by `cargo fmt` + review only) |
+| Check                                                            | Result                                                                                                                                                                                                                                  |
+| ---------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| cargo fmt --check                                                | pass                                                                                                                                                                                                                                    |
+| cargo clippy --workspace --exclude reponyx-desktop --all-targets | pass, 0 warnings (1 collapsible-`if` + 1 unused-workspace-dependency warning found and fixed during the run)                                                                                                                            |
+| cargo test --workspace --exclude reponyx-desktop                 | **302 passed, 0 failed** — scheduler 40 new (lib 8, dst 5, materialize 10, next_run 14, precedence 3); auth-broker 22, core 11, credential-store 20, database 55, git-engine 87, github-provider 63, logging 4, provider-abstractions 0 |
+| cargo tree -p reponyx-scheduler                                  | core + database only (chrono, chrono-tz, serde, serde_json, sqlx, uuid) — no git-engine, no provider, no queue                                                                                                                          |
+| pnpm -r typecheck                                                | pass (shared, ui, api-client, desktop)                                                                                                                                                                                                  |
+| pnpm --filter @reponyx/desktop build (vite)                      | pass                                                                                                                                                                                                                                    |
+| pnpm --filter @reponyx/desktop lint (eslint)                     | pass                                                                                                                                                                                                                                    |
+| cargo check -p reponyx-desktop                                   | **FAIL — blocked**: same missing `gdk-3.0` / WebViewGTK system libraries as Phase 1 (desktop schedule commands verified by `cargo fmt` + review only)                                                                                   |
 
 No flakes observed in the full-suite runs during this work.
 
@@ -2416,47 +2415,47 @@ No flakes observed in the full-suite runs during this work.
 
 All commands actually run. Node 26.13.1, pnpm 12.21.0, Rust 1.100.0.
 
-| Check | Result |
-| --- | --- |
-| cargo fmt --check | pass |
-| cargo clippy --workspace --exclude reponyx-desktop --all-targets | pass, 0 warnings |
-| cargo test --workspace --exclude reponyx-desktop | **215 passed, 0 failed** — core 11, database 55 (installations 8), git-engine 87, github-provider 58 (lib 26, discovery 8, errors 8, installations 4, rate_limit 4, redaction 6, sync 2), logging 4, provider-abstractions 0 |
-| pnpm -r typecheck | pass (shared, ui, api-client, desktop) |
-| pnpm --filter @reponyx/desktop build (vite) | pass (2305 modules, 1.56 s) |
-| cargo check -p reponyx-desktop | **FAIL — blocked**: same missing `gdk-3.0` / WebViewGTK system libraries as Phase 1 |
+| Check                                                            | Result                                                                                                                                                                                                                       |
+| ---------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| cargo fmt --check                                                | pass                                                                                                                                                                                                                         |
+| cargo clippy --workspace --exclude reponyx-desktop --all-targets | pass, 0 warnings                                                                                                                                                                                                             |
+| cargo test --workspace --exclude reponyx-desktop                 | **215 passed, 0 failed** — core 11, database 55 (installations 8), git-engine 87, github-provider 58 (lib 26, discovery 8, errors 8, installations 4, rate_limit 4, redaction 6, sync 2), logging 4, provider-abstractions 0 |
+| pnpm -r typecheck                                                | pass (shared, ui, api-client, desktop)                                                                                                                                                                                       |
+| pnpm --filter @reponyx/desktop build (vite)                      | pass (2305 modules, 1.56 s)                                                                                                                                                                                                  |
+| cargo check -p reponyx-desktop                                   | **FAIL — blocked**: same missing `gdk-3.0` / WebViewGTK system libraries as Phase 1                                                                                                                                          |
 
 ### Phase 3 — 2026-11-18 (Git engine, on `main`)
 
 All commands actually run. Node 26.13.1, pnpm 12.21.0, Rust 1.100.0,
 Git 2.43.0 (git-lfs not installed on this VM).
 
-| Check | Result |
-| --- | --- |
-| cargo fmt --check | pass |
-| cargo clippy --workspace --exclude reponyx-desktop --all-targets | pass, 0 warnings |
-| cargo test --workspace --exclude reponyx-desktop | **156 passed, 0 failed** — core 11, database 54, git-engine 87 (lib 58, cancellation 3, credentials 4, disk_full 1, health 6, locks 3, mirror 6, mirror_clone 1, refs 1, working 4), logging 4, provider-abstractions 0 |
-| cargo test -p reponyx-git-engine (3 consecutive runs) | 87 passed, 0 failed each run |
-| pnpm -r typecheck | pass (shared, ui, api-client, desktop) |
-| pnpm --filter @reponyx/desktop build (vite) | pass (2305 modules, 1.82 s) |
-| cargo check -p reponyx-desktop | **FAIL — blocked**: same missing `gdk-3.0` / WebViewGTK system libraries as Phase 1 |
+| Check                                                            | Result                                                                                                                                                                                                                  |
+| ---------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| cargo fmt --check                                                | pass                                                                                                                                                                                                                    |
+| cargo clippy --workspace --exclude reponyx-desktop --all-targets | pass, 0 warnings                                                                                                                                                                                                        |
+| cargo test --workspace --exclude reponyx-desktop                 | **156 passed, 0 failed** — core 11, database 54, git-engine 87 (lib 58, cancellation 3, credentials 4, disk_full 1, health 6, locks 3, mirror 6, mirror_clone 1, refs 1, working 4), logging 4, provider-abstractions 0 |
+| cargo test -p reponyx-git-engine (3 consecutive runs)            | 87 passed, 0 failed each run                                                                                                                                                                                            |
+| pnpm -r typecheck                                                | pass (shared, ui, api-client, desktop)                                                                                                                                                                                  |
+| pnpm --filter @reponyx/desktop build (vite)                      | pass (2305 modules, 1.82 s)                                                                                                                                                                                             |
+| cargo check -p reponyx-desktop                                   | **FAIL — blocked**: same missing `gdk-3.0` / WebViewGTK system libraries as Phase 1                                                                                                                                     |
 
 ### Re-check 2026-11-18 (user's 8 commits + dependency updates, on `main`)
 
 All commands actually run, after the merge (`d3adc8c`) and the fixes
 listed above. Node 26.13.1, pnpm 12.21.0, Rust 1.100.0.
 
-| Check | Result |
-| --- | --- |
-| cargo fmt --check | pass (after `cargo fmt` on `build.rs`) |
-| cargo clippy -p core,logging,git-engine,provider-abstractions,database --all-targets | pass, 0 warnings |
-| cargo test (same 5 crates) | **36 passed, 0 failed** — core 7, database migrations 3, git-engine unit 21 + mirror-clone integration 1, logging 4, provider-abstractions 0 |
-| cargo update | pass — sqlx 0.8.6 → 0.9.1, tauri-plugin-updater 2.14.1 added, tauri 2.12.7, tauri-build 2.7.6, all others already latest stable |
-| pnpm install | pass (Node 26.13.1; `pnpm peers check`: no peer issues after TS pinned to 6.0.3) |
-| pnpm -r typecheck | pass (shared, ui, api-client, desktop) — also passed under TS 7.0.2 before the eslint-driven pin-back |
-| pnpm --filter @reponyx/desktop lint (eslint) | pass |
-| pnpm -r lint | pass |
-| pnpm --filter @reponyx/desktop build (vite) | pass (2305 modules, ~1 s) |
-| cargo check -p reponyx-desktop | **FAIL — blocked**: `gdk-sys v0.18.2` + `gdk-pixbuf-sys v0.18.0`: `Package gdk-3.0 was not found in the pkg-config search path`. No tauri-build, capability, icon, or updater error appeared before this failure. |
+| Check                                                                                | Result                                                                                                                                                                                                            |
+| ------------------------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| cargo fmt --check                                                                    | pass (after `cargo fmt` on `build.rs`)                                                                                                                                                                            |
+| cargo clippy -p core,logging,git-engine,provider-abstractions,database --all-targets | pass, 0 warnings                                                                                                                                                                                                  |
+| cargo test (same 5 crates)                                                           | **36 passed, 0 failed** — core 7, database migrations 3, git-engine unit 21 + mirror-clone integration 1, logging 4, provider-abstractions 0                                                                      |
+| cargo update                                                                         | pass — sqlx 0.8.6 → 0.9.1, tauri-plugin-updater 2.14.1 added, tauri 2.12.7, tauri-build 2.7.6, all others already latest stable                                                                                   |
+| pnpm install                                                                         | pass (Node 26.13.1; `pnpm peers check`: no peer issues after TS pinned to 6.0.3)                                                                                                                                  |
+| pnpm -r typecheck                                                                    | pass (shared, ui, api-client, desktop) — also passed under TS 7.0.2 before the eslint-driven pin-back                                                                                                             |
+| pnpm --filter @reponyx/desktop lint (eslint)                                         | pass                                                                                                                                                                                                              |
+| pnpm -r lint                                                                         | pass                                                                                                                                                                                                              |
+| pnpm --filter @reponyx/desktop build (vite)                                          | pass (2305 modules, ~1 s)                                                                                                                                                                                         |
+| cargo check -p reponyx-desktop                                                       | **FAIL — blocked**: `gdk-sys v0.18.2` + `gdk-pixbuf-sys v0.18.0`: `Package gdk-3.0 was not found in the pkg-config search path`. No tauri-build, capability, icon, or updater error appeared before this failure. |
 
 ## Files created
 
@@ -2486,7 +2485,7 @@ Phase 1 handoff). Top level: `Cargo.toml`, `package.json`,
   `cargo check -p reponyx-desktop` fails in `gdk-sys v0.18.2`:
   `Package gdk-3.0 was not found in the pkg-config search path`.
   `apt-get install libwebkit2gtk-4.1-dev libgtk-3-dev
-  libayatana-appindicator3-dev librsvg2-dev libsoup-3.0-dev` fails with
+libayatana-appindicator3-dev librsvg2-dev libsoup-3.0-dev` fails with
   `E: Unable to correct problems, you have held broken packages` because
   `libzstd-dev` requires `libzstd1 (= 1.5.5+dfsg2-2build1.1)` but the
   image pins `libzstd1 1.5.5+dfsg2-2build1.1+hatch1` (no repo source for
@@ -2503,7 +2502,7 @@ Phase 1 handoff). Top level: `Cargo.toml`, `package.json`,
   2026-11-19, unreleased):** opening the Vite dev server at
   localhost:1420 in a plain browser made the Accounts and Overview
   pages show `Cannot read properties of undefined (reading
-  'invoke')`, and the Git / Auth Broker checks spun on "checking…"
+'invoke')`, and the Git / Auth Broker checks spun on "checking…"
   forever. Cause: `invoke` reads `window.__TAURI_INTERNALS__`,
   which only exists inside the Tauri webview. Fix: every api-client
   call goes through a guard that throws a clear "Tauri backend is
@@ -2616,8 +2615,8 @@ W1 built on the 2nd branch, main untouched.
 
 - The user set all remaining env vars in the Vercel dashboard
   themselves: Google/GitHub OAuth client IDs + secrets, Resend key
-  + sender, EMAIL_PROVIDER, SMTP host/port/user/pass/from, and the
-  GitHub App id + private key. Email and OAuth are now configured.
+  - sender, EMAIL_PROVIDER, SMTP host/port/user/pass/from, and the
+    GitHub App id + private key. Email and OAuth are now configured.
 - The user changed the Production branch tracking from `main` to
   `feature/admin-control-plane`.
 - Push snapshot `47c52b2` (sync 68) auto-triggered a production
@@ -2711,7 +2710,7 @@ W1 built on the 2nd branch, main untouched.
   (needs the user in a browser — the consent step cannot be tested
   headless); W3 desktop login next.
 
-## Web platform — W2 polish (2026-11-27, local, not pushed)
+## Web platform — W2 polish (2026-11-27, pushed + deployed 2026-11-27 ~04:47 MST)
 
 User asked (screenshots of RepoNyx vs sendcms): OAuth buttons on the
 register page too, full name mandatory, buttons above the form like
@@ -2736,11 +2735,24 @@ sendcms, a Terms of Service line + page, clean URLs.
   database 8/8, web 19/19 (5 auth-flow + 14 OAuth), `next build` clean
   (27 routes), local smoke test green (button order, /terms 200, old
   URLs 307 with query, register without name → 400).
-- Still open: push + deploy of this batch; live Google/GitHub
-  click-through (user in a browser); the CI-on-feature-branch question
-  (user has not answered yet — branch CI has never run).
+- Pushed + deployed 2026-11-27 ~04:47 MST: snapshot `64e716f6`
+  (sync 71, 419 files — covers this batch AND part 2); migrations
+  0003 + 0004 applied to the live Prisma DB BEFORE the push (verified:
+  `users.name` + `users.has_password` present, `linked_providers`
+  exists, 4 migrations applied, 1 user); Vercel `dpl_HYVWVdcJzLnk5nBhpZHbds8BhZc2`
+  READY (production target, commit 64e716f6, aliases incl.
+  reponyx.bond). Live smoke test on reponyx.bond green: /login +
+  /register 200 with buttons on top, Full name field, Terms footer;
+  /terms 200; /auth/* → 307 to clean URLs; OAuth starts 307 with the
+  exact registered callback URLs; /register/complete renders with the
+  invalid-token note; /api/me/linked 401 without a session.
+- Still open: the CI-on-feature-branch question (user has not
+  answered yet — branch CI has never run). Live Google/GitHub
+  click-through DONE 2026-11-27 ~04:56 MST (user linked GitHub +
+  Google to the muhammaddomains65@gmail.com account; dashboard shows
+  both linked, same email, success banner, name saved).
 
-## Web platform — W2 polish, part 2: linked sign-in methods + name required (2026-11-27, local, not pushed)
+## Web platform — W2 polish, part 2: linked sign-in methods + name required (2026-11-27, pushed + deployed 2026-11-27 ~04:47 MST, same snapshot `64e716f6`, sync 71)
 
 User asked: even with the same Gmail/GitHub/Google — all one account;
 a linked option inside the profile, so any of them can sign in. Then
@@ -2756,14 +2768,51 @@ profile is complete before login is allowed.
   `last_login_method`).
 - **Name required:** OAuth register without a provider name →
   `/register/complete` with a signed 10-min pending token; `POST
-  /api/auth/register/complete` creates the account under the 1/IP/24h
+/api/auth/register/complete` creates the account under the 1/IP/24h
   limit. Profile name edit via `PATCH /api/me` (owner account can
   complete its profile).
 - Verified: database 9/9, web 28/28 (5 auth-flow + 19 OAuth + 4
   linked), i18n 120 keys 0 failures, typechecks clean, `next build`
   clean (32 routes), local smoke test green.
-- Still open: push + deploy of this batch AND the W2 polish batch (both
-  local, one push covers both; migration 0004 must be applied to the
-  live Prisma DB before the deploy goes live — same rule as 0003);
-  live Google/GitHub click-through (user in a browser); the
-  CI-on-feature-branch question (unanswered).
+- Pushed + deployed with the W2 polish batch (same snapshot
+  `64e716f6`, sync 71; migration 0004 applied to the live Prisma DB
+  before the push — see above). Live smoke test green (see above).
+- Still open: the CI-on-feature-branch question (unanswered). Live
+  Google/GitHub click-through DONE 2026-11-27 ~04:56 MST (user linked
+  GitHub + Google to the muhammaddomains65@gmail.com account;
+  dashboard shows both linked, same email, success banner).
+
+## Web platform — W3 desktop login (2026-11-27, branch `feature/admin-control-plane`, local only)
+
+- Web: pending-login token (HMAC, 10-min) + `POST /api/auth/2fa/verify`;
+  OAuth state `client` flag (`web`|`desktop`); desktop callback →
+  `reponyx://auth?code=<desktopCode>` (HMAC, never the raw session
+  token); `POST /api/auth/desktop/exchange`; desktop 2FA →
+  `reponyx://auth?two_factor_required=1&pending=…`; desktop
+  name-required → `reponyx://auth?register_complete=…`; TOTP in
+  `@reponyx/auth` (`otpauth` 9.6.0). No new web DB migration.
+- Desktop Rust: `web_auth.rs` (9 commands), `reponyx:web`/`session`
+  in the OS store only, `web.account` cache for the offline rule,
+  `ui.locale` is the 8th settings key, deep-link 2.6.3 +
+  single-instance 2.5.5 (single-instance FIRST), scheme `reponyx`,
+  `CommandError.retry_at` added (30+ literals).
+- Desktop frontend: `Login.tsx` (outside the layout), `App.tsx`
+  auth gate + deep-link listener, `LocaleProvider` + `useT`,
+  Settings Account section + Language switcher, shared web types +
+  zod schemas, api-client `web*` functions.
+- Verified: web 36/36, auth 14/14, cargo test (excl. desktop)
+  476/476, desktop frontend 114/114, typecheck clean, lint clean,
+  vite build clean, i18n 155 keys 0 failures, fmt clean,
+  check-no-private-key PASSED. **MinGW `cargo check -p
+  reponyx-desktop --target x86_64-pc-windows-gnu` PASSES** (recipe
+  in `AGENTS.md` — build agent+broker for the GNU target, copy the
+  two `.exe` files to `target/release/`; the copies were deleted
+  afterwards). It caught 4 real errors. MinGW clippy on the
+  desktop: 11 pre-existing findings, none in W3 code, none gated
+  by CI. Semgrep: 1 pre-existing blocking finding
+  (`packages/database/src/client.ts`, `sslmode=require` →
+  `rejectUnauthorized: false`; live DB uses `verify-full`) — left
+  for the user's decision.
+- Not pushed yet (next sync 72, needs approval). Still open: the
+  live desktop login flow on the user's Windows machine (needs the
+  build + install); the CI-on-feature-branch question (unanswered).

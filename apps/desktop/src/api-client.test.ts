@@ -21,6 +21,15 @@ import {
   createBrokerSetupState,
   createSchedule,
   removePatAccount,
+  webExchangeDesktopCode,
+  webLogin,
+  webLogout,
+  webOpenDashboard,
+  webOpenOAuth,
+  webOpenRegister,
+  webOpenUrl,
+  webSessionStatus,
+  webVerify2fa,
 } from "@reponyx/api-client";
 
 const account = {
@@ -137,5 +146,123 @@ describe("Tauri invoke argument names are camelCase", () => {
       key: "storage.root",
     });
     expect(result).toBe("Storage root reset to the default.");
+  });
+});
+
+describe("web login commands (W3)", () => {
+  const webUser = {
+    id: "019c0000-0000-7000-8000-000000000003",
+    email: "user@example.com",
+    name: "Test User",
+    createdAt: "2026-11-27T00:00:00Z",
+  };
+
+  const webAccount = {
+    user: webUser,
+    package: {
+      name: "Free",
+      maxLinkedAccounts: 2,
+      maxDevices: 2,
+      expiresAt: null,
+    },
+    usage: { linkedAccounts: 0, devices: 1 },
+  };
+
+  it("webLogin sends email/password and parses the 2FA step", async () => {
+    invokeMock.mockResolvedValue({
+      step: "2fa_required",
+      pendingToken: "pending-token",
+      user: null,
+    });
+    const result = await webLogin("user@example.com", "secret");
+    expect(invokeMock).toHaveBeenCalledWith("web_login_command", {
+      email: "user@example.com",
+      password: "secret",
+    });
+    expect(result.step).toBe("2fa_required");
+    expect(result.pendingToken).toBe("pending-token");
+  });
+
+  it("webVerify2fa sends pendingToken/code, not pending_token", async () => {
+    invokeMock.mockResolvedValue({
+      step: "ok",
+      pendingToken: null,
+      user: webUser,
+    });
+    const result = await webVerify2fa("pending-token", "123456");
+    expect(invokeMock).toHaveBeenCalledWith("web_verify_2fa_command", {
+      pendingToken: "pending-token",
+      code: "123456",
+    });
+    expect(result.user?.email).toBe("user@example.com");
+  });
+
+  it("webSessionStatus parses the account payload", async () => {
+    invokeMock.mockResolvedValue({
+      authenticated: true,
+      offline: false,
+      sessionExpired: false,
+      account: webAccount,
+    });
+    const result = await webSessionStatus();
+    expect(invokeMock).toHaveBeenCalledWith(
+      "web_session_status_command",
+      undefined,
+    );
+    expect(result.account?.package.name).toBe("Free");
+    expect(result.account?.usage.devices).toBe(1);
+  });
+
+  it("webLogout calls the logout command", async () => {
+    invokeMock.mockResolvedValue(undefined);
+    await webLogout();
+    expect(invokeMock).toHaveBeenCalledWith(
+      "web_logout_command",
+      undefined,
+    );
+  });
+
+  it("webOpenOAuth sends the provider", async () => {
+    invokeMock.mockResolvedValue(undefined);
+    await webOpenOAuth("github");
+    expect(invokeMock).toHaveBeenCalledWith("web_open_oauth_command", {
+      provider: "github",
+    });
+  });
+
+  it("webOpenRegister and webOpenDashboard call their commands", async () => {
+    invokeMock.mockResolvedValue(undefined);
+    await webOpenRegister();
+    expect(invokeMock).toHaveBeenCalledWith(
+      "web_open_register_command",
+      undefined,
+    );
+    await webOpenDashboard();
+    expect(invokeMock).toHaveBeenCalledWith(
+      "web_open_dashboard_command",
+      undefined,
+    );
+  });
+
+  it("webOpenUrl sends the URL", async () => {
+    invokeMock.mockResolvedValue(undefined);
+    await webOpenUrl("/register/complete?token=abc");
+    expect(invokeMock).toHaveBeenCalledWith("web_open_url_command", {
+      url: "/register/complete?token=abc",
+    });
+  });
+
+  it("webExchangeDesktopCode sends code, not the token", async () => {
+    invokeMock.mockResolvedValue({
+      step: "ok",
+      pendingToken: null,
+      user: webUser,
+    });
+    const result = await webExchangeDesktopCode("desktop-code");
+    expect(invokeMock).toHaveBeenCalledWith(
+      "web_exchange_desktop_code_command",
+      { code: "desktop-code" },
+    );
+    expect(result.user?.name).toBe("Test User");
   });
 });

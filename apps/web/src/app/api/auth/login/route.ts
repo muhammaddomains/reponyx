@@ -4,6 +4,7 @@ import { verifyPassword } from "@reponyx/auth";
 import { findUserByEmail, recordAudit, upsertDevice } from "@reponyx/database";
 import { ApiError, errorResponse, parseJsonBody } from "@/lib/api-errors";
 import {
+  createPendingLoginToken,
   createSessionForUser,
   DUMMY_PASSWORD_HASH,
   sessionCookie,
@@ -41,8 +42,15 @@ export async function POST(req: Request) {
       ipHash,
     });
     // 2FA step (W2/W3): the session is never returned until the code verifies.
+    // The pending token proves the password step passed; the client
+    // returns it with the authenticator code to /api/auth/2fa/verify.
     if (user.totp_secret) {
-      return NextResponse.json({ step: "2fa_required" });
+      const pendingToken = createPendingLoginToken(user.id);
+      if (!pendingToken) throw new ApiError("internal_error", 500);
+      return NextResponse.json({
+        step: "2fa_required",
+        pendingToken,
+      });
     }
     let deviceId: string | null = null;
     if (body.deviceKey) {

@@ -162,6 +162,8 @@ pub(crate) async fn stop_agent_if_running() -> CommandResult<bool> {
     Err(CommandError {
         code: "InternalError".into(),
         message: "background agent did not stop; the database restore was not staged".into(),
+
+        retry_at: None,
     })
 }
 
@@ -266,6 +268,8 @@ pub async fn agent_enqueue_command(repository_id: String) -> CommandResult<Optio
     let id = Uuid::parse_str(&repository_id).map_err(|_| CommandError {
         code: "InvalidInput".into(),
         message: "invalid repository id".into(),
+
+        retry_at: None,
     })?;
     let job = client()?.enqueue(id).await.map_err(CommandError::from)?;
     Ok(job.map(|j| j.to_string()))
@@ -276,6 +280,8 @@ pub async fn agent_cancel_command(job_id: String) -> CommandResult<()> {
     let id = Uuid::parse_str(&job_id).map_err(|_| CommandError {
         code: "InvalidInput".into(),
         message: "invalid job id".into(),
+
+        retry_at: None,
     })?;
     client()?.cancel_job(id).await.map_err(CommandError::from)
 }
@@ -364,7 +370,8 @@ fn spawn_agent_process(app: Option<&AppHandle>) -> Result<Child, CommandError> {
     let exe = resolve_agent_exe(app).ok_or_else(|| CommandError {
         code: "InternalError".into(),
         message: "reponyx-agent executable not found (set REPONYX_AGENT_EXE or install the agent binary on PATH)".into(),
-    })?;
+
+        retry_at: None,})?;
     let mut cmd = Command::new(&exe);
     // Detach: no inherited console wait.
     #[cfg(windows)]
@@ -387,6 +394,8 @@ fn spawn_agent_process(app: Option<&AppHandle>) -> Result<Child, CommandError> {
     cmd.spawn().map_err(|e| CommandError {
         code: "InternalError".into(),
         message: format!("failed to spawn {}: {e}", exe.display()),
+
+        retry_at: None,
     })
 }
 
@@ -412,6 +421,8 @@ pub async fn register_agent_autostart_command(_app: AppHandle) -> CommandResult<
         let exe = std::env::current_exe().map_err(|e| CommandError {
             code: "InternalError".into(),
             message: format!("could not locate the desktop executable: {e}"),
+
+            retry_at: None,
         })?;
         register_autostart(&exe)
     }
@@ -420,6 +431,8 @@ pub async fn register_agent_autostart_command(_app: AppHandle) -> CommandResult<
         let exe = resolve_agent_exe(Some(&_app)).ok_or_else(|| CommandError {
             code: "InternalError".into(),
             message: "reponyx-agent executable not found".into(),
+
+            retry_at: None,
         })?;
         register_autostart(&exe)
     }
@@ -597,6 +610,8 @@ fn register_autostart(desktop_exe: &Path) -> CommandResult<String> {
         .map_err(|e| CommandError {
             code: "InternalError".into(),
             message: format!("schtasks failed: {e}"),
+
+            retry_at: None,
         })?;
     if output.status.success() {
         return Ok(if had_stale {
@@ -623,6 +638,8 @@ fn register_autostart(desktop_exe: &Path) -> CommandResult<String> {
             message: format!(
                 "could not enable start at login: Task Scheduler said '{scheduler_error}', Registry Run key said '{reg_error}'"
             ),
+
+            retry_at: None,
         }),
     }
 }
@@ -689,11 +706,15 @@ fn register_autostart(agent_exe: &Path) -> CommandResult<String> {
     let home = std::env::var_os("HOME").ok_or_else(|| CommandError {
         code: "InternalError".into(),
         message: "HOME not set".into(),
+
+        retry_at: None,
     })?;
     let dir = PathBuf::from(home).join(".config/systemd/user");
     std::fs::create_dir_all(&dir).map_err(|e| CommandError {
         code: "InternalError".into(),
         message: e.to_string(),
+
+        retry_at: None,
     })?;
     let unit = dir.join("reponyx-agent.service");
     let body = format!(
@@ -703,6 +724,8 @@ fn register_autostart(agent_exe: &Path) -> CommandResult<String> {
     std::fs::write(&unit, body).map_err(|e| CommandError {
         code: "InternalError".into(),
         message: e.to_string(),
+
+        retry_at: None,
     })?;
     let _ = Command::new("systemctl")
         .args(["--user", "daemon-reload"])
@@ -759,11 +782,15 @@ fn register_autostart(agent_exe: &Path) -> CommandResult<String> {
     let home = std::env::var_os("HOME").ok_or_else(|| CommandError {
         code: "InternalError".into(),
         message: "HOME not set".into(),
+
+        retry_at: None,
     })?;
     let dir = PathBuf::from(&home).join("Library/LaunchAgents");
     std::fs::create_dir_all(&dir).map_err(|e| CommandError {
         code: "InternalError".into(),
         message: e.to_string(),
+
+        retry_at: None,
     })?;
     let plist = dir.join("com.reponyx.agent.plist");
     let body = format!(
@@ -784,6 +811,8 @@ fn register_autostart(agent_exe: &Path) -> CommandResult<String> {
     std::fs::write(&plist, body).map_err(|e| CommandError {
         code: "InternalError".into(),
         message: e.to_string(),
+
+        retry_at: None,
     })?;
     let _ = Command::new("launchctl")
         .args(["load", "-w", &plist.to_string_lossy()])

@@ -29,6 +29,7 @@ const CODE_TO_MESSAGE_KEY: Record<string, string> = {
   account_switch_blocked: "accountSwitchBlocked",
   invalid_token: "invalidToken",
   invalid_body: "invalidBody",
+  invalid_2fa_code: "invalid2faCode",
   email_unavailable: "emailUnavailable",
   internal_error: "internalError",
   unauthorized: "sessionExpired",

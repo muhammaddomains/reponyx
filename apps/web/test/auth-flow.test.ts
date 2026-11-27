@@ -4,6 +4,7 @@ import { readdir, readFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { PGlite } from "@electric-sql/pglite";
+import { generateTotpCode, generateTotpSecret } from "@reponyx/auth";
 import { migrate, type DbClient } from "@reponyx/database";
 import type { EmailMessage, SentEmail } from "@reponyx/email";
 import { setDbClientForTests } from "../src/lib/db";
@@ -11,6 +12,7 @@ import { setEmailSenderForTests } from "../src/lib/email";
 import { POST as registerPost } from "../src/app/api/auth/register/route";
 import { POST as verifyPost } from "../src/app/api/auth/verify/route";
 import { POST as loginPost } from "../src/app/api/auth/login/route";
+import { POST as verify2faPost } from "../src/app/api/auth/2fa/verify/route";
 import { POST as logoutPost } from "../src/app/api/auth/logout/route";
 import { POST as resetPost } from "../src/app/api/auth/reset/route";
 import { POST as resetConfirmPost } from "../src/app/api/auth/reset/confirm/route";
@@ -27,6 +29,8 @@ import {
  * (a PGlite adapter — the SQL, the migrations and the hashing are all
  * the production ones).
  */
+
+process.env.SESSION_SECRET = "test-session-secret-32-chars-long";
 
 const sent: EmailMessage[] = [];
 const db = new PGlite();
@@ -304,4 +308,71 @@ test("registering an existing email is refused", async () => {
   });
   assert.equal(res.status, 409);
   assert.equal(errorCode(res), "email_taken");
+});
+
+test("2FA: password login stops at the 2FA step; verify with the code completes it", async () => {
+  const ip = { "x-forwarded-for": "203.0.113.40" };
+  const reg = await call(registerPost, "/api/auth/register", {
+    body: {
+      name: "Twofa Flow",
+      email: "twofa-flow@example.com",
+      password: "correct horse battery staple",
+    },
+    headers: ip,
+  });
+  assert.equal(reg.status, 201);
+  const token = tokenFromEmail(sent[sent.length - 1].html);
+  const ver = await call(verifyPost, "/api/auth/verify", { body: { token } });
+  assert.equal(ver.status, 200);
+  const secret = generateTotpSecret();
+  await client.query("UPDATE users SET totp_secret = $1 WHERE email = $2", [
+    secret,
+    "twofa-flow@example.com",
+  ]);
+
+  // The password is right, but no session comes back yet.
+  const login = await call(loginPost, "/api/auth/login", {
+    body: {
+      email: "twofa-flow@example.com",
+      password: "correct horse battery staple",
+    },
+  });
+  assert.equal(login.status, 200);
+  assert.equal(login.json.step, "2fa_required");
+  assert.equal(login.json.session, undefined);
+  const pendingToken = login.json.pendingToken as string;
+  assert.match(pendingToken, /^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/);
+
+  // A wrong code is refused, and a tampered token is refused.
+  const wrong = await call(verify2faPost, "/api/auth/2fa/verify", {
+    body: { token: pendingToken, code: "000000" },
+  });
+  assert.equal(wrong.status, 401);
+  assert.equal(errorCode(wrong), "invalid_2fa_code");
+  const tampered = await call(verify2faPost, "/api/auth/2fa/verify", {
+    body: { token: "tampered.token", code: "123456" },
+  });
+  assert.equal(tampered.status, 404);
+  assert.equal(errorCode(tampered), "invalid_token");
+
+  // The right code mints the session and registers the device.
+  const ok = await call(verify2faPost, "/api/auth/2fa/verify", {
+    body: {
+      token: pendingToken,
+      code: generateTotpCode(secret),
+      deviceKey: "flow-device-2fa",
+      machineName: "DESKTOP-TEST",
+      platform: "Windows 11",
+      appVersion: "0.1.0",
+    },
+  });
+  assert.equal(ok.status, 200);
+  const sessionToken = (ok.json.session as { token: string }).token;
+  assert.match(sessionToken, /^[A-Za-z0-9_-]+$/);
+  const limits = await call(limitsGet, "/api/me/limits", {
+    method: "GET",
+    headers: { authorization: `Bearer ${sessionToken}` },
+  });
+  assert.equal(limits.status, 200);
+  assert.deepEqual(limits.json.usage, { linkedAccounts: 0, devices: 1 });
 });

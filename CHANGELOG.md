@@ -13,7 +13,7 @@ All notable changes to RepoNyx are documented here. Format follows
 - **Formatting fixed:** Prettier 3.10.1 + `prettier-plugin-tailwindcss` adopted (root `.prettierrc`, `pnpm format` / `format:check`); the 12 locale JSON files were single-line dumps and are now pretty-printed (2-space, keys alphabetical). Skills brought from sendcms: `next-best-practices` (verbatim) + a RepoNyx-adapted `reponyx-project-guidelines` skill.
 - **Verified:** package tests 25/25 (auth 7, email 10, database 8), web tests 14/14 (5 auth-flow + 9 OAuth, stubbed provider fetch, real PGlite + routes), i18n validate 95 keys 0 failures, all typechecks clean, `next build` clean (22 routes). Local `next start` smoke test: home 200, login 200 (both OAuth buttons render), start routes 307 to the providers, bad callback → login `oauth_failed`, favicon/og/manifest 200.
 
-### Added — Web platform W2 polish: OAuth registration, full name, Terms, clean URLs (2026-11-27, branch `feature/admin-control-plane`, local only)
+### Added — Web platform W2 polish: OAuth registration, full name, Terms, clean URLs (2026-11-27, branch `feature/admin-control-plane`, pushed + deployed 2026-11-27 ~04:47 MST, snapshot `64e716f6`, sync 71)
 
 - **OAuth on the register page too (sendcms order):** Google/GitHub buttons sit on top of the form on both login and register, with an "or continue with email" divider below them. The OAuth state now carries the intent (`login` | `register`, HMAC-signed): **login still refuses unregistered users** (`oauth_no_account`), but the **register intent creates the account** with the provider-verified email and the profile name (GitHub falls back to the login when no public name), under the same 1-registration-per-IP-per-24h limit as the email form; an existing email on the register intent is refused with `email_taken`. OAuth-created accounts get an unusable password hash (random token nobody knows) until the owner sets one via the reset flow.
 - **Full name required at registration:** new migration `0003_add_user_name` (`users.name`, nullable so the pre-existing owner account keeps working); the register API returns 400 without it, the form has a Full name field first, and the dashboard welcome + `/api/me/limits` return the name (falling back to the email when null).
@@ -21,12 +21,19 @@ All notable changes to RepoNyx are documented here. Format follows
 - **Clean URLs:** auth pages moved from `/auth/*` to top level — `/login`, `/register`, `/reset`, `/reset/confirm`, `/verify`; the old `/auth/*` routes redirect with the query string preserved (so the `?token=` links already sent by email still work), and the verification/reset emails now link to the new URLs.
 - **Verified:** package tests 25/25, web tests 19/19 (5 auth-flow + 14 OAuth, incl. 5 new register-intent tests), i18n validate 99 keys 0 failures, all typechecks clean, `next build` clean (27 routes). Local smoke test: login/register 200 with buttons-before-form order verified in the HTML, `/terms` 200, old URLs 307 to the new ones with the query preserved, register API without a name → 400 `invalid_body`.
 
-### Added — Web platform W2 polish, part 2: linked sign-in methods + name required for OAuth registration (2026-11-27, branch `feature/admin-control-plane`, local only)
+### Added — Web platform W2 polish, part 2: linked sign-in methods + name required for OAuth registration (2026-11-27, branch `feature/admin-control-plane`, pushed + deployed 2026-11-27 ~04:47 MST, snapshot `64e716f6`, sync 71)
 
 - **One account, many sign-in methods:** the same verified email is one RepoNyx account no matter how you sign in — email/password, Google, or GitHub. New `linked_providers` table (migration `0004_linked_providers`, `UNIQUE(user_id, provider)` + `UNIQUE(provider, provider_user_id)`) records which providers are linked to each account; a login through a provider links it automatically, and the provider identity (Google `sub` / GitHub `id`) resolves to its owner first, so a login still works even if the provider's email changed. The dashboard profile shows a **Sign-in methods** card (Google / GitHub, Linked + email or Not linked) with **Link** (OAuth flow with a new `link` intent — the provider's verified email must match the account's email, otherwise `email_mismatch`; a provider already linked to another account is refused with `already_linked`) and **Unlink** (`DELETE /api/me/linked/{provider}`) — unlinking is refused with `last_login_method` when it would remove the only way in (no password + a single provider); setting a password via the reset flow unlocks it. `GET /api/me/linked` lists the account's providers; `users.has_password` (migration 0004, default true; OAuth-created accounts get false) records whether the account has a usable password.
 - **Name mandatory for OAuth registration:** if the provider does not share a name, the account is NOT created yet — the callback redirects to `/register/complete?token=…` with a 10-minute HMAC-signed pending-registration token proving the provider verified the email; the user enters their full name (mandatory) and `POST /api/auth/register/complete` creates the account (verified, no usable password, provider linked) under the same 1/IP/24h limit and logs them in. A tampered/expired token is refused (`invalid_token`). GitHub still falls back to the login name, so the step triggers mainly for Google accounts without a name.
 - **Profile name edit:** the dashboard profile card shows the email and an editable Full name (`PATCH /api/me`), so an account created before the name requirement (incl. the owner's) can complete its profile.
-- **Verified:** package tests 26/26 (database 9/9 incl. a linked-providers round-trip test), web tests 28/28 (5 auth-flow + 19 OAuth incl. link intent, auto-link, mismatch, no-session, name-required + complete-profile tests + 4 linked-API tests incl. the last-method guard and already-linked), i18n validate 120 keys 0 failures, all typechecks clean, `next build` clean (32 routes). Local smoke test: `/register/complete` 200 with the invalid-token message, `/api/me/linked` 401 without a session, link start routes 307 with the state carrying intent `link`.
+- **Verified:** package tests 26/26 (database 9/9 incl. a linked-providers round-trip test), web tests 28/28 (5 auth-flow + 19 OAuth incl. link intent, auto-link, mismatch, no-session, name-required + complete-profile tests + 4 linked-API tests incl. the last-method guard and already-linked), i18n validate 120 keys 0 failures, all typechecks clean, `next build` clean (32 routes). Local smoke test: `/register/complete` 200 with the invalid-token message, `/api/me/linked` 401 without a session, link start routes 307 with the state carrying intent `link`. **Deployed:** migrations 0003 + 0004 applied to the live Prisma DB before the push (verified live); Vercel `dpl_HYVWVdcJzLnk5nBhpZHbds8BhZc2` READY (production, commit 64e716f6); live smoke test on reponyx.bond green (buttons on top, Full name, Terms footer, /terms 200, /auth/* → 307, OAuth starts 307, /register/complete renders, /api/me/linked 401).
+
+### Added — Web platform W3: desktop login (2026-11-27, branch `feature/admin-control-plane`, local only)
+
+- **Web side:** pending-login token (HMAC-SHA256 with `SESSION_SECRET`, 10-minute TTL) — the password login now returns `{step:"2fa_required", pendingToken}` instead of a session when the account has 2FA on, and `POST /api/auth/2fa/verify` verifies the token + TOTP code, re-checks the account-switch limit, upserts the device, and only then creates the session. OAuth state carries a `client` flag (`web` | `desktop`; old states without it verify as web); start routes accept `?client=desktop` (forces the login intent — the desktop never registers or links). On desktop-client success the callback 307-redirects to `reponyx://auth?code=<desktopCode>` — a 10-minute HMAC code, never the raw session token — and `POST /api/auth/desktop/exchange` verifies it (account-switch check, device upsert) and returns the session; desktop 2FA → `reponyx://auth?two_factor_required=1&pending=…`, desktop name-required → `reponyx://auth?register_complete=…`, desktop failures → `reponyx://auth?error=…` (+`retry_at` when present). TOTP in `@reponyx/auth` (`otpauth` 9.6.0, verify window ±1 step). TOTP enrollment UI is not in W3 (no admin exists yet — W5); the verify path is fully built and tested by setting `users.totp_secret` directly. No new web DB migration — the pending-login/desktop-code design is stateless.
+- **Desktop Rust:** `apps/desktop/src-tauri/src/web_auth.rs` (new) — 9 commands: `web_login_command`, `web_verify_2fa_command`, `web_session_status_command`, `web_logout_command`, `web_open_oauth_command`, `web_open_register_command`, `web_open_dashboard_command`, `web_open_url_command` (paths under the web base URL only), `web_exchange_desktop_code_command`. The session token lives only in the OS credential store (`reponyx:web` / `session`); the frontend never sees it. The last-known account is cached in the settings table (`web.account`) so the offline rule works (already-logged-in session keeps working offline). `ui.locale` is the 8th settings key (`en` | `ur`). Deep link: `tauri-plugin-deep-link` 2.6.3 + `tauri-plugin-single-instance` 2.5.5, single-instance registered FIRST (forwards the second launch's URL to the running app and focuses its window), scheme `reponyx` in `tauri.conf.json`. `CommandError` gained `retry_at` (all 30+ struct literals updated). Windows version for the device record comes from the registry (`reg query`, hidden console, no window flash).
+- **Desktop frontend:** `Login.tsx` (rendered outside the app layout — no sidebar): OAuth buttons on top, divider, email/password form, 2FA step view, register-complete card, session-expired notice, localized error alerts (web error codes → `errors.json` via `errorMessageKey`, `{retryAt}` formatted medium-date/short-time like the web). `App.tsx` is the auth gate (`webSessionStatus` on mount) + the deep-link listener (`onOpenUrl` + `getCurrent`, parses `reponyx://auth?...`; deep links are ignored while already signed in). `LocaleProvider` + `useT` (`apps/desktop/src/lib/locale.tsx`, static JSON registration, `dir="rtl"` + `lang` on `<html>` for Urdu). Settings gains the Account section (user, package, linked accounts/devices x/max, joined, expiry, offline note, Manage on the web, Log out) + a Language switcher (English/اردو, applies right away). `packages/shared` web types + zod schemas; api-client `web*` functions (camelCase invoke args, asserted by tests).
+- **Verified:** web tests 36/36 (was 28 — 7 new desktop-client OAuth tests + 1 new 2FA password-flow test), auth package 14/14, `cargo test --workspace --exclude reponyx-desktop` 476/476, desktop frontend tests 114/114 (was 94 — 8 api-client web tests, 8 Login tests, 4 Settings tests), `pnpm -r typecheck` clean, `pnpm -r lint` clean, vite build clean, i18n validate 155 keys 0 failures, `cargo fmt` clean, `check-no-private-key.sh` PASSED. **MinGW `cargo check -p reponyx-desktop --target x86_64-pc-windows-gnu` PASSES** — the desktop crate now compiles on this VM (build agent + broker for the GNU target first, copy the two `.exe` files to `target/release/`; recipe in `AGENTS.md`); it caught 4 real errors (return-value mismatches, missing `CommandExt` import, `focus()` → `set_focus()`). MinGW clippy on the desktop shows 11 pre-existing findings (none in W3 code, none gated by CI). Semgrep (exact CI command): 1 pre-existing blocking finding in `packages/database/src/client.ts` (`rejectUnauthorized: false` for `sslmode=require` — the documented Postgres `require` semantic; the live DB uses `sslmode=verify-full`, which verifies) — left for the user's decision, not changed in W3. Not pushed yet (next sync 72, needs approval); no live migration needed.
 
 ### Changed — Web database driver: Prisma Postgres (2026-11-27, branch `feature/admin-control-plane`)
 
@@ -444,7 +451,7 @@ All notable changes to RepoNyx are documented here. Format follows
   cancelling a clone kills the child and its descendants.
 - The database now fails loudly instead of silently empty
   (audit B5/B6/B7, DB-B1): `open_database` writes a `VACUUM
-  INTO` pre-migration backup (newest 3 kept under
+INTO` pre-migration backup (newest 3 kept under
   `<db-parent>/backups/`) and runs `PRAGMA integrity_check`
   before migrating — a corrupt file now errors naming the
   database path and the backup to restore, instead of opening
@@ -491,7 +498,7 @@ All notable changes to RepoNyx are documented here. Format follows
 ### Added — Auth Broker runs with the app; release ships all binaries (2026-11-23)
 
 - Root `package.json` now has `broker` (`cargo run -p
-  reponyx-auth-broker`), `broker:build`, `agent:build`, and `dev:all`
+reponyx-auth-broker`), `broker:build`, `agent:build`, and `dev:all`
   (concurrently 10.0.7: broker + desktop together). Before this the
   broker had no script at all and had to be started by hand in a
   separate shell.
@@ -521,7 +528,7 @@ All notable changes to RepoNyx are documented here. Format follows
   The desktop checks agent health before spawning one, so a
   dev:all agent is never duplicated.
 - New `build:all` script: `broker:build && agent:build &&
-  tauri:build`, sequential because the three builds share one
+tauri:build`, sequential because the three builds share one
   cargo target-dir lock.
 
 ### Fixed — Windows first-run bugs (2026-11-23)
@@ -533,7 +540,7 @@ run (`target\debug\reponyx-desktop.exe`):
   (`tauri-macros` `ArgumentCase::Camel`); the api-client sent the
   Rust snake_case parameter names, so every command with a
   multi-word argument failed with `missing required key
-  <camelCase>` (first seen: `add_pat_account_command` missing
+<camelCase>` (first seen: `add_pat_account_command` missing
   `accountType`). All invoke keys in `packages/api-client` are now
   camelCase, the input types and the page call sites match, and
   the wrong "snake_case, matching the Rust parameter names"
@@ -550,7 +557,7 @@ run (`target\debug\reponyx-desktop.exe`):
   sqlx refused to open the DB because migration 1's checksum
   changed — the only difference between the applied migration
   and the current file is the rename of the comment `-- Gitora
-  V1` → `-- RepoNyx V1` (commit `49a44bf` vs `main`). The user's
+V1` → `-- RepoNyx V1` (commit `49a44bf` vs `main`). The user's
   DB was created by a pre-rename build. Fix on that machine:
   delete `%APPDATA%\RepoNyx\data\reponyx.sqlite*` (the DB is
   empty: no accounts, repos, or schedules yet) and restart.
@@ -559,7 +566,7 @@ run (`target\debug\reponyx-desktop.exe`):
 - The agent binary is not built by a desktop-only build, so
   "Start agent" cannot find `reponyx-agent.exe` next to the
   desktop exe. On a source checkout run `cargo build -p
-  reponyx-background-agent` first. The release workflow does
+reponyx-background-agent` first. The release workflow does
   not bundle the agent yet — open packaging gap, see
   `docs/qa/windows-verification.md`.
 
@@ -732,7 +739,7 @@ run (`target\debug\reponyx-desktop.exe`):
 ### Fixed — CI windows-build on the storage push (2026-11-22)
 
 - CI run 44976745886 (`eab7e23`) failed `cargo check -p
-  reponyx-desktop` with two E0308 errors in
+reponyx-desktop` with two E0308 errors in
   `apps/desktop/src-tauri/src/storage.rs`: the `spawn_blocking`
   closures return `CommandResult<...>`, so
   `.await.map_err(...)?` leaves the inner Result —
@@ -794,7 +801,7 @@ run (`target\debug\reponyx-desktop.exe`):
   (`git fetch --no-tags <url> <sha>`, verified with `cat-file -e`;
   relative URLs resolved against the mirror's origin the way git
   does), and a working clone gets `git submodule update --init
-  --recursive` per submodule, so one inaccessible (e.g. private)
+--recursive` per submodule, so one inaccessible (e.g. private)
   submodule never blocks the others. The runner auto-enqueues a
   `SubmoduleSync` job when either local clone has submodules, and
   fails the job only when nothing at all synced. Both-mode repos
@@ -849,7 +856,7 @@ run (`target\debug\reponyx-desktop.exe`):
   Two settings that nothing consumed are now real: discovery
   reads `sync.default_mode` for new rows (existing rows keep
   theirs; new test `discovery_new_rows_use_default_sync_mode_
-  setting`), and the frontend applies `ui.theme`.
+setting`), and the frontend applies `ui.theme`.
 
 ### Fixed — Paired device identifier never persisted (2026-11-21)
 
@@ -860,7 +867,7 @@ run (`target\debug\reponyx-desktop.exe`):
   "requires a paired device identifier" even after pairing
   succeeded. `complete_pairing_command` now also persists
   `device.identifier`. Desktop-only change, verified by `cargo
-  fmt` + review (gdk blocker).
+fmt` + review (gdk blocker).
 
 ### Added — Phase 8 Storage page (2026-11-21)
 
@@ -1083,7 +1090,7 @@ run (`target\debug\reponyx-desktop.exe`):
   — `pnpm -r typecheck` passes.
 - **Verification (actual, 2026-11-21):** `cargo fmt --check` pass;
   clippy 0 warnings; `cargo test --workspace --exclude
-  reponyx-desktop` **328 passed, 0 failed** (was 302; 26 new tests
+reponyx-desktop` **328 passed, 0 failed** (was 302; 26 new tests
   incl. retry-budget, rate-limit, and lease-recovery coverage);
   `pnpm -r typecheck` pass; desktop vite build + eslint pass.
   Desktop Rust is verified by `cargo fmt` + review only on this VM
@@ -1122,7 +1129,7 @@ run (`target\debug\reponyx-desktop.exe`):
 
 - **Cryptic `invoke` error:** opening the Vite dev server in a plain
   browser showed `Cannot read properties of undefined (reading
-  'invoke')` on the Accounts and Overview pages. All api-client calls
+'invoke')` on the Accounts and Overview pages. All api-client calls
   now go through a guard that detects the missing Tauri backend and
   throws a clear message instead ("Tauri backend is unavailable —
   this page is running in a plain browser (web preview) instead of
@@ -1173,7 +1180,7 @@ run (`target\debug\reponyx-desktop.exe`):
   (Tauri binary build blocked on this VM).
 - **Verification (actual, 2026-11-19):** `cargo fmt --check` pass;
   clippy pass, 0 warnings; `cargo test --workspace --exclude
-  reponyx-desktop` **302 passed, 0 failed** (scheduler 40 new);
+reponyx-desktop` **302 passed, 0 failed** (scheduler 40 new);
   `pnpm -r typecheck` pass; desktop build + eslint pass.
 - **Deliberately NOT done (blocked on Phase 6):** the sync queue,
   background agent, IPC, Task Scheduler registration, tray,
@@ -1190,14 +1197,14 @@ run (`target\debug\reponyx-desktop.exe`):
   without the App id, the key, and a setup token of ≥ 16 characters
   (`REPONYX_BROKER_SETUP_TOKEN`), and binds loopback
   (`127.0.0.1:8765`) by default. Endpoints: `GET /health`; `POST
-  /setup/state` (one-time CSRF `state` + install URL); `GET
-  /github/callback` (validates `state` — single-use, 10-minute TTL —
+/setup/state` (one-time CSRF `state` + install URL); `GET
+/github/callback` (validates `state` — single-use, 10-minute TTL —
   records the installation); `POST /pairing/request`, `POST
-  /pairing/confirm`, `GET /pairing/status`, `POST /pairing/revoke`;
+/pairing/confirm`, `GET /pairing/status`, `POST /pairing/revoke`;
   `POST /installations/{id}/token` (mint); `GET /installations`;
   `GET /audit`. Token minting signs an App JWT (RS256,
   `jsonwebtoken` 12.0.0, `exp` = now + 9 min) and calls `POST
-  /app/installations/{id}/access_tokens`; minted tokens are cached
+/app/installations/{id}/access_tokens`; minted tokens are cached
   per installation until 5 minutes before expiry, with
   `force_refresh` after a 401. Rate limiting is hand-rolled
   per-key token buckets (minting 30/min per device, pairing
@@ -1267,7 +1274,7 @@ run (`target\debug\reponyx-desktop.exe`):
   15; credential-store 20: lib 6, mixed_auth 1, pat_flow 10, store
   3; github-provider broker_source 5) plus 1 updated Phase 4 test
   contract (401 refresh). Re-verified: `cargo test --workspace
-  --exclude reponyx-desktop` **262 passed, 0 failed** (Phase 4
+--exclude reponyx-desktop` **262 passed, 0 failed** (Phase 4
   baseline 215); `cargo fmt --check` pass; clippy pass, 0 warnings;
   `pnpm -r typecheck` pass; desktop build pass (2306 modules).
   Tauri binary build still blocked on this VM by missing `gdk-3.0`
@@ -1319,8 +1326,8 @@ run (`target\debug\reponyx-desktop.exe`):
   3 waits per request) and resumes from the same cursor; beyond
   the cap it returns `RateLimitExceeded` with the reset time.
 - **Installation metadata + permission checks:** `GET
-  /user/installations` and `GET
-  /user/installations/{id}/repositories` (user-token endpoints
+/user/installations` and `GET
+/user/installations/{id}/repositories` (user-token endpoints
   only — `GET /app/installations` needs an App JWT, Phase 5);
   `check_repository_access` reports Admin/Write/Read/None plus
   `can_read_contents`.
@@ -1357,7 +1364,7 @@ run (`target\debug\reponyx-desktop.exe`):
   **215 passed, 0 failed** (core 11, database 55, git-engine 87,
   github-provider 58, logging 4, provider-abstractions 0);
   `cargo fmt --check` pass; clippy pass, 0 warnings; `pnpm -r
-  typecheck` pass; desktop build pass. Tauri binary build still
+typecheck` pass; desktop build pass. Tauri binary build still
   blocked on this VM by missing `gdk-3.0` / WebViewGTK system
   libraries — not claimed passed.
 - **Dependencies added (all latest stable):** `reqwest` 0.13.5,
@@ -1376,7 +1383,7 @@ run (`target\debug\reponyx-desktop.exe`):
   (RAII guard).
 - **Mirror clone + incremental fetch with progress reporting**
   (`mirror.rs`, `progress.rs`): `mirror_clone` (`clone --mirror
-  --progress`, verifies bare + refs after) and `mirror_fetch`
+--progress`, verifies bare + refs after) and `mirror_fetch`
   (`fetch --prune --tags --progress`, returns added/pruned ref
   diff). Progress is streamed as structured `ProgressEvent`s
   parsed from git's `--progress` stderr — only numbers git emits
@@ -1390,7 +1397,7 @@ run (`target\debug\reponyx-desktop.exe`):
   `None`, not an error).
 - **Branch/tag discovery from a mirror** (`refs.rs`):
   `list_branches` / `list_tags` / `head_sha` via `git
-  for-each-ref` (NUL-separated; annotated tags carry the peeled
+for-each-ref` (NUL-separated; annotated tags carry the peeled
   commit SHA).
 - **Credential helper integration** (`credentials.rs`): a
   short-lived helper script containing no secret; the credential
@@ -1402,7 +1409,7 @@ run (`target\debug\reponyx-desktop.exe`):
 - **LFS availability detection** (`detect.rs` + `LfsStatus` in
   `crates/core` and `packages/shared`): `detect_lfs()` /
   `lfs_status()`; version parser handles both `git-lfs version
-  3.5.1` and `git-lfs/3.5.1` forms. Detection only — LFS sync
+3.5.1` and `git-lfs/3.5.1` forms. Detection only — LFS sync
   itself is Phase 9.
 - **Recovery — repository health diagnosis** (`health.rs`):
   `verify_repository` returns a structured `RepositoryDiagnosis`
@@ -1433,7 +1440,7 @@ run (`target\debug\reponyx-desktop.exe`):
   lock when another process held it; test-fixture path collision
   (`work` dir); `--abbrev-ref` beating `--symbolic-full-name` in
   the upstream rev-parse builder. Re-verified: `cargo test
-  --workspace --exclude reponyx-desktop` **156 passed, 0 failed**
+--workspace --exclude reponyx-desktop` **156 passed, 0 failed**
   (core 11, database 54, git-engine 87, logging 4,
   provider-abstractions 0); `cargo fmt --check` pass; clippy pass,
   0 warnings; `pnpm -r typecheck` pass; desktop build pass.
@@ -1457,7 +1464,7 @@ run (`target\debug\reponyx-desktop.exe`):
   `DevicePairingStatus`, `InstallationStatus`); TS mirrors added in
   `packages/shared` (including the previously missing `accountType`
   on `Account`). Highlights: upsert by `(account_id,
-  provider_repository_id)` via atomic `ON CONFLICT DO UPDATE`
+provider_repository_id)` via atomic `ON CONFLICT DO UPDATE`
   (preserves local state); rename/ownership-change with
   full_name collision detection; effective-schedule resolution
   (repository > account > global) + `due_schedules`; atomic job
@@ -1478,7 +1485,7 @@ run (`target\debug\reponyx-desktop.exe`):
   database 54, git-engine 22, logging 4, provider-abstractions 0);
   `cargo fmt --check` pass; clippy (5 buildable crates) pass,
   0 warnings; `pnpm -r typecheck` pass; desktop build pass. `cargo
-  test --workspace` still blocked on this VM by missing `gdk-3.0`
+test --workspace` still blocked on this VM by missing `gdk-3.0`
   system libraries (desktop crate only) — not claimed passed.
 
 ### Fixed
@@ -1510,7 +1517,7 @@ run (`target\debug\reponyx-desktop.exe`):
   actually wired in Rust (`tauri-plugin-updater` 2.14.1 +
   `Builder::new().build()`), and the missing app icons it references
   were generated. Re-verified: fmt/clippy pass (0 warnings), `cargo
-  test` 36 passed / 0 failed, typecheck/lint/desktop build pass.
+test` 36 passed / 0 failed, typecheck/lint/desktop build pass.
   Tauri binary build still blocked on this VM by missing `gdk-3.0` /
   WebViewGTK system libraries — not claimed passed.
 
@@ -1522,7 +1529,7 @@ run (`target\debug\reponyx-desktop.exe`):
   `com.reponyx.app`, default storage `D:\RepoNyx\`, database
   `reponyx.sqlite`, env var `REPONYX_DATA_DIR`. Re-verified after the
   rename: `cargo fmt --check` pass, clippy (5 crates) pass, `cargo
-  test` 36 passed / 0 failed, `pnpm -r typecheck` pass, desktop eslint
+test` 36 passed / 0 failed, `pnpm -r typecheck` pass, desktop eslint
   pass, `pnpm --filter @reponyx/desktop build` pass. Tauri binary
   build still blocked on this Linux VM by the same missing `gdk-3.0` /
   WebViewGTK system libraries — not claimed passed.

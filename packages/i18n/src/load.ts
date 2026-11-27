@@ -3,7 +3,7 @@ import { type Locale } from "./locales";
 
 /** Starter domain sets — more domains are added as screens land. */
 export const WEB_DOMAINS = ["common", "auth", "dashboard", "errors"] as const;
-export const DESKTOP_DOMAINS = ["common", "errors"] as const;
+export const DESKTOP_DOMAINS = ["common", "errors", "auth"] as const;
 export type WebDomain = (typeof WEB_DOMAINS)[number];
 export type DesktopDomain = (typeof DESKTOP_DOMAINS)[number];
 export type AppSurface = "web" | "desktop";

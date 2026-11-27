@@ -42,6 +42,7 @@ pub struct SettingsDto {
     pub concurrency: Option<i64>,
     pub storage_root: Option<String>,
     pub theme: Option<String>,
+    pub locale: Option<String>,
     pub notifications_enabled: Option<bool>,
     pub device_identifier: Option<String>,
     pub broker_app_id: Option<String>,
@@ -107,6 +108,7 @@ pub async fn get_settings_command(db: State<'_, Option<Database>>) -> CommandRes
         concurrency,
         storage_root: setting_value(database, "storage.root").await?,
         theme: setting_value(database, "ui.theme").await?,
+        locale: setting_value(database, "ui.locale").await?,
         notifications_enabled: match setting_value(database, "notifications.enabled").await? {
             Some(raw) => raw.trim().parse::<bool>().ok(),
             None => None,

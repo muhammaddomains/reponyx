@@ -4,6 +4,7 @@ import { readdir, readFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { PGlite } from "@electric-sql/pglite";
+import { generateTotpCode, generateTotpSecret } from "@reponyx/auth";
 import { findUserByEmail, migrate, type DbClient } from "@reponyx/database";
 import type { EmailMessage, SentEmail } from "@reponyx/email";
 import { setDbClientForTests } from "../src/lib/db";
@@ -16,9 +17,12 @@ import {
 import { POST as registerPost } from "../src/app/api/auth/register/route";
 import { POST as verifyPost } from "../src/app/api/auth/verify/route";
 import { POST as loginPost } from "../src/app/api/auth/login/route";
+import { POST as verify2faPost } from "../src/app/api/auth/2fa/verify/route";
+import { POST as exchangePost } from "../src/app/api/auth/desktop/exchange/route";
 import { POST as completePost } from "../src/app/api/auth/register/complete/route";
 import { GET as limitsGet } from "../src/app/api/me/limits/route";
 import { GET as linkedGet } from "../src/app/api/me/linked/route";
+import { GET as devicesGet } from "../src/app/api/devices/route";
 import { GET as googleStart } from "../src/app/api/auth/oauth/google/route";
 import { GET as githubStart } from "../src/app/api/auth/oauth/github/route";
 import { GET as googleCallback } from "../src/app/api/google/oauth/callback/route";
@@ -182,6 +186,32 @@ const EMAIL = "oauth-user@example.com";
   assert.equal(verify.status, 200);
 }
 
+// A second user with TOTP on, for the 2FA + desktop-2FA tests. The
+// seed user above stays TOTP-free so the plain login tests keep
+// passing.
+const TWOFA_EMAIL = "twofa-user@example.com";
+const TWOFA_SECRET = generateTotpSecret();
+{
+  const reg = await post(
+    registerPost,
+    "/api/auth/register",
+    {
+      name: "Twofa User",
+      email: TWOFA_EMAIL,
+      password: "correct horse battery staple",
+    },
+    { "x-forwarded-for": "203.0.113.13" }
+  );
+  assert.equal(reg.status, 201);
+  const token = tokenFromEmail(sent[1].html);
+  const verify = await post(verifyPost, "/api/auth/verify", { token });
+  assert.equal(verify.status, 200);
+  await client.query("UPDATE users SET totp_secret = $1 WHERE email = $2", [
+    TWOFA_SECRET,
+    TWOFA_EMAIL,
+  ]);
+}
+
 test("google start redirects to the provider with a signed state", async () => {
   const res = await get(googleStart, "http://localhost/api/auth/oauth/google");
   assert.equal(res.status, 307);
@@ -198,7 +228,10 @@ test("google start redirects to the provider with a signed state", async () => {
   assert.match(url.searchParams.get("scope") ?? "", /openid/);
   const state = url.searchParams.get("state");
   assert.ok(state);
-  assert.equal(verifyOAuthState(state, "google"), "login");
+  assert.deepEqual(verifyOAuthState(state, "google"), {
+    intent: "login",
+    client: "web",
+  });
   assert.equal(verifyOAuthState(state, "github"), null);
 });
 
@@ -362,7 +395,10 @@ test("google start with ?intent=register signs the register intent", async () =>
   assert.ok(res.location);
   const state = new URL(res.location).searchParams.get("state");
   assert.ok(state);
-  assert.equal(verifyOAuthState(state, "google"), "register");
+  assert.deepEqual(verifyOAuthState(state, "google"), {
+    intent: "register",
+    client: "web",
+  });
 });
 
 test("google callback with register intent creates a verified user", async () => {
@@ -638,4 +674,202 @@ test("complete registration refuses a tampered token and a missing name", async 
   } finally {
     setFetchForTests(null);
   }
+});
+
+test("desktop start signs the desktop client (and forces the login intent)", async () => {
+  const res = await get(
+    googleStart,
+    "http://localhost/api/auth/oauth/google?client=desktop"
+  );
+  assert.equal(res.status, 307);
+  assert.ok(res.location);
+  const state = new URL(res.location).searchParams.get("state");
+  assert.ok(state);
+  assert.deepEqual(verifyOAuthState(state, "google"), {
+    intent: "login",
+    client: "desktop",
+  });
+  // Even ?intent=register cannot turn a desktop start into a registration.
+  const reg = await get(
+    googleStart,
+    "http://localhost/api/auth/oauth/google?client=desktop&intent=register"
+  );
+  const regState = new URL(reg.location ?? "").searchParams.get("state");
+  assert.ok(regState);
+  assert.deepEqual(verifyOAuthState(regState, "google"), {
+    intent: "login",
+    client: "desktop",
+  });
+});
+
+test("desktop start refuses when the provider is not configured", async () => {
+  delete process.env.GOOGLE_CLIENT_ID;
+  try {
+    const res = await get(
+      googleStart,
+      "http://localhost/api/auth/oauth/google?client=desktop"
+    );
+    assert.equal(res.status, 307);
+    assert.equal(res.location, "reponyx://auth?error=oauth_not_configured");
+  } finally {
+    process.env.GOOGLE_CLIENT_ID = "google-test-client-id";
+  }
+});
+
+test("desktop callback redirects to the deep link; exchange mints a session + device", async () => {
+  const state = createOAuthState("google", "login", "desktop");
+  assert.ok(state);
+  setFetchForTests(googleStub(EMAIL, "OAuth User", "google-sub-desktop"));
+  let code: string;
+  try {
+    const res = await get(
+      googleCallback,
+      `http://localhost/api/google/oauth/callback?code=test-code&state=${encodeURIComponent(state)}`
+    );
+    assert.equal(res.status, 307);
+    assert.ok(res.location);
+    assert.match(res.location, /^reponyx:\/\/auth\?code=/);
+    assert.equal(res.cookie, null);
+    code = new URL(res.location).searchParams.get("code") ?? "";
+    assert.ok(code);
+  } finally {
+    setFetchForTests(null);
+  }
+  // The desktop exchanges the code for a session token (no cookie).
+  const exchanged = await post(
+    exchangePost,
+    "/api/auth/desktop/exchange",
+    {
+      code,
+      deviceKey: "desktop-device-1",
+      machineName: "DESKTOP-TEST",
+      platform: "Windows 11",
+      appVersion: "0.1.0",
+    },
+    { "x-forwarded-for": "203.0.113.14" }
+  );
+  assert.equal(exchanged.status, 200);
+  const session = exchanged.json.session as { token: string };
+  assert.match(session.token, /^[A-Za-z0-9_-]+$/);
+  assert.equal((exchanged.json.user as { email: string }).email, EMAIL);
+  // The token works as a Bearer token, and the device was registered.
+  const limits = await limitsGet(
+    new Request("http://localhost/api/me/limits", {
+      headers: { authorization: `Bearer ${session.token}` },
+    })
+  );
+  assert.equal(limits.status, 200);
+  const devices = await devicesGet(
+    new Request("http://localhost/api/devices", {
+      headers: { authorization: `Bearer ${session.token}` },
+    })
+  );
+  assert.equal(devices.status, 200);
+  const body = (await devices.json()) as {
+    devices: { device_key: string; machine_name: string }[];
+  };
+  assert.deepEqual(
+    body.devices.map((d) => d.device_key),
+    ["desktop-device-1"]
+  );
+  assert.equal(body.devices[0].machine_name, "DESKTOP-TEST");
+});
+
+test("desktop exchange refuses a tampered code", async () => {
+  const res = await post(exchangePost, "/api/auth/desktop/exchange", {
+    code: "tampered.code",
+  });
+  assert.equal(res.status, 404);
+  assert.equal((res.json.error as { code: string }).code, "invalid_token");
+});
+
+test("desktop callback refuses an unregistered email via the deep link", async () => {
+  const state = createOAuthState("google", "login", "desktop");
+  assert.ok(state);
+  setFetchForTests(
+    googleStub(
+      "stranger-desktop@example.com",
+      undefined,
+      "google-sub-stranger-d"
+    )
+  );
+  try {
+    const res = await get(
+      googleCallback,
+      `http://localhost/api/google/oauth/callback?code=test-code&state=${encodeURIComponent(state)}`
+    );
+    assert.equal(res.status, 307);
+    assert.equal(res.location, "reponyx://auth?error=oauth_no_account");
+    assert.equal(res.cookie, null);
+  } finally {
+    setFetchForTests(null);
+  }
+});
+
+test("desktop callback with a 2FA user returns a pending token; verify completes the login", async () => {
+  const state = createOAuthState("google", "login", "desktop");
+  assert.ok(state);
+  setFetchForTests(googleStub(TWOFA_EMAIL, "Twofa User", "google-sub-twofa"));
+  let pendingToken: string;
+  try {
+    const res = await get(
+      googleCallback,
+      `http://localhost/api/google/oauth/callback?code=test-code&state=${encodeURIComponent(state)}`
+    );
+    assert.equal(res.status, 307);
+    assert.ok(res.location);
+    const target = new URL(res.location);
+    assert.equal(target.protocol, "reponyx:");
+    assert.equal(target.searchParams.get("two_factor_required"), "1");
+    pendingToken = target.searchParams.get("pending") ?? "";
+    assert.ok(pendingToken);
+    assert.equal(res.cookie, null);
+  } finally {
+    setFetchForTests(null);
+  }
+  // A wrong code is refused.
+  const wrong = await post(
+    verify2faPost,
+    "/api/auth/2fa/verify",
+    { token: pendingToken, code: "000000" },
+    { "x-forwarded-for": "203.0.113.17" }
+  );
+  assert.equal(wrong.status, 401);
+  assert.equal((wrong.json.error as { code: string }).code, "invalid_2fa_code");
+  // The right code mints the session.
+  const ok = await post(
+    verify2faPost,
+    "/api/auth/2fa/verify",
+    {
+      token: pendingToken,
+      code: generateTotpCode(TWOFA_SECRET),
+      deviceKey: "desktop-device-2fa",
+      machineName: "DESKTOP-TEST",
+      platform: "Windows 11",
+      appVersion: "0.1.0",
+    },
+    { "x-forwarded-for": "203.0.113.17" }
+  );
+  assert.equal(ok.status, 200);
+  const session = ok.json.session as { token: string };
+  assert.match(session.token, /^[A-Za-z0-9_-]+$/);
+  const limits = await limitsGet(
+    new Request("http://localhost/api/me/limits", {
+      headers: { authorization: `Bearer ${session.token}` },
+    })
+  );
+  assert.equal(limits.status, 200);
+  assert.equal(
+    ((await limits.json()) as { user: { email: string } }).user.email,
+    TWOFA_EMAIL
+  );
+});
+
+test("2FA verify refuses a tampered pending token", async () => {
+  const res = await post(verify2faPost, "/api/auth/2fa/verify", {
+    token: "tampered.token",
+    code: "123456",
+  });
+  assert.equal(res.status, 404);
+  assert.equal((res.json.error as { code: string }).code, "invalid_token");
 });

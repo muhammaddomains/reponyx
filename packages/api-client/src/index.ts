@@ -43,6 +43,8 @@ import {
   storageOverviewSchema,
   syncHistorySchema,
   syncJobSchema,
+  webLoginSchema,
+  webSessionStatusSchema,
 } from "@reponyx/shared";
 import type {
   Account,
@@ -76,6 +78,8 @@ import type {
   StorageOverview,
   SyncHistory,
   SyncJob,
+  WebLogin,
+  WebSessionStatus,
 } from "@reponyx/shared";
 
 export async function getAppInfo(): Promise<AppInfo> {
@@ -640,4 +644,62 @@ export async function autostartStatus(): Promise<boolean> {
 
 export async function stopAgent(): Promise<string> {
   return z.string().parse(await invokeCommand("stop_agent_command"));
+}
+
+/** Web-platform login (Tauri `web_auth.rs`, plan §4, W3). The
+ *  session token lives only in the OS credential store — these
+ *  calls return the user and the package, never the token. Invoke
+ *  argument names are camelCase, matching Tauri's default argument
+ *  case (the Rust parameter names are snake_case). */
+
+export async function webLogin(
+  email: string,
+  password: string,
+): Promise<WebLogin> {
+  return webLoginSchema.parse(
+    await invokeCommand("web_login_command", { email, password }),
+  );
+}
+
+export async function webVerify2fa(
+  pendingToken: string,
+  code: string,
+): Promise<WebLogin> {
+  return webLoginSchema.parse(
+    await invokeCommand("web_verify_2fa_command", { pendingToken, code }),
+  );
+}
+
+export async function webSessionStatus(): Promise<WebSessionStatus> {
+  return webSessionStatusSchema.parse(
+    await invokeCommand("web_session_status_command"),
+  );
+}
+
+export async function webLogout(): Promise<void> {
+  await invokeCommand("web_logout_command");
+}
+
+export async function webOpenOAuth(
+  provider: "google" | "github",
+): Promise<void> {
+  await invokeCommand("web_open_oauth_command", { provider });
+}
+
+export async function webOpenRegister(): Promise<void> {
+  await invokeCommand("web_open_register_command");
+}
+
+export async function webOpenDashboard(): Promise<void> {
+  await invokeCommand("web_open_dashboard_command");
+}
+
+export async function webOpenUrl(url: string): Promise<void> {
+  await invokeCommand("web_open_url_command", { url });
+}
+
+export async function webExchangeDesktopCode(code: string): Promise<WebLogin> {
+  return webLoginSchema.parse(
+    await invokeCommand("web_exchange_desktop_code_command", { code }),
+  );
 }

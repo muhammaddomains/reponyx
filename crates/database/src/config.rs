@@ -48,7 +48,7 @@ pub const CONFIG_VERSION: u32 = 1;
 
 // -- The file format --------------------------------------------------
 
-/// One settings row in the file. Only the seven non-secret keys
+/// One settings row in the file. Only the eight non-secret keys
 /// (see [`validate_setting_value`]) are ever written or accepted.
 /// The broker private-key *path* is a non-secret setting; the key
 /// material itself never enters the settings table — the broker
@@ -138,7 +138,7 @@ pub struct ImportReport {
 // -- Settings validation (single source of truth) ---------------------
 
 /// Validate one setting value the way the Settings page does.
-/// Unknown keys are refused — only the five non-secret settings
+/// Unknown keys are refused — only the eight non-secret settings
 /// travel in a config file. The desktop `validate_setting` in
 /// `settings.rs` delegates here so the rules live in one place.
 pub fn validate_setting_value(key: &str, value: &str) -> Result<(), RepoNyxError> {
@@ -177,6 +177,10 @@ pub fn validate_setting_value(key: &str, value: &str) -> Result<(), RepoNyxError
             _ => Err(invalid(format!(
                 "ui.theme must be system, light, or dark (got {value})"
             ))),
+        },
+        "ui.locale" => match value {
+            "en" | "ur" => Ok(()),
+            _ => Err(invalid(format!("ui.locale must be en or ur (got {value})"))),
         },
         "broker.app_id" => {
             // GitHub App ids are numeric. The value is not a secret —
@@ -706,6 +710,15 @@ mod tests {
         assert!(validate_setting_value("notifications.enabled", "yes").is_err());
         assert!(validate_setting_value("notifications.enabled", "1").is_err());
         assert!(validate_setting_value("notifications.enabled", "").is_err());
+    }
+
+    #[test]
+    fn ui_locale_accepts_en_or_ur_only() {
+        assert!(validate_setting_value("ui.locale", "en").is_ok());
+        assert!(validate_setting_value("ui.locale", "ur").is_ok());
+        assert!(validate_setting_value("ui.locale", "ar").is_err());
+        assert!(validate_setting_value("ui.locale", "").is_err());
+        assert!(validate_setting_value("ui.locale", "EN").is_err());
     }
 
     #[test]

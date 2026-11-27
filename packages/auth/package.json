@@ -8,7 +8,8 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "hash-wasm": "4.13.0"
+    "hash-wasm": "4.13.0",
+    "otpauth": "9.6.0"
   },
   "devDependencies": {
     "@reponyx/config": "workspace:*",

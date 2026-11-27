@@ -14,10 +14,12 @@
   },
   "dependencies": {
     "@reponyx/api-client": "workspace:*",
+    "@reponyx/i18n": "workspace:*",
     "@reponyx/shared": "workspace:*",
     "@reponyx/ui": "workspace:*",
     "@tanstack/react-virtual": "3.14.28",
     "@tauri-apps/api": "^2.12.5",
+    "@tauri-apps/plugin-deep-link": "2.6.3",
     "@tauri-apps/plugin-notification": "2.8.1",
     "@tauri-apps/plugin-updater": "^2.14.1",
     "lucide-react": "^1.77.0",

@@ -397,6 +397,7 @@ export interface Settings {
   concurrency: number | null;
   storageRoot: string | null;
   theme: string | null;
+  locale: string | null;
   notificationsEnabled: boolean | null;
   deviceIdentifier: string | null;
   brokerAppId: string | null;
@@ -485,3 +486,52 @@ export type SyncProgressEvent =
       repository_id: string;
       message: string;
     };
+
+/** Web-platform login (plan §4, W3). The desktop talks to the web
+ *  (`https://reponyx.bond`) for login, 2FA, session validation and
+ *  the account view. The session token itself never reaches the
+ *  frontend — these types carry the user and the package only. */
+
+export interface WebUser {
+  id: string;
+  email: string;
+  name: string | null;
+  createdAt: string | null;
+}
+
+export interface WebPackage {
+  name: string;
+  maxLinkedAccounts: number;
+  maxDevices: number;
+  expiresAt: string | null;
+}
+
+export interface WebUsage {
+  linkedAccounts: number;
+  devices: number;
+}
+
+export interface WebAccount {
+  user: WebUser;
+  package: WebPackage;
+  usage: WebUsage;
+}
+
+export interface WebSessionStatus {
+  authenticated: boolean;
+  /** The web could not be reached; the stored session is trusted
+   *  locally and `account` is the last-known one. */
+  offline: boolean;
+  /** The web answered 401: the session is dead and was deleted. */
+  sessionExpired: boolean;
+  account: WebAccount | null;
+}
+
+export interface WebLogin {
+  /** `"ok"` or `"2fa_required"`. */
+  step: string;
+  /** Present only for the 2FA step: proves the password step passed. */
+  pendingToken: string | null;
+  /** Present once the login completed (never the session token). */
+  user: WebUser | null;
+}

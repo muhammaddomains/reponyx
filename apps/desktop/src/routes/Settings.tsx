@@ -11,6 +11,7 @@ import {
   openSupportFolder,
   restoreDatabaseBackup,
   setSetting,
+  webOpenDashboard,
 } from "@reponyx/api-client";
 import type {
   ConfigExport,
@@ -18,9 +19,15 @@ import type {
   DiagnosticsExport,
   ImportReport,
   Settings,
+  WebAccount,
 } from "@reponyx/shared";
 import { Button, Card, ConfirmDialog } from "@reponyx/ui";
 import { applyTheme, parseTheme } from "../lib/theme";
+import {
+  SELECTABLE_LOCALES,
+  useLocale,
+  useT,
+} from "../lib/locale";
 import {
   checkForUpdates,
   downloadAndInstall,
@@ -78,8 +85,22 @@ const inputClass =
  *  Diagnostics & backup (Phase 9) exports a redacted support file
  *  and manages consistent database snapshots. Import & export
  *  (Phase 9) moves settings, repository sync choices, and
- *  schedules to another machine in a versioned JSON file. */
-export default function Settings() {
+ *  schedules to another machine in a versioned JSON file.
+ *  Account (plan §4, W3): the signed-in web account — package,
+ *  limits, joining date, expiry — read-only, with a button to the
+ *  web and a log-out. General also holds the language switcher
+ *  (`ui.locale`, `en` | `ur`, applied right away). */
+export default function Settings({
+  webAccount,
+  webOffline,
+  onWebLogout,
+}: {
+  webAccount: WebAccount | null;
+  webOffline: boolean;
+  onWebLogout: () => void;
+}) {
+  const tAuth = useT("auth");
+  const { locale, setLocale } = useLocale();
   const [settings, setSettings] = useState<Settings | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
@@ -173,6 +194,30 @@ export default function Settings() {
     setTheme(next);
     applyTheme(next);
     await save("ui.theme", next, "Theme");
+  }
+
+  async function handleLocaleChange(value: string) {
+    if (value !== "en" && value !== "ur") return;
+    setError(null);
+    setNotice(null);
+    setSaving("ui.locale");
+    try {
+      await setLocale(value);
+      setNotice("Language saved.");
+    } catch (e: unknown) {
+      setError(commandMessage(e));
+    } finally {
+      setSaving(null);
+    }
+  }
+
+  async function handleOpenDashboard() {
+    setError(null);
+    try {
+      await webOpenDashboard();
+    } catch (e: unknown) {
+      setError(commandMessage(e));
+    }
   }
 
   async function handleNotificationsChange(value: boolean) {
@@ -433,6 +478,82 @@ export default function Settings() {
       {!loading && settings && (
         <>
           <Card className="space-y-3 p-4">
+            <h2 className="text-lg font-semibold">{tAuth("accountTitle")}</h2>
+            {webAccount ? (
+              <>
+                <p className="text-sm font-medium">
+                  {webAccount.user.name ?? webAccount.user.email}
+                </p>
+                {webAccount.user.name !== null && (
+                  <p className="-mt-2 text-sm text-zinc-500">
+                    {webAccount.user.email}
+                  </p>
+                )}
+                <dl className="space-y-2 text-sm">
+                  <div className="flex flex-wrap gap-2">
+                    <dt className="text-zinc-500">{tAuth("packageLabel")}</dt>
+                    <dd className="font-medium">
+                      {webAccount.package.name}
+                    </dd>
+                  </div>
+                  <div className="flex flex-wrap gap-2">
+                    <dt className="text-zinc-500">
+                      {tAuth("linkedAccountsLabel")}
+                    </dt>
+                    <dd>
+                      {webAccount.usage.linkedAccounts} /{" "}
+                      {webAccount.package.maxLinkedAccounts}
+                    </dd>
+                  </div>
+                  <div className="flex flex-wrap gap-2">
+                    <dt className="text-zinc-500">
+                      {tAuth("devicesLabel")}
+                    </dt>
+                    <dd>
+                      {webAccount.usage.devices} /{" "}
+                      {webAccount.package.maxDevices}
+                    </dd>
+                  </div>
+                  <div className="flex flex-wrap gap-2">
+                    <dt className="text-zinc-500">
+                      {tAuth("joinedLabel")}
+                    </dt>
+                    <dd>
+                      {webAccount.user.createdAt
+                        ? formatDate(webAccount.user.createdAt)
+                        : "—"}
+                    </dd>
+                  </div>
+                  <div className="flex flex-wrap gap-2">
+                    <dt className="text-zinc-500">
+                      {tAuth("expiresLabel")}
+                    </dt>
+                    <dd>
+                      {webAccount.package.expiresAt
+                        ? formatDate(webAccount.package.expiresAt)
+                        : tAuth("noExpiry")}
+                    </dd>
+                  </div>
+                </dl>
+              </>
+            ) : null}
+            {webOffline && (
+              <p className="text-sm text-zinc-500">{tAuth("offlineNote")}</p>
+            )}
+            <div className="flex flex-wrap items-center gap-3">
+              <Button
+                variant="secondary"
+                onClick={() => void handleOpenDashboard()}
+              >
+                {tAuth("manageOnWeb")}
+              </Button>
+              <Button variant="secondary" onClick={onWebLogout}>
+                {tAuth("logoutButton")}
+              </Button>
+            </div>
+          </Card>
+
+          <Card className="space-y-3 p-4">
             <h2 className="text-lg font-semibold">General</h2>
             <div className="flex flex-wrap items-center gap-3">
               <label htmlFor="theme" className="text-sm font-medium">
@@ -451,6 +572,27 @@ export default function Settings() {
               </select>
               <span className="text-sm text-zinc-500">
                 System follows your OS theme at startup.
+              </span>
+            </div>
+            <div className="flex flex-wrap items-center gap-3">
+              <label htmlFor="locale" className="text-sm font-medium">
+                {tAuth("languageLabel")}
+              </label>
+              <select
+                id="locale"
+                className={selectClass}
+                value={locale}
+                disabled={saving === "ui.locale"}
+                onChange={(e) => void handleLocaleChange(e.target.value)}
+              >
+                {SELECTABLE_LOCALES.map((entry) => (
+                  <option key={entry.code} value={entry.code}>
+                    {entry.nativeName}
+                  </option>
+                ))}
+              </select>
+              <span className="text-sm text-zinc-500">
+                {tAuth("languageNote")}
               </span>
             </div>
           </Card>

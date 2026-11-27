@@ -15,6 +15,7 @@ import {
 } from "@reponyx/database";
 import { ApiError } from "./api-errors";
 import {
+  createPendingLoginToken,
   createSessionForUser,
   getSessionFromRequest,
   sessionCookie,
@@ -39,6 +40,14 @@ export type OAuthProvider = "google" | "github";
  * trust it.
  */
 export type OAuthIntent = "login" | "register" | "link";
+
+/**
+ * Which client started the OAuth flow. The web finishes in the
+ * browser (dashboard + cookie); the desktop finishes through the
+ * `reponyx://auth` deep link (short-lived code, exchanged for a
+ * session token by the desktop app).
+ */
+export type OAuthClient = "web" | "desktop";
 
 export interface OAuthProviderConfig {
   provider: OAuthProvider;
@@ -118,7 +127,8 @@ function b64url(input: string | Buffer): string {
 /** Returns null when SESSION_SECRET is not set — fail closed. */
 export function createOAuthState(
   provider: OAuthProvider,
-  intent: OAuthIntent = "login"
+  intent: OAuthIntent = "login",
+  client: OAuthClient = "web"
 ): string | null {
   const secret = stateSecret();
   if (!secret) return null;
@@ -126,6 +136,7 @@ export function createOAuthState(
     JSON.stringify({
       p: provider,
       i: intent,
+      c: client,
       n: randomToken(),
       e: Date.now() + STATE_TTL_MS,
     })
@@ -135,13 +146,14 @@ export function createOAuthState(
 }
 
 /**
- * Verifies the signed state and returns its intent, or null when the
- * signature is bad, the provider mismatches, or the state expired.
+ * Verifies the signed state and returns its intent and client, or
+ * null when the signature is bad, the provider mismatches, or the
+ * state expired.
  */
 export function verifyOAuthState(
   token: string,
   provider: OAuthProvider
-): OAuthIntent | null {
+): { intent: OAuthIntent; client: OAuthClient } | null {
   const secret = stateSecret();
   if (!secret) return null;
   const [payload, sig] = token.split(".");
@@ -158,12 +170,13 @@ export function verifyOAuthState(
   try {
     const data = JSON.parse(
       Buffer.from(payload, "base64url").toString("utf8")
-    ) as { p?: unknown; i?: unknown; e?: unknown };
+    ) as { p?: unknown; i?: unknown; c?: unknown; e?: unknown };
     if (data.p !== provider) return null;
     if (typeof data.e !== "number" || data.e <= Date.now()) return null;
-    if (data.i === "register") return "register";
-    if (data.i === "link") return "link";
-    return "login";
+    const intent: OAuthIntent =
+      data.i === "register" ? "register" : data.i === "link" ? "link" : "login";
+    const client: OAuthClient = data.c === "desktop" ? "desktop" : "web";
+    return { intent, client };
   } catch {
     return null;
   }
@@ -317,7 +330,7 @@ export type OAuthLoginOutcome =
   | { outcome: "ok"; user: UserRow; token: string; expiresAt: string }
   | { outcome: "no_account" }
   | { outcome: "email_taken" }
-  | { outcome: "two_factor_required" }
+  | { outcome: "two_factor_required"; pendingToken: string | null }
   | {
       outcome: "name_required";
       provider: OAuthProvider;
@@ -336,7 +349,14 @@ async function loginExistingUser(
     ipHash,
   });
   // 2FA step (W2/W3): the session is never returned until the code verifies.
-  if (user.totp_secret) return { outcome: "two_factor_required" };
+  // The pending token proves the provider verified the account; the
+  // client returns it with the authenticator code to /api/auth/2fa/verify.
+  if (user.totp_secret) {
+    return {
+      outcome: "two_factor_required",
+      pendingToken: createPendingLoginToken(user.id),
+    };
+  }
   // The provider verified this email address, so it satisfies the
   // verification requirement for an already-registered account.
   if (!user.email_verified) await markUserVerified(client, user.id);
@@ -551,10 +571,77 @@ export function verifyPendingRegistrationToken(
   }
 }
 
+// --- Desktop auth code (deep-link finish) -----------------------------
+
+const DESKTOP_CODE_TTL_MS = 10 * 60 * 1000;
+
+/**
+ * Signed code proving the provider verified this user (10-min TTL).
+ * The OAuth callback redirects the desktop flow to
+ * `reponyx://auth?code=…` with it; the desktop app exchanges it at
+ * `POST /api/auth/desktop/exchange` for a session token. The raw
+ * session token never travels in the deep-link URL — only this
+ * short-lived code. The purpose marker (`k: "desktop"`) keeps it
+ * from being accepted as any other signed token (pending login,
+ * pending registration).
+ */
+export function createDesktopAuthCode(userId: string): string | null {
+  const secret = stateSecret();
+  if (!secret) return null;
+  const payload = b64url(
+    JSON.stringify({
+      k: "desktop",
+      u: userId,
+      e: Date.now() + DESKTOP_CODE_TTL_MS,
+    })
+  );
+  const sig = b64url(createHmac("sha256", secret).update(payload).digest());
+  return `${payload}.${sig}`;
+}
+
+/** Verifies a desktop auth code and returns the user id, or null. */
+export function verifyDesktopAuthCode(code: string): string | null {
+  const secret = stateSecret();
+  if (!secret) return null;
+  const [payload, sig] = code.split(".");
+  if (!payload || !sig) return null;
+  const expected = createHmac("sha256", secret).update(payload).digest();
+  let given: Buffer;
+  try {
+    given = Buffer.from(sig, "base64url");
+  } catch {
+    return null;
+  }
+  if (given.length !== expected.length) return null;
+  if (!timingSafeEqual(given, expected)) return null;
+  try {
+    const data = JSON.parse(
+      Buffer.from(payload, "base64url").toString("utf8")
+    ) as { k?: unknown; u?: unknown; e?: unknown };
+    if (data.k !== "desktop") return null;
+    if (typeof data.e !== "number" || data.e <= Date.now()) return null;
+    if (typeof data.u !== "string" || !data.u) return null;
+    return data.u;
+  } catch {
+    return null;
+  }
+}
+
 // --- Shared callback handler (both providers, different paths) ---
 
 function oauthFail(req: Request, page: string, error: string): NextResponse {
   return NextResponse.redirect(new URL(`${page}?error=${error}`, req.url));
+}
+
+/**
+ * The desktop flow finishes through the `reponyx://auth` deep link
+ * instead of a web page: the desktop app picks the URL up and shows
+ * the login screen (or the 2FA field) itself.
+ */
+function desktopFail(error: string): NextResponse {
+  return NextResponse.redirect(
+    new URL(`reponyx://auth?error=${encodeURIComponent(error)}`)
+  );
 }
 
 function dashboardLinkError(req: Request, error: string): NextResponse {
@@ -572,10 +659,17 @@ export async function handleOAuthCallback(
   const code = url.searchParams.get("code");
   const state = url.searchParams.get("state");
   const config = getOAuthProviderConfig(provider);
-  const intent = state ? verifyOAuthState(state, provider) : null;
+  const verified = state ? verifyOAuthState(state, provider) : null;
   // A bad state carries no trustworthy intent — fail closed to login.
-  if (!config || !code || !state || !intent) {
+  if (!config || !code || !state || !verified) {
     return oauthFail(req, "/login", "oauth_failed");
+  }
+  const { intent, client: oauthClient } = verified;
+  const isDesktop = oauthClient === "desktop";
+  // The desktop only logs in — linking happens on the web dashboard,
+  // and a desktop start route never signs a link intent.
+  if (isDesktop && intent === "link") {
+    return desktopFail("oauth_failed");
   }
   const failPage = intent === "register" ? "/register" : "/login";
   try {
@@ -624,12 +718,23 @@ export async function handleOAuthCallback(
       providerUserId,
     });
     if (result.outcome === "no_account") {
-      return oauthFail(req, "/login", "oauth_no_account");
+      return isDesktop
+        ? desktopFail("oauth_no_account")
+        : oauthFail(req, "/login", "oauth_no_account");
     }
     if (result.outcome === "email_taken") {
-      return oauthFail(req, "/register", "email_taken");
+      return isDesktop
+        ? desktopFail("email_taken")
+        : oauthFail(req, "/register", "email_taken");
     }
     if (result.outcome === "two_factor_required") {
+      if (isDesktop) {
+        if (!result.pendingToken) return desktopFail("oauth_failed");
+        const target = new URL("reponyx://auth");
+        target.searchParams.set("two_factor_required", "1");
+        target.searchParams.set("pending", result.pendingToken);
+        return NextResponse.redirect(target);
+      }
       return oauthFail(req, "/login", "two_factor_required");
     }
     if (result.outcome === "name_required") {
@@ -638,9 +743,25 @@ export async function handleOAuthCallback(
         providerUserId: result.providerUserId,
         email: result.email,
       });
-      if (!pending) return oauthFail(req, "/register", "oauth_failed");
+      if (!pending) {
+        return isDesktop
+          ? desktopFail("oauth_failed")
+          : oauthFail(req, "/register", "oauth_failed");
+      }
+      if (isDesktop) {
+        const target = new URL("reponyx://auth");
+        target.searchParams.set("register_complete", pending);
+        return NextResponse.redirect(target);
+      }
       const target = new URL("/register/complete", req.url);
       target.searchParams.set("token", pending);
+      return NextResponse.redirect(target);
+    }
+    if (isDesktop) {
+      const desktopCode = createDesktopAuthCode(result.user.id);
+      if (!desktopCode) return desktopFail("oauth_failed");
+      const target = new URL("reponyx://auth");
+      target.searchParams.set("code", desktopCode);
       return NextResponse.redirect(target);
     }
     const res = NextResponse.redirect(new URL("/dashboard", req.url));
@@ -656,6 +777,12 @@ export async function handleOAuthCallback(
         err.code === "registration_rate_limited")
     ) {
       const retryAt = (err.data as { retry_at?: string } | undefined)?.retry_at;
+      if (isDesktop) {
+        const target = new URL("reponyx://auth");
+        target.searchParams.set("error", err.code);
+        if (retryAt) target.searchParams.set("retry_at", retryAt);
+        return NextResponse.redirect(target);
+      }
       const target = new URL(
         err.code === "registration_rate_limited" ? "/register" : "/login",
         req.url
@@ -665,6 +792,8 @@ export async function handleOAuthCallback(
       return NextResponse.redirect(target);
     }
     console.error(`${provider} oauth callback failed`, err);
-    return oauthFail(req, failPage, "oauth_failed");
+    return isDesktop
+      ? desktopFail("oauth_failed")
+      : oauthFail(req, failPage, "oauth_failed");
   }
 }

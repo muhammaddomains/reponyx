@@ -320,6 +320,7 @@ export const settingsSchema = z.object({
   concurrency: z.number().int().nullable(),
   storageRoot: z.string().nullable(),
   theme: z.string().nullable(),
+  locale: z.string().nullable(),
   notificationsEnabled: z.boolean().nullable(),
   deviceIdentifier: z.string().nullable(),
   brokerAppId: z.string().nullable(),
@@ -415,3 +416,44 @@ export const syncProgressEventSchema = z.discriminatedUnion("type", [
     message: z.string(),
   }),
 ]);
+
+/** Web-platform login (plan §4, W3). Mirrors the Rust DTOs in
+ *  `apps/desktop/src-tauri/src/web_auth.rs`. */
+
+export const webUserSchema = z.object({
+  id: z.string(),
+  email: z.string(),
+  name: z.string().nullable(),
+  createdAt: z.string().nullable(),
+});
+
+export const webPackageSchema = z.object({
+  name: z.string(),
+  maxLinkedAccounts: z.number().int(),
+  maxDevices: z.number().int(),
+  expiresAt: z.string().nullable(),
+});
+
+export const webUsageSchema = z.object({
+  linkedAccounts: z.number().int(),
+  devices: z.number().int(),
+});
+
+export const webAccountSchema = z.object({
+  user: webUserSchema,
+  package: webPackageSchema,
+  usage: webUsageSchema,
+});
+
+export const webSessionStatusSchema = z.object({
+  authenticated: z.boolean(),
+  offline: z.boolean(),
+  sessionExpired: z.boolean(),
+  account: webAccountSchema.nullable(),
+});
+
+export const webLoginSchema = z.object({
+  step: z.string(),
+  pendingToken: z.string().nullable(),
+  user: webUserSchema.nullable(),
+});

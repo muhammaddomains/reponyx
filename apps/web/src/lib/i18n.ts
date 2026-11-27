@@ -59,5 +59,6 @@ export async function getErrorStrings(): Promise<Record<string, string>> {
     notConfigured: t("notConfigured"),
     oauthFailed: t("oauthFailed"),
     twoFactorRequired: t("twoFactorRequired"),
+    invalid2faCode: t("invalid2faCode"),
   };
 }

@@ -85,6 +85,7 @@ fn invalid(message: impl Into<String>) -> CommandError {
     CommandError {
         code: "InvalidInput".to_string(),
         message: message.into(),
+        retry_at: None,
     }
 }
 
@@ -92,6 +93,7 @@ fn internal(message: impl Into<String>) -> CommandError {
     CommandError {
         code: "InternalError".to_string(),
         message: message.into(),
+        retry_at: None,
     }
 }
 

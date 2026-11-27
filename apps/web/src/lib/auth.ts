@@ -1,3 +1,4 @@
+import { createHmac, timingSafeEqual } from "node:crypto";
 import { cookies } from "next/headers";
 import { DAY_MS, expiresIn, hashToken, randomToken } from "@reponyx/auth";
 import {
@@ -98,4 +99,67 @@ export async function requireSession(
   const session = await getSessionFromRequest(client, req);
   if (!session) throw new ApiError("unauthorized", 401);
   return session;
+}
+
+// --- Pending login (2FA step) ----------------------------------------
+
+const PENDING_LOGIN_TTL_MS = 10 * 60 * 1000;
+
+function pendingLoginSecret(): string | null {
+  return process.env.SESSION_SECRET ?? null;
+}
+
+function b64url(input: string | Buffer): string {
+  return Buffer.from(input).toString("base64url");
+}
+
+/**
+ * Signed token proving the password step passed (10-min TTL). The
+ * login response returns it with `step: "2fa_required"` instead of
+ * a session; `POST /api/auth/2fa/verify` returns it with the
+ * authenticator code, and only then is the session created. The
+ * purpose marker (`k: "login"`) keeps it from being accepted as any
+ * other signed token (desktop auth code, pending registration).
+ * Returns null when SESSION_SECRET is not set — fail closed.
+ */
+export function createPendingLoginToken(userId: string): string | null {
+  const secret = pendingLoginSecret();
+  if (!secret) return null;
+  const payload = b64url(
+    JSON.stringify({
+      k: "login",
+      u: userId,
+      e: Date.now() + PENDING_LOGIN_TTL_MS,
+    })
+  );
+  const sig = b64url(createHmac("sha256", secret).update(payload).digest());
+  return `${payload}.${sig}`;
+}
+
+/** Verifies a pending-login token and returns the user id, or null. */
+export function verifyPendingLoginToken(token: string): string | null {
+  const secret = pendingLoginSecret();
+  if (!secret) return null;
+  const [payload, sig] = token.split(".");
+  if (!payload || !sig) return null;
+  const expected = createHmac("sha256", secret).update(payload).digest();
+  let given: Buffer;
+  try {
+    given = Buffer.from(sig, "base64url");
+  } catch {
+    return null;
+  }
+  if (given.length !== expected.length) return null;
+  if (!timingSafeEqual(given, expected)) return null;
+  try {
+    const data = JSON.parse(
+      Buffer.from(payload, "base64url").toString("utf8")
+    ) as { k?: unknown; u?: unknown; e?: unknown };
+    if (data.k !== "login") return null;
+    if (typeof data.e !== "number" || data.e <= Date.now()) return null;
+    if (typeof data.u !== "string" || !data.u) return null;
+    return data.u;
+  } catch {
+    return null;
+  }
 }

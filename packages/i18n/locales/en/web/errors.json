@@ -7,6 +7,7 @@
   "emailTaken": "An account with this email already exists",
   "emailUnavailable": "We could not send the email — try again later",
   "internalError": "Something went wrong — try again",
+  "invalid2faCode": "The code is incorrect — try again",
   "invalidBody": "Check the form and try again",
   "invalidEmail": "Enter a valid email address",
   "invalidToken": "This link is invalid or expired",

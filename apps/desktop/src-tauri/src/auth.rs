@@ -52,6 +52,11 @@ use uuid::Uuid;
 pub struct CommandError {
     pub code: String,
     pub message: String,
+    /// The retry time for rate-limited errors (e.g. the account-switch
+    /// block), ISO 8601, so the frontend can fill the `{retryAt}`
+    /// placeholder in the localized message. Absent for other errors.
+    #[serde(rename = "retryAt", skip_serializing_if = "Option::is_none")]
+    pub retry_at: Option<String>,
 }
 
 impl From<RepoNyxError> for CommandError {
@@ -59,6 +64,7 @@ impl From<RepoNyxError> for CommandError {
         Self {
             code: err.code.to_string(),
             message: reponyx_logging::redact_secrets(&err.message),
+            retry_at: None,
         }
     }
 }
@@ -69,6 +75,7 @@ pub(crate) fn invalid_input(message: impl Into<String>) -> CommandError {
     CommandError {
         code: "InvalidInput".to_string(),
         message: message.into(),
+        retry_at: None,
     }
 }
 
@@ -79,6 +86,7 @@ pub(crate) fn database_unavailable() -> CommandError {
         // with its real reason — point there, or the UI can never
         // say more than "unavailable".
         message: "database is unavailable — the startup error is in the app log (RepoNyx/logs/reponyx.log.<date>)".to_string(),
+        retry_at: None,
     }
 }
 
@@ -266,8 +274,10 @@ fn parse_expires_at(value: Option<String>) -> CommandResult<Option<DateTime<Utc>
 }
 
 /// The stable per-machine device identifier, stored in the settings
-/// table on first use (a UUID, generated once).
-async fn device_identifier(database: &Database) -> CommandResult<String> {
+/// table on first use (a UUID, generated once). Also the web device
+/// key: the desktop registers this same identifier with the web on
+/// login, so one device is one row in both places.
+pub(crate) async fn device_identifier(database: &Database) -> CommandResult<String> {
     if let Some(setting) = get_setting(&database.pool, "device_identifier").await? {
         return Ok(setting.value);
     }
@@ -276,7 +286,7 @@ async fn device_identifier(database: &Database) -> CommandResult<String> {
     Ok(id)
 }
 
-fn device_name() -> String {
+pub(crate) fn device_name() -> String {
     std::env::var("COMPUTERNAME")
         .or_else(|_| std::env::var("HOSTNAME"))
         .unwrap_or_else(|_| "This device".to_string())
@@ -761,6 +771,8 @@ pub async fn validate_github_app_account_command(
             code: "AuthenticationExpired".to_string(),
             message: "device is not paired; pair this device with the Auth Broker first"
                 .to_string(),
+
+            retry_at: None,
         })?;
     let installations = list_installations_for_account(&database.pool, account.id).await?;
     let installation = installations

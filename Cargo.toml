@@ -51,7 +51,9 @@ sqlx = { version = "0.9", features = ["sqlite", "runtime-tokio", "migrate", "chr
 tauri = { version = "2", features = ["tray-icon"] }
 tauri-build = "2"
 tauri-plugin-dialog = "2"
+tauri-plugin-deep-link = "2"
 tauri-plugin-notification = "2"
+tauri-plugin-single-instance = { version = "2", features = ["deep-link"] }
 tauri-plugin-updater = "2"
 tempfile = "3"
 thiserror = "2"

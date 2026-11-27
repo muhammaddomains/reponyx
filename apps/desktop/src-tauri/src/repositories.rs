@@ -161,6 +161,8 @@ pub(crate) fn open_with_os_app(target: &str) -> CommandResult<()> {
         .map_err(|e| CommandError {
             code: "InternalError".into(),
             message: format!("could not open {target}: {e}"),
+
+            retry_at: None,
         })?;
     Ok(())
 }

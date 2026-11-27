@@ -18,6 +18,7 @@ mod settings;
 mod storage;
 mod synchronization;
 mod tray;
+mod web_auth;
 mod commands {
     use crate::auth::{CommandResult, require_db};
     use reponyx_core::{DashboardCounts, GitStatus};
@@ -62,7 +63,7 @@ use reponyx_database::open_database;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
-use tauri::AppHandle;
+use tauri::{AppHandle, Manager};
 
 /// Stop the services the desktop owns: the background agent (IPC
 /// shutdown, then the lock-PID kill fallback) and a broker child
@@ -114,6 +115,19 @@ pub fn run() {
     };
 
     tauri::Builder::default()
+        // Single-instance first (its README: plugins run in builder
+        // order). A second launch — e.g. the browser handing back
+        // `reponyx://auth?code=...` after OAuth — forwards its args
+        // to this instance instead of opening a second window; the
+        // deep-link feature turns the URL into an `onOpenUrl` event
+        // the frontend handles. The callback brings the window up.
+        .plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| {
+            if let Some(window) = app.get_webview_window("main") {
+                let _ = window.unminimize();
+                let _ = window.set_focus();
+            }
+        }))
+        .plugin(tauri_plugin_deep_link::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
@@ -218,6 +232,15 @@ pub fn run() {
             settings::get_settings_command,
             settings::set_setting_command,
             settings::clear_setting_command,
+            web_auth::web_login_command,
+            web_auth::web_verify_2fa_command,
+            web_auth::web_session_status_command,
+            web_auth::web_logout_command,
+            web_auth::web_open_oauth_command,
+            web_auth::web_open_register_command,
+            web_auth::web_open_dashboard_command,
+            web_auth::web_open_url_command,
+            web_auth::web_exchange_desktop_code_command,
         ])
         .build(tauri::generate_context!())
         .expect("error while building RepoNyx")

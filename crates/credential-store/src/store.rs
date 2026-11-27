@@ -34,6 +34,13 @@ use std::sync::RwLock;
 pub const SERVICE_PAT: &str = "reponyx:pat";
 /// Service name for Auth Broker credentials. Account: see below.
 pub const SERVICE_BROKER: &str = "reponyx:broker";
+/// Service name for the web-platform login session. Account: see below.
+pub const SERVICE_WEB: &str = "reponyx:web";
+/// Account name for the web session token under [`SERVICE_WEB`]:
+/// the bearer token the web issued at login (30-day TTL), stored
+/// here so the desktop never keeps it in SQLite, frontend state,
+/// or logs. Deleted on logout and when the web answers 401.
+pub const ACCOUNT_WEB_SESSION: &str = "session";
 /// Account name for the broker setup token under [`SERVICE_BROKER`].
 pub const ACCOUNT_SETUP_TOKEN: &str = "setup-token";
 /// Account-name prefix for a device token under [`SERVICE_BROKER`]:

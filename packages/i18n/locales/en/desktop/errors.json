@@ -1,6 +1,8 @@
 {
   "accountNotFound": "No account found — please register on the web first",
   "accountSwitchBlocked": "You logged out of a different account recently — you can log in with a different account after {retryAt}",
+  "alreadyLinked": "That account is already linked to another RepoNyx account",
+  "emailMismatch": "That account uses a different email — link an account with the same email as your RepoNyx account",
   "emailNotVerified": "Please verify your email first",
   "emailTaken": "An account with this email already exists",
   "emailUnavailable": "We could not send the email — try again later",
@@ -8,6 +10,7 @@
   "invalidBody": "Check the form and try again",
   "invalidEmail": "Enter a valid email address",
   "invalidToken": "This link is invalid or expired",
+  "lastLoginMethod": "You can't unlink your only way to sign in — set a password first",
   "loginFailed": "Email or password is incorrect",
   "notConfigured": "The service is not configured yet",
   "oauthFailed": "Could not sign you in with that provider — try again",

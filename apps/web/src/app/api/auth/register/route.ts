@@ -21,6 +21,7 @@ import { sendVerificationEmail } from "@/lib/email";
 import { checkRegistrationAllowed, clientIp, hashIp } from "@/lib/rate-limits";
 
 const RegisterBody = z.object({
+  name: z.string().trim().min(1).max(128),
   email: z.email(),
   password: z.string().min(8).max(128),
 });
@@ -35,7 +36,11 @@ export async function POST(req: Request) {
     const existing = await findUserByEmail(client, body.email);
     if (existing) throw new ApiError("email_taken", 409);
     const passwordHash = await hashPassword(body.password);
-    const user = await createUser(client, { email: body.email, passwordHash });
+    const user = await createUser(client, {
+      email: body.email,
+      passwordHash,
+      name: body.name,
+    });
     const token = randomToken();
     await createEmailVerificationToken(client, {
       userId: user.id,

@@ -6,10 +6,14 @@ import {
   countRecentRegistrations,
   createSession,
   createUser,
+  deleteLinkedProvider,
+  findLinkedProviderByProviderUserId,
   findUserByEmail,
   findValidVerificationToken,
+  listLinkedProvidersForUser,
   recordRegistrationAttempt,
   revokeSession,
+  upsertLinkedProvider,
 } from "../src/queries";
 
 /** Test double: dispatches on the marker comment in each statement. */
@@ -38,14 +42,17 @@ test("createUser lowercases the email and returns the row", async () => {
       id: "u1",
       email: params[0],
       password_hash: params[1],
+      name: params[2],
       email_verified: false,
     },
   ]);
   const row = await createUser(db, {
     email: "USER@Example.com",
     passwordHash: "hash",
+    name: "Test User",
   });
   assert.equal(row.email, "user@example.com");
+  assert.equal(row.name, "Test User");
   assert.match(db.calls[0].text, /INSERT INTO users/);
 });
 
@@ -100,4 +107,61 @@ test("registration limit counts recent attempts for the IP hash", async () => {
     1
   );
   assert.match(db.calls[1].text, /registration_attempts/);
+});
+
+test("linked providers round-trip through upsert, find, list, delete", async () => {
+  const db = new FakeDbClient();
+  const stored: Record<string, unknown>[] = [];
+  db.on("upsertLinkedProvider", (params) => {
+    const row = {
+      id: "lp1",
+      user_id: params[0],
+      provider: params[1],
+      provider_user_id: params[2],
+      email: params[3],
+    };
+    stored.push(row);
+    return [row];
+  });
+  db.on("findLinkedProviderByProviderUserId", (params) => {
+    return stored.filter(
+      (r) => r.provider === params[0] && r.provider_user_id === params[1]
+    );
+  });
+  db.on("listLinkedProvidersForUser", (params) => {
+    return stored.filter((r) => r.user_id === params[0]);
+  });
+  db.on("deleteLinkedProvider", (params) => {
+    const i = stored.findIndex(
+      (r) => r.user_id === params[0] && r.provider === params[1]
+    );
+    if (i >= 0) stored.splice(i, 1);
+    return [];
+  });
+
+  const row = await upsertLinkedProvider(db, {
+    userId: "u1",
+    provider: "google",
+    providerUserId: "google-sub-1",
+    email: "USER@Example.com",
+  });
+  assert.equal(row.email, "user@example.com");
+  assert.match(db.calls[0].text, /ON CONFLICT \(user_id, provider\)/);
+
+  const found = await findLinkedProviderByProviderUserId(
+    db,
+    "google",
+    "google-sub-1"
+  );
+  assert.equal(found?.user_id, "u1");
+  assert.equal(
+    await findLinkedProviderByProviderUserId(db, "google", "other-sub"),
+    null
+  );
+
+  const listed = await listLinkedProvidersForUser(db, "u1");
+  assert.equal(listed.length, 1);
+
+  await deleteLinkedProvider(db, "u1", "google");
+  assert.equal((await listLinkedProvidersForUser(db, "u1")).length, 0);
 });

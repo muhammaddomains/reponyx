@@ -3,7 +3,7 @@
 export function LogoutButton({ label }: { label: string }) {
   async function onClick() {
     await fetch("/api/auth/logout", { method: "POST" });
-    window.location.href = "/auth/login";
+    window.location.href = "/login";
   }
   return (
     <button

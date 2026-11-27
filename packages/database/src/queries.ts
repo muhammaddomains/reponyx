@@ -5,6 +5,7 @@ import type {
   EmailVerificationTokenRow,
   InstallationRow,
   LinkedGithubAccountRow,
+  LinkedProviderRow,
   PackageRow,
   PasswordResetTokenRow,
   SessionRow,
@@ -23,13 +24,24 @@ import type {
 
 export async function createUser(
   client: DbClient,
-  args: { email: string; passwordHash: string }
+  args: {
+    email: string;
+    passwordHash: string;
+    name?: string | null;
+    hasPassword?: boolean;
+  }
 ): Promise<UserRow> {
   const rows = await client.query<UserRow>(
     `/* createUser */
-     INSERT INTO users (email, password_hash) VALUES ($1, $2)
+     INSERT INTO users (email, password_hash, name, has_password)
+     VALUES ($1, $2, $3, $4)
      RETURNING *`,
-    [args.email.toLowerCase(), args.passwordHash]
+    [
+      args.email.toLowerCase(),
+      args.passwordHash,
+      args.name ?? null,
+      args.hasPassword ?? true,
+    ]
   );
   const row = rows[0];
   if (!row) throw new Error("createUser returned no row");
@@ -79,13 +91,101 @@ export async function setUserPassword(
 ): Promise<void> {
   await client.query(
     `/* setUserPassword */
-     UPDATE users SET password_hash = $2, updated_at = now() WHERE id = $1`,
+     UPDATE users SET password_hash = $2, has_password = true, updated_at = now() WHERE id = $1`,
     [args.userId, args.passwordHash]
   );
 }
 
+export async function setUserHasPassword(
+  client: DbClient,
+  args: { userId: string; hasPassword: boolean }
+): Promise<void> {
+  await client.query(
+    `/* setUserHasPassword */
+     UPDATE users SET has_password = $2, updated_at = now() WHERE id = $1`,
+    [args.userId, args.hasPassword]
+  );
+}
+
+export async function updateUserName(
+  client: DbClient,
+  args: { userId: string; name: string }
+): Promise<UserRow> {
+  const rows = await client.query<UserRow>(
+    `/* updateUserName */
+     UPDATE users SET name = $2, updated_at = now() WHERE id = $1 RETURNING *`,
+    [args.userId, args.name]
+  );
+  const row = rows[0];
+  if (!row) throw new Error("updateUserName returned no row");
+  return row;
+}
+
 export async function deleteUser(client: DbClient, id: string): Promise<void> {
   await client.query(`/* deleteUser */ DELETE FROM users WHERE id = $1`, [id]);
+}
+
+// --- linked providers (one account, many sign-in methods) ---
+
+export async function upsertLinkedProvider(
+  client: DbClient,
+  args: {
+    userId: string;
+    provider: string;
+    providerUserId: string;
+    email: string;
+  }
+): Promise<LinkedProviderRow> {
+  const rows = await client.query<LinkedProviderRow>(
+    `/* upsertLinkedProvider */
+     INSERT INTO linked_providers (user_id, provider, provider_user_id, email)
+     VALUES ($1, $2, $3, $4)
+     ON CONFLICT (user_id, provider) DO UPDATE
+       SET provider_user_id = EXCLUDED.provider_user_id,
+           email = EXCLUDED.email
+     RETURNING *`,
+    [args.userId, args.provider, args.providerUserId, args.email.toLowerCase()]
+  );
+  const row = rows[0];
+  if (!row) throw new Error("upsertLinkedProvider returned no row");
+  return row;
+}
+
+export async function findLinkedProviderByProviderUserId(
+  client: DbClient,
+  provider: string,
+  providerUserId: string
+): Promise<LinkedProviderRow | null> {
+  const rows = await client.query<LinkedProviderRow>(
+    `/* findLinkedProviderByProviderUserId */
+     SELECT * FROM linked_providers
+     WHERE provider = $1 AND provider_user_id = $2`,
+    [provider, providerUserId]
+  );
+  return rows[0] ?? null;
+}
+
+export async function listLinkedProvidersForUser(
+  client: DbClient,
+  userId: string
+): Promise<LinkedProviderRow[]> {
+  return client.query<LinkedProviderRow>(
+    `/* listLinkedProvidersForUser */
+     SELECT * FROM linked_providers WHERE user_id = $1 ORDER BY provider`,
+    [userId]
+  );
+}
+
+export async function deleteLinkedProvider(
+  client: DbClient,
+  userId: string,
+  provider: string
+): Promise<void> {
+  await client.query(
+    `/* deleteLinkedProvider */
+     DELETE FROM linked_providers WHERE user_id = $1 AND provider = $2`,
+    [userId, provider]
+  );
 }
 
 // --- email verification tokens ---

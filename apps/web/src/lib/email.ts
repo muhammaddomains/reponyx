@@ -28,7 +28,7 @@ export async function sendVerificationEmail(
   to: string,
   token: string
 ): Promise<void> {
-  const url = `${appUrl()}/auth/verify?token=${encodeURIComponent(token)}`;
+  const url = `${appUrl()}/verify?token=${encodeURIComponent(token)}`;
   await getEmailSender().send({ to, ...verificationEmail(url) });
 }
 
@@ -36,6 +36,6 @@ export async function sendPasswordResetEmail(
   to: string,
   token: string
 ): Promise<void> {
-  const url = `${appUrl()}/auth/reset/confirm?token=${encodeURIComponent(token)}`;
+  const url = `${appUrl()}/reset/confirm?token=${encodeURIComponent(token)}`;
   await getEmailSender().send({ to, ...passwordResetEmail(url) });
 }

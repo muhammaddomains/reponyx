@@ -18,6 +18,7 @@ export interface AuthFormProps {
 }
 
 export function RegisterForm({ strings, errors, locale }: AuthFormProps) {
+  const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [busy, setBusy] = useState(false);
@@ -28,7 +29,11 @@ export function RegisterForm({ strings, errors, locale }: AuthFormProps) {
     event.preventDefault();
     setBusy(true);
     setMessage(null);
-    const result = await postJson("/api/auth/register", { email, password });
+    const result = await postJson("/api/auth/register", {
+      name,
+      email,
+      password,
+    });
     setBusy(false);
     if (result.ok) {
       setDone(true);
@@ -41,6 +46,21 @@ export function RegisterForm({ strings, errors, locale }: AuthFormProps) {
 
   return (
     <form onSubmit={onSubmit} className="space-y-4">
+      <div className={fieldWrapper}>
+        <label htmlFor="register-name" className={fieldLabel}>
+          {strings.fullName}
+        </label>
+        <input
+          id="register-name"
+          type="text"
+          value={name}
+          onChange={(e) => setName(e.target.value)}
+          required
+          maxLength={128}
+          autoComplete="name"
+          className={textInput}
+        />
+      </div>
       <div className={fieldWrapper}>
         <label htmlFor="register-email" className={fieldLabel}>
           {strings.email}

@@ -36,7 +36,7 @@ export function VerifyClient({
     return (
       <div className="space-y-4">
         <p className={alertSuccess}>{strings.verifySuccess}</p>
-        <Link href="/auth/login" className={link}>
+        <Link href="/login" className={link}>
           {strings.loginButton}
         </Link>
       </div>

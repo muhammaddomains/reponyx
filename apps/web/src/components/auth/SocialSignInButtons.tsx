@@ -3,6 +3,8 @@
 /**
  * OAuth buttons for the configured providers only, so the UI never offers
  * a provider that would fail (sendcms SocialSignInButtons pattern).
+ * Buttons sit on top of the form — the divider below them introduces
+ * the email form ("or continue with email").
  */
 export function SocialSignInButtons({
   googleLabel,
@@ -10,32 +12,25 @@ export function SocialSignInButtons({
   dividerLabel,
   googleEnabled,
   githubEnabled,
+  intent = "login",
 }: {
   googleLabel: string;
   githubLabel: string;
   dividerLabel: string;
   googleEnabled: boolean;
   githubEnabled: boolean;
+  intent?: "login" | "register";
 }) {
   if (!googleEnabled && !githubEnabled) return null;
+  const intentQuery = intent === "register" ? "?intent=register" : "";
   return (
     <div className="space-y-4">
-      <div className="relative">
-        <div className="absolute inset-0 flex items-center">
-          <span className="w-full border-t border-border" />
-        </div>
-        <div className="relative flex justify-center text-xs uppercase">
-          <span className="bg-background px-2 text-muted-foreground">
-            {dividerLabel}
-          </span>
-        </div>
-      </div>
       <div className="space-y-3">
         {googleEnabled ? (
           <button
             type="button"
             onClick={() => {
-              window.location.href = "/api/auth/oauth/google";
+              window.location.href = `/api/auth/oauth/google${intentQuery}`;
             }}
             className="inline-flex w-full items-center justify-center rounded-md border border-input bg-background px-4 py-2 text-sm font-medium text-foreground shadow-sm transition-colors hover:bg-accent hover:text-accent-foreground"
           >
@@ -47,7 +42,7 @@ export function SocialSignInButtons({
           <button
             type="button"
             onClick={() => {
-              window.location.href = "/api/auth/oauth/github";
+              window.location.href = `/api/auth/oauth/github${intentQuery}`;
             }}
             className="inline-flex w-full items-center justify-center rounded-md border border-input bg-background px-4 py-2 text-sm font-medium text-foreground shadow-sm transition-colors hover:bg-accent hover:text-accent-foreground"
           >
@@ -55,6 +50,16 @@ export function SocialSignInButtons({
             {githubLabel}
           </button>
         ) : null}
+      </div>
+      <div className="relative">
+        <div className="absolute inset-0 flex items-center">
+          <span className="w-full border-t border-border" />
+        </div>
+        <div className="relative flex justify-center text-xs uppercase">
+          <span className="bg-background px-2 text-muted-foreground">
+            {dividerLabel}
+          </span>
+        </div>
       </div>
     </div>
   );

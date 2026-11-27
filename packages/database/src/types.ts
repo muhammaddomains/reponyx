@@ -4,12 +4,24 @@ export interface UserRow {
   id: string;
   email: string;
   password_hash: string;
+  name: string | null;
+  has_password: boolean;
   email_verified: boolean;
   is_admin: boolean;
   totp_secret: string | null;
   locale: string;
   created_at: string;
   updated_at: string;
+}
+
+/** One OAuth identity linked to a RepoNyx account (migration 0004). */
+export interface LinkedProviderRow {
+  id: string;
+  user_id: string;
+  provider: string;
+  provider_user_id: string;
+  email: string;
+  created_at: string;
 }
 
 export interface EmailVerificationTokenRow {

@@ -4,7 +4,7 @@ import { readdir, readFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { PGlite } from "@electric-sql/pglite";
-import { migrate, type DbClient } from "@reponyx/database";
+import { findUserByEmail, migrate, type DbClient } from "@reponyx/database";
 import type { EmailMessage, SentEmail } from "@reponyx/email";
 import { setDbClientForTests } from "../src/lib/db";
 import { setEmailSenderForTests } from "../src/lib/email";
@@ -15,7 +15,10 @@ import {
 } from "../src/lib/oauth";
 import { POST as registerPost } from "../src/app/api/auth/register/route";
 import { POST as verifyPost } from "../src/app/api/auth/verify/route";
+import { POST as loginPost } from "../src/app/api/auth/login/route";
+import { POST as completePost } from "../src/app/api/auth/register/complete/route";
 import { GET as limitsGet } from "../src/app/api/me/limits/route";
+import { GET as linkedGet } from "../src/app/api/me/linked/route";
 import { GET as googleStart } from "../src/app/api/auth/oauth/google/route";
 import { GET as githubStart } from "../src/app/api/auth/oauth/github/route";
 import { GET as googleCallback } from "../src/app/api/google/oauth/callback/route";
@@ -87,26 +90,31 @@ function jsonResponse(body: unknown, status = 200): Response {
 }
 
 /** Provider stub: Google happy path for the registered user. */
-function googleStub(email: string) {
+function googleStub(email: string, name?: string, sub = "google-sub-1") {
   return async (input: string): Promise<Response> => {
     if (input === "https://oauth2.googleapis.com/token") {
       return jsonResponse({ access_token: "google-access-token" });
     }
     if (input === "https://openidconnect.googleapis.com/v1/userinfo") {
-      return jsonResponse({ email, email_verified: true });
+      return jsonResponse({
+        sub,
+        email,
+        name: name ?? null,
+        email_verified: true,
+      });
     }
     throw new Error(`unexpected fetch: ${input}`);
   };
 }
 
 /** Provider stub: GitHub happy path (hidden email → emails endpoint). */
-function githubStub(email: string) {
+function githubStub(email: string, id = 12345) {
   return async (input: string): Promise<Response> => {
     if (input === "https://github.com/login/oauth/access_token") {
       return jsonResponse({ access_token: "github-access-token" });
     }
     if (input === "https://api.github.com/user") {
-      return jsonResponse({ login: "oauthuser", email: null });
+      return jsonResponse({ id, login: "oauthuser", email: null });
     }
     if (input === "https://api.github.com/user/emails") {
       return jsonResponse([
@@ -137,9 +145,10 @@ async function post(
 
 async function get(
   handler: (req: Request) => Promise<Response>,
-  url: string
+  url: string,
+  headers: Record<string, string> = {}
 ): Promise<{ status: number; location: string | null; cookie: string | null }> {
-  const res = await handler(new Request(url));
+  const res = await handler(new Request(url, { headers }));
   return {
     status: res.status,
     location: res.headers.get("location"),
@@ -160,7 +169,11 @@ const EMAIL = "oauth-user@example.com";
   const reg = await post(
     registerPost,
     "/api/auth/register",
-    { email: EMAIL, password: "correct horse battery staple" },
+    {
+      name: "OAuth User",
+      email: EMAIL,
+      password: "correct horse battery staple",
+    },
     { "x-forwarded-for": "203.0.113.11" }
   );
   assert.equal(reg.status, 201);
@@ -185,8 +198,8 @@ test("google start redirects to the provider with a signed state", async () => {
   assert.match(url.searchParams.get("scope") ?? "", /openid/);
   const state = url.searchParams.get("state");
   assert.ok(state);
-  assert.equal(verifyOAuthState(state, "google"), true);
-  assert.equal(verifyOAuthState(state, "github"), false);
+  assert.equal(verifyOAuthState(state, "google"), "login");
+  assert.equal(verifyOAuthState(state, "github"), null);
 });
 
 test("github start redirects to the provider", async () => {
@@ -213,7 +226,7 @@ test("start refuses when the provider is not configured", async () => {
     assert.equal(res.status, 307);
     assert.equal(
       res.location,
-      "http://localhost/auth/login?error=oauth_not_configured"
+      "http://localhost/login?error=oauth_not_configured"
     );
   } finally {
     process.env.GOOGLE_CLIENT_ID = "google-test-client-id";
@@ -247,6 +260,20 @@ test("google callback logs in a registered user and sets a session", async () =>
     };
     assert.equal(body.user.email, EMAIL);
     assert.equal(body.package.name, "Free");
+    // The login linked the provider: /api/me/linked lists Google.
+    const linked = await linkedGet(
+      new Request("http://localhost/api/me/linked", {
+        headers: { cookie },
+      })
+    );
+    assert.equal(linked.status, 200);
+    const linkedBody = (await linked.json()) as {
+      linked: { provider: string; email: string }[];
+    };
+    assert.deepEqual(
+      linkedBody.linked.map((row) => row.provider),
+      ["google"]
+    );
   } finally {
     setFetchForTests(null);
   }
@@ -255,17 +282,16 @@ test("google callback logs in a registered user and sets a session", async () =>
 test("google callback refuses an unregistered email (no auto-create)", async () => {
   const state = createOAuthState("google");
   assert.ok(state);
-  setFetchForTests(googleStub("stranger@example.com"));
+  setFetchForTests(
+    googleStub("stranger@example.com", undefined, "google-sub-stranger")
+  );
   try {
     const res = await get(
       googleCallback,
       `http://localhost/api/google/oauth/callback?code=test-code&state=${encodeURIComponent(state)}`
     );
     assert.equal(res.status, 307);
-    assert.equal(
-      res.location,
-      "http://localhost/auth/login?error=oauth_no_account"
-    );
+    assert.equal(res.location, "http://localhost/login?error=oauth_no_account");
     assert.equal(res.cookie, null);
   } finally {
     setFetchForTests(null);
@@ -278,7 +304,7 @@ test("google callback refuses a tampered state", async () => {
     "http://localhost/api/google/oauth/callback?code=test-code&state=tampered"
   );
   assert.equal(res.status, 307);
-  assert.equal(res.location, "http://localhost/auth/login?error=oauth_failed");
+  assert.equal(res.location, "http://localhost/login?error=oauth_failed");
 });
 
 test("github callback logs in via the emails endpoint", async () => {
@@ -309,10 +335,7 @@ test("github callback fails cleanly when the provider errors", async () => {
       `http://localhost/api/auth/callback/github?code=bad-code&state=${encodeURIComponent(state)}`
     );
     assert.equal(res.status, 307);
-    assert.equal(
-      res.location,
-      "http://localhost/auth/login?error=oauth_failed"
-    );
+    assert.equal(res.location, "http://localhost/login?error=oauth_failed");
   } finally {
     setFetchForTests(null);
   }
@@ -327,5 +350,292 @@ test("an expired state does not verify", async () => {
     .update(payload)
     .digest()
     .toString("base64url");
-  assert.equal(verifyOAuthState(`${payload}.${sig}`, "google"), false);
+  assert.equal(verifyOAuthState(`${payload}.${sig}`, "google"), null);
+});
+
+test("google start with ?intent=register signs the register intent", async () => {
+  const res = await get(
+    googleStart,
+    "http://localhost/api/auth/oauth/google?intent=register"
+  );
+  assert.equal(res.status, 307);
+  assert.ok(res.location);
+  const state = new URL(res.location).searchParams.get("state");
+  assert.ok(state);
+  assert.equal(verifyOAuthState(state, "google"), "register");
+});
+
+test("google callback with register intent creates a verified user", async () => {
+  const state = createOAuthState("google", "register");
+  assert.ok(state);
+  setFetchForTests(
+    googleStub("oauth-new@example.com", "New User", "google-sub-new")
+  );
+  try {
+    const res = await get(
+      googleCallback,
+      `http://localhost/api/google/oauth/callback?code=test-code&state=${encodeURIComponent(state)}`,
+      { "x-forwarded-for": "203.0.113.12" }
+    );
+    assert.equal(res.status, 307);
+    assert.equal(res.location, "http://localhost/dashboard");
+    assert.ok(res.cookie);
+    const created = await findUserByEmail(client, "oauth-new@example.com");
+    assert.ok(created);
+    assert.equal(created.name, "New User");
+    assert.equal(created.email_verified, true);
+    // The session works: /api/me/limits answers for the new user.
+    const cookie = (res.cookie as string).split(";")[0];
+    const limits = await limitsGet(
+      new Request("http://localhost/api/me/limits", {
+        headers: { cookie },
+      })
+    );
+    assert.equal(limits.status, 200);
+    const body = (await limits.json()) as {
+      user: { email: string; name: string | null };
+    };
+    assert.equal(body.user.email, "oauth-new@example.com");
+    assert.equal(body.user.name, "New User");
+  } finally {
+    setFetchForTests(null);
+  }
+});
+
+test("google callback with register intent refuses an existing email", async () => {
+  const state = createOAuthState("google", "register");
+  assert.ok(state);
+  setFetchForTests(googleStub(EMAIL, "OAuth User", "google-sub-other"));
+  try {
+    const res = await get(
+      googleCallback,
+      `http://localhost/api/google/oauth/callback?code=test-code&state=${encodeURIComponent(state)}`,
+      { "x-forwarded-for": "203.0.113.13" }
+    );
+    assert.equal(res.status, 307);
+    assert.equal(res.location, "http://localhost/register?error=email_taken");
+    assert.equal(res.cookie, null);
+  } finally {
+    setFetchForTests(null);
+  }
+});
+
+test("google callback with register intent enforces the registration limit", async () => {
+  // 203.0.113.11 already registered once (the seed user above).
+  const state = createOAuthState("google", "register");
+  assert.ok(state);
+  setFetchForTests(
+    googleStub(
+      "oauth-limited@example.com",
+      "Limited User",
+      "google-sub-limited"
+    )
+  );
+  try {
+    const res = await get(
+      googleCallback,
+      `http://localhost/api/google/oauth/callback?code=test-code&state=${encodeURIComponent(state)}`,
+      { "x-forwarded-for": "203.0.113.11" }
+    );
+    assert.equal(res.status, 307);
+    assert.ok(res.location);
+    assert.match(
+      res.location,
+      /^http:\/\/localhost\/register\?error=registration_rate_limited&retry_at=/
+    );
+    assert.equal(res.cookie, null);
+    assert.equal(
+      await findUserByEmail(client, "oauth-limited@example.com"),
+      null
+    );
+  } finally {
+    setFetchForTests(null);
+  }
+});
+
+test("github callback with register intent creates via the emails endpoint", async () => {
+  const state = createOAuthState("github", "register");
+  assert.ok(state);
+  setFetchForTests(githubStub("oauth-gh-new@example.com", 67890));
+  try {
+    const res = await get(
+      githubCallback,
+      `http://localhost/api/auth/callback/github?code=test-code&state=${encodeURIComponent(state)}`,
+      { "x-forwarded-for": "203.0.113.14" }
+    );
+    assert.equal(res.status, 307);
+    assert.equal(res.location, "http://localhost/dashboard");
+    assert.ok(res.cookie);
+    const created = await findUserByEmail(client, "oauth-gh-new@example.com");
+    assert.ok(created);
+    // GitHub's /user had no public name, so the login is the fallback.
+    assert.equal(created.name, "oauthuser");
+    assert.equal(created.email_verified, true);
+  } finally {
+    setFetchForTests(null);
+  }
+});
+
+async function loginCookie(email: string): Promise<string> {
+  const res = await loginPost(
+    new Request("http://localhost/api/auth/login", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        email,
+        password: "correct horse battery staple",
+      }),
+    })
+  );
+  assert.equal(res.status, 200);
+  const cookie = res.headers.get("set-cookie") ?? "";
+  assert.match(cookie, /reponyx-session=/);
+  return cookie.split(";")[0];
+}
+
+test("google callback with link intent links the provider for a logged-in user", async () => {
+  const cookie = await loginCookie(EMAIL);
+  const state = createOAuthState("google", "link");
+  assert.ok(state);
+  // A different Google account (new sub) with the same email.
+  setFetchForTests(googleStub(EMAIL, "OAuth User", "google-sub-2"));
+  try {
+    const res = await get(
+      googleCallback,
+      `http://localhost/api/google/oauth/callback?code=test-code&state=${encodeURIComponent(state)}`,
+      { cookie }
+    );
+    assert.equal(res.status, 307);
+    assert.equal(res.location, "http://localhost/dashboard?linked=google");
+    const linked = await linkedGet(
+      new Request("http://localhost/api/me/linked", { headers: { cookie } })
+    );
+    assert.equal(linked.status, 200);
+    const body = (await linked.json()) as {
+      linked: { provider: string }[];
+    };
+    // The seed user also linked GitHub in an earlier test; the point
+    // here is that the link flow added Google.
+    assert.ok(body.linked.map((row) => row.provider).includes("google"));
+  } finally {
+    setFetchForTests(null);
+  }
+});
+
+test("google callback with link intent refuses a different email", async () => {
+  const cookie = await loginCookie(EMAIL);
+  const state = createOAuthState("google", "link");
+  assert.ok(state);
+  setFetchForTests(googleStub("someone-else@example.com", "Someone Else"));
+  try {
+    const res = await get(
+      googleCallback,
+      `http://localhost/api/google/oauth/callback?code=test-code&state=${encodeURIComponent(state)}`,
+      { cookie }
+    );
+    assert.equal(res.status, 307);
+    assert.equal(
+      res.location,
+      "http://localhost/dashboard?link_error=email_mismatch"
+    );
+  } finally {
+    setFetchForTests(null);
+  }
+});
+
+test("google callback with link intent without a session goes to login", async () => {
+  const state = createOAuthState("google", "link");
+  assert.ok(state);
+  setFetchForTests(googleStub(EMAIL, "OAuth User"));
+  try {
+    const res = await get(
+      googleCallback,
+      `http://localhost/api/google/oauth/callback?code=test-code&state=${encodeURIComponent(state)}`
+    );
+    assert.equal(res.status, 307);
+    assert.equal(res.location, "http://localhost/login?error=session_expired");
+  } finally {
+    setFetchForTests(null);
+  }
+});
+
+test("google register without a provider name asks to complete the profile", async () => {
+  const state = createOAuthState("google", "register");
+  assert.ok(state);
+  // The stub returns no name at all — the account must not be created yet.
+  setFetchForTests(
+    googleStub("oauth-noname@example.com", undefined, "google-sub-noname")
+  );
+  let pendingToken: string;
+  try {
+    const res = await get(
+      googleCallback,
+      `http://localhost/api/google/oauth/callback?code=test-code&state=${encodeURIComponent(state)}`,
+      { "x-forwarded-for": "203.0.113.15" }
+    );
+    assert.equal(res.status, 307);
+    assert.ok(res.location);
+    assert.match(
+      res.location,
+      /^http:\/\/localhost\/register\/complete\?token=/
+    );
+    assert.equal(res.cookie, null);
+    assert.equal(
+      await findUserByEmail(client, "oauth-noname@example.com"),
+      null
+    );
+    pendingToken = new URL(res.location).searchParams.get("token") ?? "";
+    assert.ok(pendingToken);
+  } finally {
+    setFetchForTests(null);
+  }
+  // Completing the profile creates the account and logs the user in.
+  const done = await post(
+    completePost,
+    "/api/auth/register/complete",
+    { token: pendingToken, name: "No Name User" },
+    { "x-forwarded-for": "203.0.113.15" }
+  );
+  assert.equal(done.status, 201);
+  const created = await findUserByEmail(client, "oauth-noname@example.com");
+  assert.ok(created);
+  assert.equal(created.name, "No Name User");
+  assert.equal(created.email_verified, true);
+  assert.equal(created.has_password, false);
+});
+
+test("complete registration refuses a tampered token and a missing name", async () => {
+  const bad = await post(
+    completePost,
+    "/api/auth/register/complete",
+    { token: "tampered.token", name: "Someone" },
+    { "x-forwarded-for": "203.0.113.16" }
+  );
+  assert.equal(bad.status, 404);
+  const state = createOAuthState("google", "register");
+  assert.ok(state);
+  setFetchForTests(
+    googleStub("oauth-noname-2@example.com", undefined, "google-sub-noname-2")
+  );
+  try {
+    const res = await get(
+      googleCallback,
+      `http://localhost/api/google/oauth/callback?code=test-code&state=${encodeURIComponent(state)}`,
+      { "x-forwarded-for": "203.0.113.16" }
+    );
+    const token = new URL(res.location ?? "").searchParams.get("token") ?? "";
+    const noName = await post(
+      completePost,
+      "/api/auth/register/complete",
+      { token, name: "   " },
+      { "x-forwarded-for": "203.0.113.16" }
+    );
+    assert.equal(noName.status, 400);
+    assert.equal(
+      await findUserByEmail(client, "oauth-noname-2@example.com"),
+      null
+    );
+  } finally {
+    setFetchForTests(null);
+  }
 });

@@ -66,7 +66,12 @@ for (const file of files) {
   });
 }
 const applied = await migrate(client, migrations);
-assert.deepEqual(applied, ["0001_init", "0002_seed_packages"]);
+assert.deepEqual(applied, [
+  "0001_init",
+  "0002_seed_packages",
+  "0003_add_user_name",
+  "0004_linked_providers",
+]);
 
 setDbClientForTests(client);
 setEmailSenderForTests({
@@ -112,7 +117,11 @@ function errorCode(result: CallResult): string {
 test("full flow: register → verify → login → limits → devices → logout", async () => {
   const ip = { "x-forwarded-for": "203.0.113.10" };
   const reg = await call(registerPost, "/api/auth/register", {
-    body: { email: "a@example.com", password: "correct horse battery staple" },
+    body: {
+      name: "Flow User",
+      email: "a@example.com",
+      password: "correct horse battery staple",
+    },
     headers: ip,
   });
   assert.equal(reg.status, 201);
@@ -153,6 +162,7 @@ test("full flow: register → verify → login → limits → devices → logout
   });
   assert.equal(limits.status, 200);
   assert.equal((limits.json.package as { name: string }).name, "Free");
+  assert.equal((limits.json.user as { name: string | null }).name, "Flow User");
   assert.deepEqual(limits.json.usage, { linkedAccounts: 0, devices: 0 });
 
   const dev = await call(devicesPost, "/api/devices", {
@@ -191,7 +201,11 @@ test("full flow: register → verify → login → limits → devices → logout
 
 test("registration limit: 1 per IP per 24 hours", async () => {
   const blocked = await call(registerPost, "/api/auth/register", {
-    body: { email: "b@example.com", password: "correct horse battery staple" },
+    body: {
+      name: "Blocked User",
+      email: "b@example.com",
+      password: "correct horse battery staple",
+    },
     headers: { "x-forwarded-for": "203.0.113.10" },
   });
   assert.equal(blocked.status, 429);
@@ -201,7 +215,11 @@ test("registration limit: 1 per IP per 24 hours", async () => {
   assert.ok(retryAt);
 
   const ok = await call(registerPost, "/api/auth/register", {
-    body: { email: "b@example.com", password: "correct horse battery staple" },
+    body: {
+      name: "Second User",
+      email: "b@example.com",
+      password: "correct horse battery staple",
+    },
     headers: { "x-forwarded-for": "203.0.113.20" },
   });
   assert.equal(ok.status, 201);
@@ -277,7 +295,11 @@ test("password reset: request → confirm → new password works, old one does n
 
 test("registering an existing email is refused", async () => {
   const res = await call(registerPost, "/api/auth/register", {
-    body: { email: "a@example.com", password: "correct horse battery staple" },
+    body: {
+      name: "Again User",
+      email: "a@example.com",
+      password: "correct horse battery staple",
+    },
     headers: { "x-forwarded-for": "203.0.113.30" },
   });
   assert.equal(res.status, 409);

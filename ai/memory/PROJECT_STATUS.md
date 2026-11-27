@@ -2691,3 +2691,79 @@ W1 built on the 2nd branch, main untouched.
   `~/workspace/custom-skills/`.
 - Still open: push + preview/production deploy of this batch (needs
   user approval); a live Google/GitHub click-through on reponyx.bond.
+
+## Web platform — W2 pushed + deployed (2026-11-27 ~04:13 MST)
+
+- Snapshot push **sync 69**: `0cf5fff` (401 files) — W2 batch on
+  `feature/admin-control-plane`. Verified on GitHub (oauth.ts,
+  .prettierrc, site.webmanifest present).
+- Binary public assets uploaded via the web UI: `cd010f2`
+  (8 files: favicon.ico, favicon-16/32, apple-touch-icon, icon-192/512,
+  logo.png, og-image.png) — recorded as sync 70. The snapshot flow
+  cannot carry binary files; web-UI upload is the path for them.
+- Vercel auto-deployed both commits; latest **dpl_6JifbvLvG1krhkb2U5CZHMXtn68c**
+  READY (production target, commit cd010f2). Live smoke test on
+  reponyx.bond: home 200, login 200 (both OAuth buttons, styled),
+  all assets 200, Google/GitHub start routes 307 to the providers
+  with the exact registered callback URLs, bad callback →
+  login `oauth_failed` (no 500).
+- Still open: a live Google/GitHub click-through on reponyx.bond
+  (needs the user in a browser — the consent step cannot be tested
+  headless); W3 desktop login next.
+
+## Web platform — W2 polish (2026-11-27, local, not pushed)
+
+User asked (screenshots of RepoNyx vs sendcms): OAuth buttons on the
+register page too, full name mandatory, buttons above the form like
+sendcms, a Terms of Service line + page, clean URLs.
+
+- **OAuth register intent:** the signed state carries `login` |
+  `register`. Login still refuses unregistered users; the register
+  intent creates the account (provider-verified email + profile name,
+  same 1/IP/24h limit, existing email → `email_taken`). OAuth users
+  get an unusable password hash until they set one via reset.
+- **Full name:** migration `0003_add_user_name` (`users.name`); register
+  API + form require it; dashboard welcome + `/api/me/limits` return it
+  (email fallback when null).
+- **Buttons on top:** login + register both render OAuth buttons first,
+  divider "or continue with email", then the form.
+- **Terms:** `/terms` (English legal text) + agreement footer on
+  login/register (en + ur).
+- **Clean URLs:** `/login`, `/register`, `/reset`, `/reset/confirm`,
+  `/verify`; `/auth/*` redirects with the query preserved; email links
+  use the new URLs.
+- Verified: format clean, i18n 99 keys 0 failures, typechecks clean,
+  database 8/8, web 19/19 (5 auth-flow + 14 OAuth), `next build` clean
+  (27 routes), local smoke test green (button order, /terms 200, old
+  URLs 307 with query, register without name → 400).
+- Still open: push + deploy of this batch; live Google/GitHub
+  click-through (user in a browser); the CI-on-feature-branch question
+  (user has not answered yet — branch CI has never run).
+
+## Web platform — W2 polish, part 2: linked sign-in methods + name required (2026-11-27, local, not pushed)
+
+User asked: even with the same Gmail/GitHub/Google — all one account;
+a linked option inside the profile, so any of them can sign in. Then
+clarified: first-time accounts are still made from the register page;
+Google/GitHub registration works but the name is mandatory, so the
+profile is complete before login is allowed.
+
+- **Linked providers:** migration `0004_linked_providers` +
+  `users.has_password`; OAuth login/register auto-links the provider;
+  link-first resolution (provider identity beats email); dashboard
+  Sign-in methods card with Link (intent=link, email must match,
+  already-linked refused) + Unlink (last-method guard, 409
+  `last_login_method`).
+- **Name required:** OAuth register without a provider name →
+  `/register/complete` with a signed 10-min pending token; `POST
+  /api/auth/register/complete` creates the account under the 1/IP/24h
+  limit. Profile name edit via `PATCH /api/me` (owner account can
+  complete its profile).
+- Verified: database 9/9, web 28/28 (5 auth-flow + 19 OAuth + 4
+  linked), i18n 120 keys 0 failures, typechecks clean, `next build`
+  clean (32 routes), local smoke test green.
+- Still open: push + deploy of this batch AND the W2 polish batch (both
+  local, one push covers both; migration 0004 must be applied to the
+  live Prisma DB before the deploy goes live — same rule as 0003);
+  live Google/GitHub click-through (user in a browser); the
+  CI-on-feature-branch question (unanswered).

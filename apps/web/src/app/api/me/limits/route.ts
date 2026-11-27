@@ -25,6 +25,7 @@ export async function GET(req: Request) {
       user: {
         id: user.id,
         email: user.email,
+        name: user.name,
         locale: user.locale,
         createdAt: user.created_at,
       },

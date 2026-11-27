@@ -24,13 +24,10 @@ export default async function HomePage() {
         </Link>
       ) : (
         <div className="flex flex-col gap-3 sm:flex-row">
-          <Link href="/auth/login" className={`${primaryButton} w-auto px-6`}>
+          <Link href="/login" className={`${primaryButton} w-auto px-6`}>
             {t("login")}
           </Link>
-          <Link
-            href="/auth/register"
-            className={`${outlineButton} w-auto px-6`}
-          >
+          <Link href="/register" className={`${outlineButton} w-auto px-6`}>
             {t("register")}
           </Link>
         </div>

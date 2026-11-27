@@ -586,13 +586,21 @@ Still open (user-side): the Windows verification checklist §1–§5,
 the one-agent setup test, syncing sendcms + reponyx, then tag
 v0.1.0 (needs the user's approval — publishing a release is
 gated), draft release → publish, and the updater E2E via v0.1.1.
-The fixes above ride with the next approved push, and the
-tag must then move to that new head (it still points at
-`03bf01a`, whose release run failed on the config tests). The
-user also asked for a plan to restructure the Accounts page
-(separate "Add account" vs "Connected accounts", for 10–50
-accounts) — see `ai/phase6/accounts-page-plan.md`, awaiting
-their approval before implementation.
+PUSHED 2026-11-26 ~06:34 MST as snapshot `d15ff3e`, sync 66,
+294 files (Manager-import fix + docs + central-broker +
+web-platform plans; local main merged via `25f34ff`). CI on
+`d15ff3e`: Lint / Security audit / CodeQL GREEN, CI run #102 in
+progress at 06:36 MST (frontend passed, rust + windows jobs
+running; final check scheduled 06:48 MST). The tag must then
+move to that new head (it still points at `03bf01a`, whose
+release run failed on the config tests). The user also asked for
+a plan to restructure the Accounts page (separate "Add account"
+vs "Connected accounts", for 10–50 accounts) — see
+`ai/phase6/accounts-page-plan.md`, awaiting their approval
+before implementation. The web platform plan
+(`ai/phase6/web-platform-plan.md`) supersedes the central-broker
+plan and will be implemented on a 2nd branch when approved, so
+main and the new work stay distinct.
 
 ## Windows first-run bugs (2026-11-23)
 
@@ -2553,3 +2561,32 @@ Phase 1 handoff). Top level: `Cargo.toml`, `package.json`,
    `externalBin`.
 8. On a machine with the WebViewGTK dev libraries (or Windows):
    re-run `cargo check -p reponyx-desktop` and `cargo tauri build`.
+
+## Web platform — W1 code-complete (2026-11-26, branch `feature/admin-control-plane`)
+
+Plan: `ai/phase6/web-platform-plan.md` (approved 2026-11-26 ~07:34 MST).
+W1 built on the 2nd branch, main untouched.
+
+- `apps/web` (Next.js 16.4.6): auth API (register / verify / login /
+  logout / reset + sessions + devices + limits), dashboard shell,
+  en + ur i18n (6 web domains, 85 keys).
+- `packages/auth`: Argon2id via hash-wasm (pure WASM — also runs on
+  Cloudflare Workers), tokens as SHA-256 hashes.
+- `packages/email`: Resend (fetch) / SMTP (nodemailer), selected by
+  `EMAIL_PROVIDER=resend|smtp`; both credential sets can live in
+  `.env`; admin sees only whether each is configured.
+- `packages/database`: Neon HTTP driver, `0001_init` schema +
+  `0002_seed_packages` (Free 2/2, Bronze 10, Silver 20, Gold 50,
+  Diamond 100), migrate CLI (`pnpm --filter @reponyx/database migrate`).
+- Abuse limits enforced server-side: registration 1/IP/24h,
+  account-switch 1h device-first/IP-fallback; structured errors
+  (code + data, retry-at) localized by the client.
+- Verified: package tests 25/25, web auth-flow tests 5/5 against real
+  Postgres (PGlite — full register→verify→login→limits→devices→logout
+  flow, both abuse limits, password reset, duplicate email), i18n
+  validate 0 failures, all typechecks clean, `next build` clean
+  (18 routes).
+- Still open: the live Neon project (`DATABASE_URL`) + the first
+  Vercel deploy. Local Postgres could not be installed on this VM
+  (apt lock held by a system process) — migration SQL was verified
+  against PGlite instead.

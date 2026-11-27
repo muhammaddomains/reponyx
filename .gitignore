@@ -50,3 +50,5 @@ npm-debug.log
 reponyx.key
 reponyx.key.pub
 reponyx.2026-11-23.private-key.pem
+
+.next/

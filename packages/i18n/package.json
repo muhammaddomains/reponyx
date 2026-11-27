@@ -1,0 +1,21 @@
+{
+  "name": "@reponyx/i18n",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "validate": "node scripts/validate-translations.mjs"
+  },
+  "devDependencies": {
+    "@reponyx/config": "workspace:*",
+    "typescript": "6.0.3"
+  },
+  "exports": {
+    ".": {
+      "import": "./src/index.ts",
+      "types": "./src/index.ts"
+    },
+    "./locales/*": "./locales/*"
+  }
+}

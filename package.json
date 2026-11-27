@@ -20,11 +20,14 @@
     "typecheck": "pnpm -r typecheck",
     "clean": "pnpm -r clean",
     "tauri:dev": "pnpm --filter @reponyx/desktop tauri dev",
-    "tauri:build": "pnpm --filter @reponyx/desktop tauri build"
+    "tauri:build": "pnpm --filter @reponyx/desktop tauri build",
+    "web": "pnpm --filter @reponyx/web dev",
+    "web:build": "pnpm --filter @reponyx/web build"
   },
   "devDependencies": {
     "@types/node": "^26.6.6",
     "concurrently": "^10.0.7",
+    "turbo": "2.11.13",
     "typescript": "^6.0.3"
   }
 }

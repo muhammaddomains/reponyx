@@ -5,6 +5,13 @@ All notable changes to RepoNyx are documented here. Format follows
 
 ## [Unreleased]
 
+### Added — Web platform W1 (2026-11-26, branch `feature/admin-control-plane`)
+
+- **Web foundation (code-complete):** `apps/web` (Next.js 16.4.6) + `packages/i18n` (en + ur, 6 web domains, 85 keys), `packages/auth` (Argon2id via hash-wasm — pure WASM, no native binding, so it also runs on Cloudflare Workers — + random tokens stored as SHA-256 hashes), `packages/email` (one send path; `EMAIL_PROVIDER=resend|smtp` selector, both credential sets can live in `.env`; Resend via fetch, SMTP via nodemailer), `packages/database` (Neon HTTP driver — portable to Vercel + Workers; `0001_init` schema + `0002_seed_packages` Free/Bronze/Silver/Gold/Diamond; `pnpm --filter @reponyx/database migrate`).
+- **Auth API:** `POST /api/auth/register|verify|login|logout|reset|reset/confirm` (argon2id passwords, 24h verification tokens, 30-day sessions as hashed tokens in an httpOnly cookie + Bearer token for the desktop app, password reset revokes all sessions, dummy-hash login for unknown emails so no user enumeration by timing), `GET /api/me/limits` (package + usage), `GET/POST /api/devices` (device registration). **Abuse limits (§7) enforced server-side:** registration 1/IP/24h, account-switch 1h device-first/IP-fallback; every rejection is a structured error (code + data, retry-at) localized by the client from `errors.json`.
+- **Dashboard shell:** package, linked-accounts/devices usage vs limits, expiry, joining date, devices list, linked accounts list; redirects to `/auth/login` without a session.
+- **Verified:** package tests 25/25 (auth 7, email 10, database 8), web auth-flow tests 5/5 against real Postgres (PGlite: full register→verify→login→limits→devices→logout flow, both abuse limits, password reset, duplicate email), i18n validate 0 failures, all typechecks clean, `next build` clean (18 routes). **Not yet:** the live Neon project (`DATABASE_URL`) and the first Vercel deploy; local Postgres could not be installed on this VM (apt lock held by a system process), so migration SQL was verified against PGlite instead.
+
 ### Changed — Polish (2026-11-26, Phase 5 of the production audit)
 
 - **Loading states (F9/F13):** the Agent page badge shows

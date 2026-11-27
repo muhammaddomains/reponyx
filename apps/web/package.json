@@ -1,0 +1,32 @@
+{
+  "name": "@reponyx/web",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "next build",
+    "dev": "next dev",
+    "start": "next start",
+    "test": "tsx --test test/",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@reponyx/auth": "workspace:*",
+    "@reponyx/database": "workspace:*",
+    "@reponyx/email": "workspace:*",
+    "@reponyx/i18n": "workspace:*",
+    "next": "16.4.6",
+    "react": "19.3.1",
+    "react-dom": "19.3.1",
+    "zod": "^4.6.7"
+  },
+  "devDependencies": {
+    "@electric-sql/pglite": "0.6.0",
+    "@reponyx/config": "workspace:*",
+    "@types/node": "^26.6.6",
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0",
+    "tsx": "4.23.15",
+    "typescript": "6.0.3"
+  }
+}

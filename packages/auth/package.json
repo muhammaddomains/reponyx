@@ -1,0 +1,25 @@
+{
+  "name": "@reponyx/auth",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "tsx --test test/",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "hash-wasm": "4.13.0"
+  },
+  "devDependencies": {
+    "@reponyx/config": "workspace:*",
+    "@types/node": "^26.6.6",
+    "tsx": "4.23.15",
+    "typescript": "6.0.3"
+  },
+  "exports": {
+    ".": {
+      "import": "./src/index.ts",
+      "types": "./src/index.ts"
+    }
+  }
+}

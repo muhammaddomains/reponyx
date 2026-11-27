@@ -287,6 +287,13 @@ test("password reset: request → confirm → new password works, old one does n
   });
   assert.equal(confirm.status, 200);
 
+  // The link is single-use: a second confirm with the same token fails.
+  const replay = await call(resetConfirmPost, "/api/auth/reset/confirm", {
+    body: { token, password: "another horse battery staple" },
+  });
+  assert.equal(replay.status, 404);
+  assert.equal(errorCode(replay), "invalid_token");
+
   const oldLogin = await call(loginPost, "/api/auth/login", {
     body: { email: "a@example.com", password: "correct horse battery staple" },
   });

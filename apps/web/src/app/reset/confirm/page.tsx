@@ -1,8 +1,11 @@
+import { hashToken } from "@reponyx/auth";
+import { findValidResetToken } from "@reponyx/database";
 import {
   getErrorStrings,
   getRequestLocale,
   getWebTranslator,
 } from "@/lib/i18n";
+import { getDb } from "@/lib/db";
 import { AuthShell } from "@/components/auth/AuthShell";
 import { ResetConfirmForm } from "@/components/auth/ResetConfirmForm";
 import { alertError } from "@/components/ui";
@@ -18,12 +21,21 @@ export default async function ResetConfirmPage(props: {
     newPassword: tAuth("newPassword"),
     confirmPassword: tAuth("confirmPassword"),
     passwordsDoNotMatch: tAuth("passwordsDoNotMatch"),
-    resetButton: tAuth("resetButton"),
+    changePasswordButton: tAuth("changePasswordButton"),
     resetSuccess: tAuth("resetSuccess"),
   };
+  // A link that was already used (or expired) shows the dead-link
+  // message instead of the form — one link resets the password
+  // exactly once.
+  const tokenValid = token
+    ? (await findValidResetToken(getDb(), hashToken(token))) !== null
+    : false;
   return (
-    <AuthShell title={tAuth("resetTitle")} description={tAuth("resetSubtitle")}>
-      {token ? (
+    <AuthShell
+      title={tAuth("resetTitle")}
+      description={tAuth("confirmResetSubtitle")}
+    >
+      {tokenValid && token ? (
         <ResetConfirmForm
           token={token}
           strings={strings}

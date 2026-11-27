@@ -23,6 +23,7 @@ const baseProps = {
   initialPendingToken: null as string | null,
   registerCompleteToken: null as string | null,
   deepLinkError: null,
+  onClearDeepLinkError: vi.fn(),
   onAuthenticated: vi.fn(),
 };
 
@@ -168,6 +169,34 @@ describe("Login page", () => {
     );
     expect(
       screen.getByText("No account found — please register on the web first"),
+    ).toBeInTheDocument();
+  });
+
+  it("clears a stale deep-link error when a new OAuth attempt starts", () => {
+    render(
+      <Login
+        {...baseProps}
+        deepLinkError={{ code: "oauth_failed", retryAt: null }}
+      />,
+    );
+    expect(
+      screen.getByText("Could not sign you in with that provider — try again"),
+    ).toBeInTheDocument();
+    fireEvent.click(
+      screen.getByRole("button", { name: "Continue with Google" }),
+    );
+    expect(baseProps.onClearDeepLinkError).toHaveBeenCalled();
+  });
+
+  it("renders an unmapped web error code as the generic message", () => {
+    render(
+      <Login
+        {...baseProps}
+        deepLinkError={{ code: "internal_error", retryAt: null }}
+      />,
+    );
+    expect(
+      screen.getByText("Something went wrong — try again"),
     ).toBeInTheDocument();
   });
 });

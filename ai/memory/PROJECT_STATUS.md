@@ -2867,8 +2867,22 @@ profile is complete before login is allowed.
   invented a second failure (a `reponyx-core` test in a
   `job_queue.rs` that never existed in the repo) — disregard
   it. **Rust job re-run (user approved 2026-11-27 ~06:43
-  MST):** failed jobs re-run via the GitHub UI as attempt #2,
-  rust job running at the last check; result still pending.
+  MST):** failed jobs re-run via the GitHub UI as attempt #2 —
+  **rust job PASSED in 3m 13s, run Success ~06:47 MST; the
+  flaky queue-drain failure did not recur — flake confirmed.**
+  (Checked 06:54 MST; log: `hidden_files/ci-check-8086892-
+  attempt2.md`.)
+- **Sync 73 pushed + deployed 2026-11-27 ~06:51 MST (snapshot
+  `cd2e10c`, 433 files):** Vercel `dpl_GCXFybH5766WjnGwPfKYk1S7qd3e`
+  READY (production, aliases incl. reponyx.bond); live smoke
+  test green (home + /login 200, re-checked 07:11 MST). CI on
+  the new commit ALL GREEN: CI #104 Success (rust 3m 46s,
+  frontend 33s — Vitest 15/15 files, 124/124 tests — windows-
+  build 6m 30s, windows-installer 13m 43s, artifact 56.6 MB),
+  Lint #76 Success, CodeQL #102 Success, Security audit #75
+  Success (Semgrep 0 findings — the verify fix clears it).
+  Warnings only: Node.js 20 deprecation on the windows jobs,
+  CodeQL Action v3 deprecation coming December 2026.
 - **Semgrep decision (user, 2026-11-27 ~06:43 MST): VERIFY,
   not suppress.** `packages/database/src/client.ts`: the
   `require`/`prefer` → `rejectUnauthorized: false` branch is
@@ -2881,6 +2895,27 @@ profile is complete before login is allowed.
   changes for it; a future DB with an unverifiable cert under
   `require`/`prefer` would now fail to connect instead of
   silently skipping verification.
+- **Auth fixes batch (user-approved 2026-11-27 ~07:45 MST,
+  local only, NOT pushed — push needs its own approval):**
+  `/login` + `/register` redirect a signed-in user to
+  `/dashboard`; desktop clears a stale deep-link error on a new
+  attempt and maps `internal_error` / `invalid_body` /
+  `registration_rate_limited` / `session_expired` to real
+  messages; `/reset/confirm` button is "Change password" with
+  its own subtitle, the page validates the token on load (a used
+  link shows the dead-link message, not the form), and the
+  server claim is atomic (`consumeResetToken` returns whether
+  it claimed the token; route consumes before setting the
+  password). Verified: i18n 157 keys 0 failures, typecheck
+  clean, database 9/9, web 36/36, desktop frontend 15 files
+  126/126, lint + vite + next build clean, Prettier clean,
+  local Semgrep 0 findings. **Open:** the user's desktop
+  OAuth attempt (installed from `pnpm build:all`, so the
+  `reponyx://` protocol is registered) reached the Google
+  start route once but never the callback or the exchange, with
+  no server error in Vercel logs — needs a retest after these
+  fixes, when the real error will show instead of the generic
+  banner.
 
 ## Accounts page restructure — DONE (2026-11-27, branch `feature/admin-control-plane`, local only)
 

@@ -213,6 +213,7 @@ function AppShell() {
         initialPendingToken={pendingToken}
         registerCompleteToken={registerToken}
         deepLinkError={deepLinkError}
+        onClearDeepLinkError={() => setDeepLinkError(null)}
         onAuthenticated={() => void refreshStatus()}
       />
     );

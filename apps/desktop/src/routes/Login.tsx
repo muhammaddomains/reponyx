@@ -40,6 +40,9 @@ interface LoginProps {
   registerCompleteToken: string | null;
   /** From `reponyx://auth?error=…`. */
   deepLinkError: DeepLinkError | null;
+  /** Clears a stale deep-link error when a new attempt starts, so
+   *  an old banner never outlives the attempt that caused it. */
+  onClearDeepLinkError: () => void;
   onAuthenticated: () => void;
 }
 
@@ -48,6 +51,7 @@ export default function Login({
   initialPendingToken,
   registerCompleteToken,
   deepLinkError,
+  onClearDeepLinkError,
   onAuthenticated,
 }: LoginProps) {
   const t = useT("auth");
@@ -72,6 +76,7 @@ export default function Login({
   async function handleLogin(event: FormEvent) {
     event.preventDefault();
     setError(null);
+    onClearDeepLinkError();
     setBusy(true);
     try {
       const result = await webLogin(email, password);
@@ -105,6 +110,7 @@ export default function Login({
 
   async function handleOAuth(provider: "google" | "github") {
     setError(null);
+    onClearDeepLinkError();
     setBrowserOpened(true);
     try {
       await webOpenOAuth(provider);

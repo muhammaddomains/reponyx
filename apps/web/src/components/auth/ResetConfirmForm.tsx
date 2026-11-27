@@ -82,7 +82,7 @@ export function ResetConfirmForm({
         </p>
       ) : null}
       <button type="submit" disabled={busy} className={primaryButton}>
-        {strings.resetButton}
+        {strings.changePasswordButton}
       </button>
     </form>
   );

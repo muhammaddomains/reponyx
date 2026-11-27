@@ -259,15 +259,24 @@ export async function findValidResetToken(
   return rows[0] ?? null;
 }
 
+/**
+ * Claims a reset token for use: marks it consumed only if it is
+ * still unconsumed, and reports whether this call claimed it.
+ * The `consumed_at IS NULL` guard makes the claim atomic — two
+ * requests racing the same link cannot both use it.
+ */
 export async function consumeResetToken(
   client: DbClient,
   id: string
-): Promise<void> {
-  await client.query(
+): Promise<boolean> {
+  const rows = await client.query<{ id: string }>(
     `/* consumeResetToken */
-     UPDATE password_reset_tokens SET consumed_at = now() WHERE id = $1`,
+     UPDATE password_reset_tokens SET consumed_at = now()
+     WHERE id = $1 AND consumed_at IS NULL
+     RETURNING id`,
     [id]
   );
+  return rows.length > 0;
 }
 
 // --- sessions ---

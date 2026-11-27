@@ -138,12 +138,20 @@ export function errorMessageKey(code: string): string {
       return "notConfigured";
     case "unauthorized":
       return "sessionExpired";
+    case "session_expired":
+      return "sessionExpired";
     case "WebUnreachable":
       return "webUnreachable";
     case "InternalError":
       return "internalError";
+    case "internal_error":
+      return "internalError";
     case "InvalidInput":
       return "invalidBody";
+    case "invalid_body":
+      return "invalidBody";
+    case "registration_rate_limited":
+      return "rateLimitedRegister";
     default:
       return "internalError";
   }

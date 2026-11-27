@@ -1,4 +1,7 @@
+import { redirect } from "next/navigation";
 import Link from "next/link";
+import { getSessionFromCookies } from "@/lib/auth";
+import { getDb } from "@/lib/db";
 import {
   getErrorStrings,
   getRequestLocale,
@@ -20,6 +23,9 @@ const REGISTER_ERROR_KEYS: Record<string, string> = {
 export default async function RegisterPage(props: {
   searchParams: Promise<{ error?: string; retry_at?: string }>;
 }) {
+  // Already signed in — the register form is not the page for you.
+  const session = await getSessionFromCookies(getDb());
+  if (session) redirect("/dashboard");
   const { error, retry_at: retryAt } = await props.searchParams;
   const locale = await getRequestLocale();
   const tAuth = await getWebTranslator("auth");

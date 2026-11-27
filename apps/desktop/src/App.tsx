@@ -24,6 +24,7 @@ import AppLayout from "./layouts/AppLayout";
 import { LocaleProvider, useT } from "./lib/locale";
 import Accounts from "./routes/Accounts";
 import Activity from "./routes/Activity";
+import AddAccount from "./routes/AddAccount";
 import Agent from "./routes/Agent";
 import Login, { type DeepLinkError } from "./routes/Login";
 import Overview from "./routes/Overview";
@@ -223,6 +224,7 @@ function AppShell() {
         <Route element={<AppLayout />}>
           <Route index element={<Overview />} />
           <Route path="accounts" element={<Accounts />} />
+          <Route path="accounts/add" element={<AddAccount />} />
           <Route path="agent" element={<Agent />} />
           <Route path="repositories" element={<Repositories />} />
           <Route path="synchronization" element={<Synchronization />} />

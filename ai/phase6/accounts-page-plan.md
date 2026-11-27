@@ -87,3 +87,11 @@ broker setup, where it belongs.
 Small, frontend-only: about one session (split + filters +
 tests). No backend risk; the only CI surface is the frontend
 suite. Implementation waits on the user's approval of this plan.
+
+## Status: IMPLEMENTED 2026-11-27 (branch `feature/admin-control-plane`, local only)
+
+- The user approved ("1 page pe 2 tab wala ... sai hai"). Built as
+  planned, with one addition: the tab bar is a shared
+  `components/AccountsTabs.tsx` so it is not duplicated in both
+  route files. Verified: desktop frontend tests 15 files, 124/124
+  (was 114); typecheck, lint, vite build clean. Not pushed yet.

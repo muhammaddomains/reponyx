@@ -2813,6 +2813,100 @@ profile is complete before login is allowed.
   (`packages/database/src/client.ts`, `sslmode=require` →
   `rejectUnauthorized: false`; live DB uses `verify-full`) — left
   for the user's decision.
-- Not pushed yet (next sync 72, needs approval). Still open: the
-  live desktop login flow on the user's Windows machine (needs the
-  build + install); the CI-on-feature-branch question (unanswered).
+- **Pushed + deployed 2026-11-27 ~05:50 MST: snapshot `7a79050`
+  (sync 72, 429 files); Vercel `dpl_DKp7eR9ZhNTqDY1dKht3a3nKcVrP`
+  READY (production target, aliases incl. reponyx.bond).** Live
+  smoke test on reponyx.bond green: home/login/register/terms 200,
+  dashboard 307; Google + GitHub desktop OAuth starts 307 with the
+  exact callback URLs and the `client=desktop` state flag;
+  `POST /api/auth/2fa/verify` and `POST /api/auth/desktop/exchange`
+  with bad tokens → the app's own 404 `invalid_token` (both new W3
+  endpoints live); `/api/me/linked` 401 without a session. (Note:
+  the deploy-watch poll loop silently failed — `get_deployment`
+  needs `idOrUrl`, not `id` — and the state was confirmed with a
+  direct call instead.)
+- Still open: the live desktop login flow on the user's Windows
+  machine (needs the build + install); the CI-on-feature-branch
+  question (unanswered).
+
+## CI now runs on the web-platform branch (2026-11-27, branch `feature/admin-control-plane`)
+
+- The user approved running CI on the branch (the question from
+  2026-11-27 ~04:20 MST). `ci.yml`, `lint.yml`,
+  `security-audit.yml`, `codeql.yml` now trigger on push and pull
+  request to `main` AND `feature/admin-control-plane`.
+- Workflow files cannot be written by the GitHub App (403), so
+  they were uploaded via the GitHub web UI as commit `8086892`
+  (4 files, 11 insertions, 10 deletions — verified by reading
+  `ci.yml` back at that commit). Local copy committed as
+  `af518cf` to keep the working tree in sync.
+- The upload commit should have triggered the first CI runs on
+  the branch — **checked 2026-11-27 ~06:30 MST: Lint #75 PASS,
+  CodeQL #101 PASS, Security audit #74 FAIL, CI #103 still
+  running.** The security-audit failure is Semgrep, 1 blocking
+  finding — the KNOWN pre-existing one: `packages/database/src/
+  client.ts:42` `return { rejectUnauthorized: false }` for
+  `sslmode=require|prefer` (the documented Postgres `require`
+  semantic; live DB uses `verify-full`). Verified against the
+  raw job log (semgrep 1.187.0 on CI, same result as local
+  1.186.0). **Correction:** the browser's first check misread
+  the log and reported a different rule (`unsafe-formatstring`
+  with a PrismaClient snippet) — that finding does not exist in
+  the job; a search of the raw log returns zero matches. The
+  fix/suppress/leave decision is the user's (security call).
+- **CI #103 FINAL (2026-11-27 ~06:40 MST): FAILURE — only the
+  rust job failed; frontend, windows-build, windows-installer
+  all green.** Verified against the raw job log: the rust
+  failure is ONE test, `hundred_jobs_complete_with_bounded_
+  concurrency` in `crates/sync-queue/tests/queue_integration.
+  rs:184` — the 30 s queue-drain wait expired with 3 jobs
+  still running (`pending=0 running=3`). Same code passed CI
+  #102 on main and passes locally 3/3 in ~0.3 s, so it reads
+  as a timing flake on a loaded runner, not a regression.
+  **Correction:** the browser's first CI #103 read also
+  invented a second failure (a `reponyx-core` test in a
+  `job_queue.rs` that never existed in the repo) — disregard
+  it. **Rust job re-run (user approved 2026-11-27 ~06:43
+  MST):** failed jobs re-run via the GitHub UI as attempt #2,
+  rust job running at the last check; result still pending.
+- **Semgrep decision (user, 2026-11-27 ~06:43 MST): VERIFY,
+  not suppress.** `packages/database/src/client.ts`: the
+  `require`/`prefer` → `rejectUnauthorized: false` branch is
+  removed; all remote hosts now verify the certificate
+  (deliberately stricter than Postgres `require`). Local
+  commit `41425af` (NOT pushed — push needs its own
+  approval). Verified: local Semgrep (exact CI command, 1.186.0)
+  **0 findings**, database tests 9/9, typecheck + Prettier
+  clean. The live DB already uses `verify-full`, so nothing
+  changes for it; a future DB with an unverifiable cert under
+  `require`/`prefer` would now fail to connect instead of
+  silently skipping verification.
+
+## Accounts page restructure — DONE (2026-11-27, branch `feature/admin-control-plane`, local only)
+
+- The user approved the plan ("1 page pe 2 tab wala ... sai
+  hai"). One sidebar entry "Accounts", two route-based tabs:
+  `/accounts` = Connected accounts (default), `/accounts/add` =
+  Add account.
+- `routes/Accounts.tsx` is now the tab shell + Connected list:
+  summary line ("1 connected · 1 revoked"), search by username,
+  kind filter (All / GitHub App / PAT), status filter (All /
+  Connected / Revoked), empty states (no accounts → button to
+  the Add tab; no match → Clear filters). Account rows unchanged
+  (Validate, Reconnect, Replace PAT, Remove, Delete).
+- `routes/AddAccount.tsx` (new): PAT card + GitHub App card.
+  `components/BrokerSetup.tsx` (new): broker status, setup form,
+  Install + Refresh, installations, pairing — self-contained
+  with its own errors/notices. `components/AccountsTabs.tsx`
+  (new): the shared tab bar. Router: `/accounts/add` added.
+- Tests split by tab: `Accounts.test.tsx` (filters, summary,
+  empty states, navigation, delete) + `AddAccount.test.tsx`
+  (PAT add, install, pairing, broker setup, broker down).
+- Verified: desktop frontend tests 15 files, 124/124 passed
+  (was 114); typecheck clean; lint clean; vite build clean.
+  (Desktop files are not prettier-formatted — pre-existing repo
+  state, confirmed against untouched files; not reformatted.)
+- Not pushed yet (needs approval). The Accounts work rides with
+  the next snapshot push; the workflow upload `8086892` is
+  already on GitHub and is NOT part of the snapshot (`.github/`
+  is excluded from manifests).

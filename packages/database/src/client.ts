@@ -38,12 +38,13 @@ function pgSslConfig(databaseUrl: string): PoolConfig["ssl"] {
     // Fall through to the secure default below.
   }
   if (sslmode === "disable") return false;
-  if (sslmode === "prefer" || sslmode === "require") {
-    return { rejectUnauthorized: false };
-  }
   if (hostname === "localhost" || hostname === "127.0.0.1") return false;
-  // verify-ca / verify-full / unset on a remote host: verify the cert
-  // (Node also verifies the hostname, matching verify-full).
+  // prefer / require / verify-ca / verify-full / unset on a remote
+  // host: verify the certificate (Node also verifies the hostname,
+  // matching verify-full). Deliberately stricter than the Postgres
+  // meaning of `require` (encrypt without verification): a database
+  // whose certificate cannot be verified fails to connect instead
+  // of silently skipping verification.
   return { rejectUnauthorized: true };
 }
 

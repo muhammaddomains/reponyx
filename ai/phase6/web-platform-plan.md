@@ -1,6 +1,6 @@
 # RepoNyx web platform — full plan (2026-11-26, Phase 6)
 
-**Status:** APPROVED 2026-11-26 ~07:34 MST — implementation in progress — **W1 code-complete 2026-11-26** (auth + DB + email + dashboard shell; live Neon project + Vercel deploy still open). **Branch:** `feature/admin-control-plane` (2nd branch, not main). **Layout:** the RepoNyx monorepo — web app under `apps/`, shared code under `packages/`, following the sendcms pattern (`pnpm-workspace.yaml`, `turbo.json`).
+**Status:** APPROVED 2026-11-26 ~07:34 MST — implementation in progress — **W1 code-complete 2026-11-26** (auth + DB + email + dashboard shell); **database moved to the user's Prisma Postgres 2026-11-27** (migrations applied live; first Vercel deploy still open). **Branch:** `feature/admin-control-plane` (2nd branch, not main). **Layout:** the RepoNyx monorepo — web app under `apps/`, shared code under `packages/`, following the sendcms pattern (`pnpm-workspace.yaml`, `turbo.json`).
 
 ## 0. Summary
 
@@ -28,7 +28,7 @@ RepoNyx becomes a service with three pieces: a **web** (control plane — accoun
 
 ## 3. The web (Next.js on Vercel + Postgres)
 
-- **Stack:** Next.js (React/TS — the same stack as the desktop), **Vercel** (already connected), Postgres (**Neon** — portable, reachable from anywhere). **Portable hosting:** Vercel is the primary host, but the web is built so it can also run on **Cloudflare Workers** (no Vercel-only features; DB is Neon; email goes through HTTP APIs).
+- **Stack:** Next.js (React/TS — the same stack as the desktop), **Vercel** (already connected), Postgres (**Neon or Prisma Postgres — the database driver is auto-detected from the URL host**; Neon HTTP driver keeps the Workers path, `pg` serves standard Postgres). **Portable hosting:** Vercel is the primary host, but the web is built so it can also run on **Cloudflare Workers** (no Vercel-only features; DB is Postgres; email goes through HTTP APIs).
 - **Email (verification, reset, notifications):** pluggable provider — **Resend** (free tier: 100 emails/day) or the user's own **SMTP**. Selected by an env var (`EMAIL_PROVIDER=resend|smtp`); both sets of credentials can live in `.env` at once — the variable picks which one sends. The admin can also switch it in the web admin; the web never hardcodes one provider.
 - **Not sendcms for email:** sendcms is a contact-form backend, not an email API — verified 2026-11-26 from its demo + docs: its only public endpoint accepts form submissions (`POST /api/public/v1/submit`, Origin-header auth, no API key) and notifies the form owner; it cannot send verification emails to arbitrary users. **Sendcms IS the right tool for the RepoNyx website's forms** — contact-us, subscribe, etc.
 - **Auth:** email + password (argon2id hashing, verification link/code, sessions as random tokens hashed server-side) + Google + GitHub OAuth. The **web is the OAuth client** — its client secrets live in the web's env (Vercel env vars, never in the repo); the desktop holds no OAuth secrets.
@@ -113,8 +113,8 @@ RepoNyx becomes a service with three pieces: a **web** (control plane — accoun
 ## 12. Rollout (phases)
 
 - **Branch:** `feature/admin-control-plane` (2nd branch, not main), created 2026-11-26 ~07:34 MST (from main at `2f4bbca`) when implementation started. Monorepo layout: web app under `apps/`, shared code under `packages/` (`packages/i18n`, `packages/auth`, `packages/email`, …), following the sendcms pattern (`pnpm-workspace.yaml`, `turbo.json`). Main stays as it is until the branch is reviewed and merged.
-- **W1 — web foundation:** Next.js + Postgres + email / password + verification + sessions + dashboard shell + i18n scaffolding (locale trees, RTL shell, en + ur). **Code-complete 2026-11-26** — `packages/auth` (Argon2id via hash-wasm, WASM so it also runs on Cloudflare Workers), `packages/email` (Resend/SMTP via `EMAIL_PROVIDER`), `packages/database` (Neon HTTP driver, `0001_init` + `0002_seed_packages`, migrate CLI), auth API (`/api/auth/register|verify|login|logout|reset|reset/confirm`, `/api/me/limits`, `/api/devices`), dashboard shell, i18n en + ur (6 web domains, 85 keys, 0 failures). Verified: package tests 25/25, web auth-flow tests 5/5 against real Postgres (PGlite), typechecks clean, `next build` clean (18 routes). **Still open: the live Neon project (`DATABASE_URL`) + the first Vercel deploy** — the code runs against any Postgres-compatible Neon URL; nothing is deployed yet.
-- **W2 — OAuth:** Google + GitHub login on the web.
+- **W1 — web foundation:** Next.js + Postgres + email / password + verification + sessions + dashboard shell + i18n scaffolding (locale trees, RTL shell, en + ur). **Code-complete 2026-11-26** — `packages/auth` (Argon2id via hash-wasm, WASM so it also runs on Cloudflare Workers), `packages/email` (Resend/SMTP via `EMAIL_PROVIDER`), `packages/database` (Neon HTTP driver + `pg` dual driver since 2026-11-27, `0001_init` + `0002_seed_packages`, migrate CLI), auth API (`/api/auth/register|verify|login|logout|reset|reset/confirm`, `/api/me/limits`, `/api/devices`), dashboard shell, i18n en + ur (6 web domains, 85 keys, 0 failures). Verified: package tests 25/25, web auth-flow tests 5/5 against real Postgres (PGlite), typechecks clean, `next build` clean (18 routes). **Database 2026-11-27: the user's own Prisma Postgres (not Neon)** — `DATABASE_URL` on the Vercel project points at it, migrations applied live and verified (12 tables, 5 packages). **Still open: email provider (Resend key / SMTP) + the first Vercel deploy.**
+- **W2 — OAuth:** Google + GitHub login on the web. Callback URLs (user, 2026-11-27 — use exactly these routes): Google `https://reponyx.bond/api/google/oauth/callback`, GitHub `https://reponyx.bond/api/auth/callback/github`. Client IDs/secrets live in the Vercel env (`GOOGLE_CLIENT_ID`/`GOOGLE_CLIENT_SECRET`, `GITHUB_OAUTH_CLIENT_ID`/`GITHUB_OAUTH_CLIENT_SECRET`); the login OAuth apps are separate from the GitHub App (5896712) used for repo access.
 - **W3 — desktop login:** login gate, in-app email form, browser OAuth + deep link, device registration, session in the OS store, login screen in en + ur, Register button → web.
 - **W4 — broker ↔ web:** web mint endpoint (ownership + limit checks), broker proxies minting to the web instead of signing locally, device-revocation mirroring.
 - **W5 — packages + limits + admin dashboard** (users, devices, usage numbers).
@@ -133,7 +133,7 @@ RepoNyx becomes a service with three pieces: a **web** (control plane — accoun
 
 ## 13. Costs (verify at purchase)
 
-- Vercel Hobby $0 (Pro $20/mo if needed), Postgres Neon free tier (then ~$5–10/mo), Resend free 100 emails/day, domain $0–12/yr, payment-provider fees vary (Stripe ~2.9% + 30¢; PayPal, Polar, Freemius, Gumroad each take their own cut — verify at setup; only when billing starts). No broker VPS — the broker runs on the user's machine. **To start: ~$0–5/mo.**
+- Vercel Hobby $0 (Pro $20/mo if needed), Postgres — the user's own Prisma Postgres database (the Neon `reponyx-db` from the earlier plan is unused), Resend free 100 emails/day, domain $0–12/yr, payment-provider fees vary (Stripe ~2.9% + 30¢; PayPal, Polar, Freemius, Gumroad each take their own cut — verify at setup; only when billing starts). No broker VPS — the broker runs on the user's machine. **To start: ~$0–5/mo.**
 
 ## 14. Decisions log (what changed, and why)
 
@@ -150,7 +150,7 @@ RepoNyx becomes a service with three pieces: a **web** (control plane — accoun
 - 2026-11-26 ~07:21 — sendcms is a contact-form backend, NOT a verification-email provider (verified via demo + docs). Email = Resend/SMTP; website forms = sendcms.
 - 2026-11-26 ~07:23 — Branch named `feature/admin-control-plane`.
 - 2026-11-26 ~07:26 — Email provider selected by env var (`EMAIL_PROVIDER=resend|smtp`); both credential sets can live in `.env`.
-- 2026-11-26 ~07:26 — Web hosts on Vercel, but must also run on Cloudflare Workers (portable build; Neon DB). All six earlier open questions confirmed already answered — only billing remains open, and it is not re-asked.
+- 2026-11-26 ~07:26 — Web hosts on Vercel, but must also run on Cloudflare Workers (portable build; Neon driver kept for the Workers path, `pg` for standard Postgres). All six earlier open questions confirmed already answered — only billing remains open, and it is not re-asked.
 - 2026-11-26 ~07:33 — Payment providers: Stripe, PayPal, Polar, Freemius, Gumroad; admin toggles which are active; each provider has a country scope (all or specific — e.g. Stripe worldwide, PayPal USA/UK, Gumroad Pakistan/India); nothing hardcoded.
 
 ## 15. Open questions

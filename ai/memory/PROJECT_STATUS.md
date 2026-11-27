@@ -2590,3 +2590,24 @@ W1 built on the 2nd branch, main untouched.
   Vercel deploy. Local Postgres could not be installed on this VM
   (apt lock held by a system process) — migration SQL was verified
   against PGlite instead.
+
+## Web platform — database moved to Prisma Postgres (2026-11-27, branch `feature/admin-control-plane`)
+
+- The user replaced Neon with their own Prisma Postgres database
+  (hosted at db.prisma.io) as the web's database; `DATABASE_URL` on
+  the Vercel project now points at it (the Neon `reponyx-db` is
+  unused and still exists).
+- The Neon HTTP driver (`@neondatabase/serverless`) cannot talk to
+  Prisma Postgres — it POSTs to `https://<host>/sql` and Prisma
+  answers HTTP 404 — so `@reponyx/database` is now dual-driver:
+  `*.neon.tech` hosts use the Neon HTTP driver, any other Postgres
+  uses `pg` 8.23.1 (TCP, SSL from the URL's `sslmode`). The Neon
+  path stays, so the Cloudflare Workers portability goal is intact.
+- Migrations applied to the live Prisma DB (`0001_init`,
+  `0002_seed_packages`) and verified live: 12 tables, 5 packages
+  seeded, 0 users. `DbClient` gained an optional `close()`; the
+  migrate CLI calls it so a `pg` run terminates.
+- Verified after the switch: package tests 25/25, web auth-flow
+  tests 5/5, i18n validate 0 failures, typechecks clean,
+  `next build` clean.
+- Still open: email provider (Resend key / SMTP) + first deploy.

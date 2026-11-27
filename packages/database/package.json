@@ -9,10 +9,12 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@neondatabase/serverless": "1.2.1"
+    "@neondatabase/serverless": "1.2.1",
+    "pg": "8.23.1"
   },
   "devDependencies": {
     "@reponyx/config": "workspace:*",
+    "@types/pg": "8.23.1",
     "tsx": "4.23.15",
     "typescript": "6.0.3"
   },

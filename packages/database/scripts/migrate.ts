@@ -23,9 +23,13 @@ for (const file of files) {
 }
 
 const client = createDbClient(process.env.DATABASE_URL);
-const applied = await migrate(client, migrations);
-if (applied.length === 0) {
-  console.log("database: already up to date");
-} else {
-  console.log(`database: applied ${applied.join(", ")}`);
+try {
+  const applied = await migrate(client, migrations);
+  if (applied.length === 0) {
+    console.log("database: already up to date");
+  } else {
+    console.log(`database: applied ${applied.join(", ")}`);
+  }
+} finally {
+  await client.close?.();
 }

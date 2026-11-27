@@ -5,6 +5,11 @@ All notable changes to RepoNyx are documented here. Format follows
 
 ## [Unreleased]
 
+### Changed — Web database driver: Prisma Postgres (2026-11-27, branch `feature/admin-control-plane`)
+
+- **The web's database is now the user's own Prisma Postgres, not Neon.** The Neon HTTP driver (`@neondatabase/serverless`) cannot talk to Prisma Postgres — it POSTs to `https://<host>/sql` and Prisma answers HTTP 404 ("Resource Not Found"), proven by the failed migrate run — so `@reponyx/database` gained a second driver: `pg` 8.23.1 (TCP) for any non-Neon Postgres. The driver is picked from the `DATABASE_URL` host (`*.neon.tech` → Neon HTTP, anything else → `pg`); the Neon path stays, so the Cloudflare Workers portability goal is intact. `DbClient` gained an optional `close()` (the migrate CLI calls it, so a `pg` run terminates instead of hanging on the open pool); SSL follows the URL's `sslmode` (`verify-full` → verified TLS).
+- **Migrations applied to the live Prisma database** (`0001_init`, `0002_seed_packages`; verified live: 12 tables, 5 packages seeded, 0 users). `DATABASE_URL` on the Vercel project now points at the Prisma database (the Neon `reponyx-db` is unused and still exists).
+
 ### Added — Web platform W1 (2026-11-26, branch `feature/admin-control-plane`)
 
 - **Web foundation (code-complete):** `apps/web` (Next.js 16.4.6) + `packages/i18n` (en + ur, 6 web domains, 85 keys), `packages/auth` (Argon2id via hash-wasm — pure WASM, no native binding, so it also runs on Cloudflare Workers — + random tokens stored as SHA-256 hashes), `packages/email` (one send path; `EMAIL_PROVIDER=resend|smtp` selector, both credential sets can live in `.env`; Resend via fetch, SMTP via nodemailer), `packages/database` (Neon HTTP driver — portable to Vercel + Workers; `0001_init` schema + `0002_seed_packages` Free/Bronze/Silver/Gold/Diamond; `pnpm --filter @reponyx/database migrate`).

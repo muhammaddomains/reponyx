@@ -12,6 +12,10 @@
 //!   `ACCOUNT_SETUP_TOKEN` (the broker setup token, entered once by
 //!   the operator) or `device-token:<device_identifier>` (the device
 //!   token issued when a pairing is confirmed).
+//! - `SERVICE_DEVICE` (`reponyx:device`) with account
+//!   `ACCOUNT_DEVICE_IDENTIFIER`: the stable per-machine device
+//!   identifier (an identifier, not a secret — the OS store is
+//!   just the storage that survives a deleted database).
 //!
 //! Listing entries is not something the OS stores support: the
 //! desktop lists accounts from the database (the source of truth for
@@ -36,6 +40,16 @@ pub const SERVICE_PAT: &str = "reponyx:pat";
 pub const SERVICE_BROKER: &str = "reponyx:broker";
 /// Service name for the web-platform login session. Account: see below.
 pub const SERVICE_WEB: &str = "reponyx:web";
+/// Service name for the stable per-machine device identity. Account:
+/// see below. The identifier is an identifier, not a secret — but
+/// the OS store is the only per-machine storage that survives a
+/// deleted database. The settings table cannot be the source of
+/// truth, or every fresh database mints a new identity and the web
+/// counts one machine as many devices (2026-11-28: three device
+/// rows for one machine after two database deletes).
+pub const SERVICE_DEVICE: &str = "reponyx:device";
+/// Account name for the device identifier under [`SERVICE_DEVICE`].
+pub const ACCOUNT_DEVICE_IDENTIFIER: &str = "identifier";
 /// Account name for the web session token under [`SERVICE_WEB`]:
 /// the bearer token the web issued at login (30-day TTL), stored
 /// here so the desktop never keeps it in SQLite, frontend state,

@@ -19,7 +19,7 @@ pub use pat::{
 };
 pub use secret::SecretString;
 pub use store::{
-    ACCOUNT_DEVICE_TOKEN_PREFIX, ACCOUNT_SETUP_TOKEN, ACCOUNT_WEB_SESSION, CredentialStore,
-    MemoryCredentialStore, OsCredentialStore, SERVICE_BROKER, SERVICE_PAT, SERVICE_WEB,
-    default_store, device_token_account, memory_store,
+    ACCOUNT_DEVICE_IDENTIFIER, ACCOUNT_DEVICE_TOKEN_PREFIX, ACCOUNT_SETUP_TOKEN,
+    ACCOUNT_WEB_SESSION, CredentialStore, MemoryCredentialStore, OsCredentialStore, SERVICE_BROKER,
+    SERVICE_DEVICE, SERVICE_PAT, SERVICE_WEB, default_store, device_token_account, memory_store,
 };

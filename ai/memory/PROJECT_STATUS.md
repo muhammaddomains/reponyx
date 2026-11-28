@@ -3285,7 +3285,49 @@ itself.
   Prettier: the 10 flagged desktop/shared/api-client files are
   pre-existing state (dirty at HEAD too) and outside the repo's
   `format:check` scope — left alone, not reformatted.
-- **Not pushed yet (needs approval).** Live test after the push:
-  user pulls, rebuilds, logs in, Accounts page links the 6
-  installations, dashboard 0/6 → 6/6, Sync now on a web-minted
-  token.
+- **Pushed as snapshot `b9f3549` (sync 81), 2026-11-28 ~05:53 MST.
+  Deploy+CI check ran 06:21 MST — all green (CI #112, Lint #84,
+  CodeQL #110, Security audit #83; Vercel production
+  `dpl_7smdsqZLBAxFJi72KhW1azbB8rzh` READY, home + /login 200).**
+  Live test ~06:08 MST found three failures — see the next entry.
+- **W4 live-test fixes (2026-11-28 ~06:08–06:11 MST, local only):**
+  (1) Pairing could never complete: `complete_pairing_command`
+  validated by minting through the web, but the web only mints
+  for already-linked installations, and the link was created
+  only *after* pairing — the first attempt failed with
+  "installation is not linked to your web account" and spent the
+  single-use code, so the retry said "pairing code already
+  used". The command now links first (new
+  `link_github_app_installation` helper in `web_auth.rs`,
+  idempotent; the frontend still links after pairing as a
+  safety net). Pairing a GitHub App account now needs a web
+  login. (2) One machine counted as several devices: the
+  dashboard showed three `DESKTOP-FBFSK3A` rows (3:58, 6:01,
+  6:11 AM) because `device_identifier` lived only in the
+  settings table and every fresh database minted a new UUID.
+  The OS credential store (`reponyx:device` / `identifier`) is
+  now the source of truth, settings is a write-through cache
+  the agent reads; existing installs migrate on first use, a
+  fresh database reuses the stored id, revoking mints a fresh
+  id in both places. Stale rows already on the web must be
+  revoked from the dashboard (3:58 AM row already revoked by
+  the user; 6:01 AM is the other stale one, 6:11 AM is current).
+  (3) Reconcile link failures (`internal_error` x6) are NOT a
+  code bug: deploy READY, session + DB work, link SQL is
+  test-proven, and the only never-before-exercised step is the
+  web's GitHub App verification — both env vars exist for
+  production, so one value is wrong (bad paste / truncated key
+  / quotes / wrong App id). User action: check
+  `REPONYX_GITHUB_APP_ID` (= `5896712`) and
+  `REPONYX_GITHUB_APP_PRIVATE_KEY` (full `.pem` for that App)
+  in the Vercel dashboard and redeploy after any change.
+- **Verified (fix batch):** fmt clean; clippy `-D warnings`
+  clean; cargo test (excl. desktop) 479 passed, 0 failed (one
+  timing flake in `retry_budget_binds_across_retries` on the
+  first run — passes alone and on re-run, same class as CI
+  #103; no sync-queue code touched); desktop frontend 138/138;
+  typecheck clean; lint clean; vite build clean; local Semgrep
+  0 findings; `check-no-private-key.sh` passed; MinGW desktop
+  check passes (clippy 9 pre-existing warnings, none in this
+  change).
+- **Not pushed yet (needs approval).**

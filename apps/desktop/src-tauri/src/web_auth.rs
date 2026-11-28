@@ -235,9 +235,9 @@ struct DeviceInfo {
     app_version: String,
 }
 
-async fn device_info(database: &Database) -> CommandResult<DeviceInfo> {
+async fn device_info(auth: &AuthState, database: &Database) -> CommandResult<DeviceInfo> {
     Ok(DeviceInfo {
-        device_key: device_identifier(database).await?,
+        device_key: device_identifier(auth, database).await?,
         machine_name: device_name(),
         platform: windows_version(),
         app_version: env!("CARGO_PKG_VERSION").to_string(),
@@ -406,7 +406,7 @@ async fn finish_login(
     if let Ok(account) = fetch_account(&client, &base, &token).await {
         let _ = cache_account(database, &account).await;
     }
-    let info = device_info(database).await?;
+    let info = device_info(auth, database).await?;
     heartbeat(&client, &base, &token, &info).await;
     Ok(WebLoginDto {
         step: "ok".to_string(),
@@ -466,7 +466,7 @@ pub async fn web_login_command(
     let database = require_db(&db)?;
     let client = web_client()?;
     let base = web_base_url();
-    let info = device_info(database).await?;
+    let info = device_info(&auth, database).await?;
     let body = LoginBody {
         email,
         password,
@@ -499,7 +499,7 @@ pub async fn web_verify_2fa_command(
     let database = require_db(&db)?;
     let client = web_client()?;
     let base = web_base_url();
-    let info = device_info(database).await?;
+    let info = device_info(&auth, database).await?;
     let body = Verify2faBody {
         token: pending_token,
         code,
@@ -533,7 +533,7 @@ pub async fn web_session_status_command(
     match fetch_account(&client, &base, &token).await {
         Ok(account) => {
             let _ = cache_account(database, &account).await;
-            let info = device_info(database).await?;
+            let info = device_info(&auth, database).await?;
             heartbeat(&client, &base, &token, &info).await;
             Ok(WebSessionStatusDto {
                 authenticated: true,
@@ -641,7 +641,7 @@ pub async fn web_exchange_desktop_code_command(
     let database = require_db(&db)?;
     let client = web_client()?;
     let base = web_base_url();
-    let info = device_info(database).await?;
+    let info = device_info(&auth, database).await?;
     let body = ExchangeBody {
         code,
         device: DeviceBody::new(&info),
@@ -718,7 +718,7 @@ async fn authed_web_call(
     Ok(json)
 }
 
-async fn link_github_account(
+pub(crate) async fn link_github_account(
     auth: &AuthState,
     body: serde_json::Value,
 ) -> CommandResult<WebLinkedAccountDto> {
@@ -744,6 +744,22 @@ async fn link_github_account(
 }
 
 /// Link a paired GitHub App installation to the signed-in web
+/// account, by installation id. Used by the pairing flow
+/// (`complete_pairing_command` links before validation — the
+/// validation mint needs the link to exist) and by the
+/// `web_link_github_account_command` below.
+pub(crate) async fn link_github_app_installation(
+    auth: &AuthState,
+    installation_id: &str,
+) -> CommandResult<WebLinkedAccountDto> {
+    link_github_account(
+        auth,
+        serde_json::json!({ "authKind": "app", "installationId": installation_id }),
+    )
+    .await
+}
+
+/// Link a paired GitHub App installation to the signed-in web
 /// account. Idempotent: linking an already-linked installation
 /// returns it. The web enforces the package limit (403
 /// `limit_exceeded`) and the one-user rule (409 `already_linked`).
@@ -752,11 +768,7 @@ pub async fn web_link_github_account_command(
     auth: State<'_, AuthState>,
     installation_id: String,
 ) -> CommandResult<WebLinkedAccountDto> {
-    link_github_account(
-        &auth,
-        serde_json::json!({ "authKind": "app", "installationId": installation_id }),
-    )
-    .await
+    link_github_app_installation(&auth, &installation_id).await
 }
 
 /// Link a PAT account to the signed-in web account, by its GitHub

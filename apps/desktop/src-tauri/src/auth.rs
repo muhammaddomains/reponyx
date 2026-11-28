@@ -22,9 +22,10 @@ use reponyx_core::{
     InstallationStatus, InstallationType, Provider, RepoNyxError,
 };
 use reponyx_credential_store::{
-    ACCOUNT_SETUP_TOKEN, CredentialStore, GITHUB_API_BASE, PatExpiryStatus, PatInput,
-    SERVICE_BROKER, SecretString, add_pat_account, delete_pat_account, pat_expiry_status,
-    reconnect_pat_account, remove_pat, replace_pat, validate_pat_account,
+    ACCOUNT_DEVICE_IDENTIFIER, ACCOUNT_SETUP_TOKEN, CredentialStore, GITHUB_API_BASE,
+    PatExpiryStatus, PatInput, SERVICE_BROKER, SERVICE_DEVICE, SecretString, add_pat_account,
+    delete_pat_account, pat_expiry_status, reconnect_pat_account, remove_pat, replace_pat,
+    validate_pat_account,
 };
 use reponyx_database::Database;
 use reponyx_database::accounts::{
@@ -271,15 +272,48 @@ fn parse_expires_at(value: Option<String>) -> CommandResult<Option<DateTime<Utc>
     }
 }
 
-/// The stable per-machine device identifier, stored in the settings
-/// table on first use (a UUID, generated once). Also the web device
-/// key: the desktop registers this same identifier with the web on
-/// login, so one device is one row in both places.
-pub(crate) async fn device_identifier(database: &Database) -> CommandResult<String> {
+/// The stable per-machine device identifier (a UUID, generated
+/// once). The OS credential store is the source of truth: it
+/// survives a deleted database, while the settings table cannot
+/// be — a fresh database used to mint a new identity, so the web
+/// counted one machine as several devices and the broker forgot
+/// the pairing (2026-11-28: three device rows for one machine
+/// after two database deletes). The settings table is a
+/// write-through cache the background agent reads
+/// (`device.identifier`). Also the web device key: the desktop
+/// registers this same identifier with the web on login, so one
+/// device is one row in both places.
+pub(crate) async fn device_identifier(
+    auth: &AuthState,
+    database: &Database,
+) -> CommandResult<String> {
     if let Some(setting) = get_setting(&database.pool, "device_identifier").await? {
+        // Migrate existing installs: persist the settings value in
+        // the OS store so the next fresh database reuses it.
+        if !auth
+            .store
+            .exists(SERVICE_DEVICE, ACCOUNT_DEVICE_IDENTIFIER)
+            .map_err(CommandError::from)?
+        {
+            auth.store
+                .store(SERVICE_DEVICE, ACCOUNT_DEVICE_IDENTIFIER, &setting.value)
+                .map_err(CommandError::from)?;
+        }
         return Ok(setting.value);
     }
+    if let Some(stored) = auth
+        .store
+        .get(SERVICE_DEVICE, ACCOUNT_DEVICE_IDENTIFIER)
+        .map_err(CommandError::from)?
+    {
+        let id = stored.expose().to_string();
+        set_setting(&database.pool, "device_identifier", &id).await?;
+        return Ok(id);
+    }
     let id = Uuid::new_v4().to_string();
+    auth.store
+        .store(SERVICE_DEVICE, ACCOUNT_DEVICE_IDENTIFIER, &id)
+        .map_err(CommandError::from)?;
     set_setting(&database.pool, "device_identifier", &id).await?;
     Ok(id)
 }
@@ -562,6 +596,7 @@ pub async fn create_broker_setup_state_command(
 /// id; confirming the pairing stores it as `device.identifier`
 /// for the agent, as usual.
 async fn fresh_device_identifier_if_revoked(
+    auth: &AuthState,
     database: &Database,
     device_id: &str,
 ) -> CommandResult<String> {
@@ -572,6 +607,12 @@ async fn fresh_device_identifier_if_revoked(
         return Ok(device_id.to_string());
     }
     let new_id = Uuid::new_v4().to_string();
+    // The fresh identity replaces the revoked one everywhere,
+    // including the OS store — otherwise the next fresh database
+    // would resurrect the revoked id from the store.
+    auth.store
+        .store(SERVICE_DEVICE, ACCOUNT_DEVICE_IDENTIFIER, &new_id)
+        .map_err(CommandError::from)?;
     set_setting(&database.pool, "device_identifier", &new_id).await?;
     set_setting(&database.pool, "device.identifier", &new_id).await?;
     Ok(new_id)
@@ -590,8 +631,8 @@ pub async fn start_pairing_command(
     crate::broker::ensure_broker_best_effort(&app).await;
     let database = require_db(&db)?;
     let token = setup_token(&auth)?;
-    let device_id = device_identifier(database).await?;
-    let device_id = fresh_device_identifier_if_revoked(database, &device_id).await?;
+    let device_id = device_identifier(&auth, database).await?;
+    let device_id = fresh_device_identifier_if_revoked(&auth, database, &device_id).await?;
     let (code, expires_at) = broker_client(&auth)?
         .request_pairing_code(token.expose(), &installation_id, &device_name(), &device_id)
         .await?;
@@ -631,7 +672,7 @@ pub async fn complete_pairing_command(
     crate::broker::ensure_broker_best_effort(&app).await;
     let database = require_db(&db)?;
     let token = setup_token(&auth)?;
-    let device_id = device_identifier(database).await?;
+    let device_id = device_identifier(&auth, database).await?;
     let (device_token, installation_id) = broker_client(&auth)?
         .confirm_pairing(token.expose(), &pairing_code, &device_id)
         .await?;
@@ -652,6 +693,18 @@ pub async fn complete_pairing_command(
     // device identifier" even though pairing succeeded — the resolver
     // never sees the id generated here under `device_identifier`.
     set_setting(&database.pool, "device.identifier", &device_id).await?;
+    // Link the installation to the signed-in web account BEFORE
+    // validation: validation mints an installation token through
+    // the web, and the web only mints for installations linked to
+    // the requesting user. Linking after validation can never
+    // succeed — the first attempt failed with "installation is not
+    // linked to your web account" and spent the single-use pairing
+    // code, so the retry reported "pairing code already used"
+    // (2026-11-28 live test). The link is idempotent, and the
+    // frontend still links after pairing as a safety net. Pairing
+    // a GitHub App account now requires being logged in on the
+    // web; without a session this fails with `unauthorized`.
+    crate::web_auth::link_github_app_installation(&auth, &installation_id).await?;
     // Validate against GitHub with the freshly minted token and
     // create (or reconnect) the account row. An installation token
     // cannot call `GET /user` (there is no user behind it — GitHub
@@ -718,7 +771,7 @@ pub async fn validate_github_app_account_command(
     let account = get_account(&database.pool, id)
         .await?
         .ok_or_else(|| invalid_input("account not found"))?;
-    let device_id = device_identifier(database).await?;
+    let device_id = device_identifier(&auth, database).await?;
     let device_token = auth
         .store
         .get(

@@ -3,6 +3,7 @@ import { addPatAccount, webLinkPatAccount } from "@reponyx/api-client";
 import { Button, Card } from "@reponyx/ui";
 import AccountsTabs from "../components/AccountsTabs";
 import BrokerSetup from "../components/BrokerSetup";
+import { notifyWebAccountChanged } from "../webAccountSync";
 
 const inputClass =
   "w-full rounded-md border border-zinc-300 bg-white px-3 py-2 text-sm dark:border-zinc-700 dark:bg-zinc-900";
@@ -144,6 +145,7 @@ export default function AddAccount() {
                   // reconcile retries the link on its next load.
                   try {
                     await webLinkPatAccount(account.username);
+                    notifyWebAccountChanged();
                     setNotice(
                       `Added PAT account ${account.username} — linked to your web account.`,
                     );

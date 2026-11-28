@@ -18,6 +18,7 @@ import {
   getWebTranslator,
 } from "@/lib/i18n";
 import { LinkedAccounts } from "@/components/auth/LinkedAccounts";
+import { DashboardLiveRefresh } from "@/components/auth/DashboardLiveRefresh";
 import { DevicesList } from "@/components/auth/DevicesList";
 import { ProfileNameForm } from "@/components/auth/ProfileNameForm";
 import { TwoFactorSetup } from "@/components/auth/TwoFactorSetup";
@@ -99,6 +100,10 @@ export default async function DashboardPage(props: {
       <p className="mt-1 text-sm text-muted-foreground">
         {t("joined")}: {formatDate(locale, new Date(user.created_at))}
       </p>
+      <DashboardLiveRefresh
+        strings={{ live: t("live"), updatedAt: t("updatedAt") }}
+        locale={locale}
+      />
       <div className="mt-8 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
         {stats.map((stat) => (
           <section key={stat.label} className={`${card} p-4`}>

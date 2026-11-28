@@ -1,7 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { fireEvent, render, screen, within } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { MemoryRouter, useLocation } from "react-router";
 import Accounts from "./Accounts";
+import { WEB_ACCOUNT_CHANGED_EVENT } from "../webAccountSync";
 
 vi.mock("@reponyx/api-client", () => ({
   addPatAccount: vi.fn(),
@@ -254,6 +255,30 @@ describe("Accounts page — Remove PAT", () => {
     ).toBeInTheDocument();
     expect(webUnlinkPatAccount).toHaveBeenCalledWith("octocat");
   });
+
+  it("notifies the app to refresh its web account after removing", async () => {
+    const onChanged = vi.fn();
+    window.addEventListener(WEB_ACCOUNT_CHANGED_EVENT, onChanged);
+    try {
+      renderAccounts([patAccount()]);
+      vi.mocked(removePatAccount).mockResolvedValue(patAccount());
+      await screen.findByText("octocat");
+      // The mount reconcile also dispatches — wait for it, then count.
+      await waitFor(() => expect(onChanged).toHaveBeenCalled());
+      const before = onChanged.mock.calls.length;
+      fireEvent.click(await screen.findByRole("button", { name: "Remove" }));
+      const dialog = screen.getByRole("alertdialog", {
+        name: "Remove PAT account",
+      });
+      fireEvent.click(within(dialog).getByRole("button", { name: "Remove" }));
+      await screen.findByText("Removed the PAT for octocat.");
+      await waitFor(() =>
+        expect(onChanged.mock.calls.length).toBeGreaterThan(before),
+      );
+    } finally {
+      window.removeEventListener(WEB_ACCOUNT_CHANGED_EVENT, onChanged);
+    }
+  });
 });
 
 describe("Accounts page — web link reconcile (W4)", () => {
@@ -273,6 +298,21 @@ describe("Accounts page — web link reconcile (W4)", () => {
     await screen.findByText("octocat");
     expect(webLinkGithubAccount).toHaveBeenCalledWith("777");
     expect(webLinkPatAccount).toHaveBeenCalledWith("octocat");
+  });
+
+  it("notifies the app to refresh its web account after linking", async () => {
+    const onChanged = vi.fn();
+    window.addEventListener(WEB_ACCOUNT_CHANGED_EVENT, onChanged);
+    try {
+      vi.mocked(listBrokerInstallations).mockResolvedValue([
+        pairedInstallation,
+      ]);
+      renderAccounts([patAccount(), appAccount()]);
+      await screen.findByText("octocat");
+      await waitFor(() => expect(onChanged).toHaveBeenCalled());
+    } finally {
+      window.removeEventListener(WEB_ACCOUNT_CHANGED_EVENT, onChanged);
+    }
   });
 
   it("skips installations that are not paired", async () => {

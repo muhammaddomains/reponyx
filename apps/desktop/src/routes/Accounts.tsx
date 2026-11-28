@@ -16,6 +16,7 @@ import {
 import type { Account, BrokerInstallation } from "@reponyx/shared";
 import { Badge, Button, Card, ConfirmDialog } from "@reponyx/ui";
 import AccountsTabs from "../components/AccountsTabs";
+import { notifyWebAccountChanged } from "../webAccountSync";
 
 function statusBadge(status: Account["status"]) {
   switch (status) {
@@ -118,9 +119,11 @@ export default function Accounts() {
       return;
     }
     const failures: string[] = [];
+    let linked = 0;
     const link = async (label: string, attempt: () => Promise<unknown>) => {
       try {
         await attempt();
+        linked += 1;
       } catch (e: unknown) {
         const record = e as { code?: unknown };
         const code = typeof record?.code === "string" ? record.code : "";
@@ -149,6 +152,9 @@ export default function Accounts() {
       // retries.
       return;
     }
+    // A link moved the web counts — the app re-fetches package,
+    // limits and usage at once instead of at the next 60s tick.
+    if (linked > 0) notifyWebAccountChanged();
     if (failures.length > 0) {
       setNotice(
         `Some accounts could not be linked to the web — ${failures.join("; ")}. They still sync locally.`,
@@ -452,6 +458,7 @@ export default function Accounts() {
                               // the local remove.
                               try {
                                 await webUnlinkPatAccount(account.username);
+                                notifyWebAccountChanged();
                                 return null;
                               } catch (e: unknown) {
                                 return `Removed the PAT for ${account.username}, but the web link could not be removed (${commandMessage(e)}). Remove it from the web dashboard.`;
@@ -484,6 +491,7 @@ export default function Accounts() {
                               // see the Remove handler above.
                               try {
                                 await webUnlinkPatAccount(account.username);
+                                notifyWebAccountChanged();
                                 return null;
                               } catch (e: unknown) {
                                 return `Deleted the account ${account.username}, but the web link could not be removed (${commandMessage(e)}). Remove it from the web dashboard.`;

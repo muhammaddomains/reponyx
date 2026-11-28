@@ -9,6 +9,7 @@
   "linked": "Linked",
   "linkedAccounts": "Linked accounts",
   "linkedSuccess": "Account linked — you can now sign in with it.",
+  "live": "Live",
   "manageOnWeb": "Manage on the web",
   "nameUpdated": "Name saved.",
   "noDevices": "No devices yet — log in from the desktop app to register this device.",
@@ -26,5 +27,6 @@
   "title": "Dashboard",
   "unlink": "Unlink",
   "unlinkedSuccess": "Account unlinked.",
+  "updatedAt": "Updated {time}",
   "welcome": "Welcome back, {name}"
 }

@@ -14,6 +14,7 @@ import type {
   PairingInfo,
 } from "@reponyx/shared";
 import { Button, Card } from "@reponyx/ui";
+import { notifyWebAccountChanged } from "../webAccountSync";
 
 function commandMessage(error: unknown): string {
   if (typeof error === "object" && error !== null) {
@@ -255,6 +256,7 @@ export default function BrokerSetup() {
                     // pairing — the reconcile retries it.
                     try {
                       await webLinkGithubAccount(pairing.installationId);
+                      notifyWebAccountChanged();
                       setNotice(
                         `Paired and added GitHub App account ${account.username} — linked to your web account.`,
                       );

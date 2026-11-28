@@ -3375,7 +3375,7 @@ itself.
   server-side (GitHub generates PKCS#1 `.pem` files — every
   user would hit this) instead of requiring PKCS#8.
 
-## W5 — packages + limits + admin dashboard + TOTP enrollment (implemented 2026-11-28, local only, not pushed yet)
+## W5 — packages + limits + admin dashboard + TOTP enrollment (implemented 2026-11-28, pushed as snapshot `5706323e`, sync 84, 2026-11-28 ~07:59 MST)
 
 - **Admin dashboard (`/admin`):** totals (users, linked accounts,
   active devices, 2FA users) + links to users and packages.
@@ -3405,4 +3405,59 @@ itself.
   desktop frontend 138/138; typecheck clean; lint clean; vite +
   next build clean; i18n 232 keys, 0 failures; Semgrep 0
   (85 rules, 211 files); prettier clean. No Rust/desktop changes.
+- **Pushed as snapshot `5706323e` (sync 84), 2026-11-28 ~07:59 MST.
+  Deploy+CI check cron `sync84-deploy-ci-check` fires ~08:18 MST.
+  Migration 0005 still to be applied to the live DB (needs
+  DATABASE_URL pasted again, transient use).**
+
+## W4-full — real-time two-way app ↔ web sync (implemented 2026-11-28, local only, not pushed yet)
+
+User requirement (2026-11-28 ~07:45 MST): the app fetches this user's
+package + limits from the web, and the web gets the app's data in real
+time — both stay in sync in real time. Order: W4 full → W5 → W6 → W7.
+W5 was pushed first on the user's say-so ("g w5 push kr do", sync 84,
+`5706323e`); W4-full is built on top of it and ships next (sync 85).
+
+- **Desktop live sync (`App.tsx`):** while signed in, `refreshStatus()`
+  runs every 60s and on window focus — the same call the startup effect
+  already makes, so each tick re-fetches `/api/me/limits` (package +
+  limits + usage) and heartbeats the device (web last_seen stays
+  fresh). In-flight guard (a ref) so the tick, focus and event never
+  overlap; the interval is cleared on sign-out. Offline rule unchanged:
+  a failed fetch keeps the session and the last-known cached account.
+- **Refresh on change:** after a link/unlink (pairing complete, PAT
+  add, PAT remove, account delete, Accounts-page reconcile) the app
+  dispatches a `reponyx:account-changed` window event
+  (`apps/desktop/src/webAccountSync.ts`); `App.tsx` listens and
+  re-fetches the account at once, so the Settings card and the app's
+  counts update at that moment instead of at the next 60s tick. The
+  reconcile dispatches only when at least one link succeeded; the
+  remove/delete dispatch only when the unlink succeeded.
+- **Web dashboard live refresh:** new client component
+  `DashboardLiveRefresh` (`router.refresh()` every 30s + on focus),
+  rendered on the dashboard page with a "Live · Updated HH:MM:SS" line
+  (i18n keys `live`, `updatedAt`, en + ur). No new API route — the page
+  re-reads the DB on each refresh.
+- **Device identity — one machine, one device (reported 2026-11-28
+  ~07:45 MST):** dashboard showed Devices 2/2 on one system running
+  `dev:all`. Root cause, read from code: `device_identifier()` read
+  the settings table (per-database) FIRST, the OS store second — two
+  DBs/instances on one machine could use different ids, and the sync-83
+  re-activation made each an active web row. Fix: the OS store is read
+  FIRST (the machine identity; the doc comment already said it was the
+  source of truth — the code disagreed), settings is only a fallback
+  for old installs plus a write-through cache for the agent. One-time
+  cleanup: the stale duplicate active row is revoked once from the
+  dashboard; after that the count stays 1/2.
+- **Verified:** fmt clean; clippy `-D warnings` clean; cargo test
+  (excl. desktop) 479/479 (one `working`-test flake on the first run —
+  passes on re-run, no git-engine code touched); desktop frontend
+  140/140 (was 138, +2 new: account-changed event after a successful
+  reconcile link and after a PAT remove); typecheck clean; lint clean;
+  vite build clean (only the pre-existing `INEFFECTIVE_DYNAMIC_IMPORT`
+  warnings); next build clean; i18n 234 keys, 0 failures; Semgrep 0
+  (85 rules, 212 files); `check-no-private-key.sh` passed; MinGW
+  desktop check passes (clippy 9 pre-existing warnings, none in this
+  change — the two `auth.rs` ones are pre-existing `collapsible_if` in
+  the pairing/revoke handlers).
 - **Not pushed yet (needs approval).**

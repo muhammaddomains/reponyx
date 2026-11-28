@@ -35,6 +35,7 @@ import Schedules from "./routes/Schedules";
 import Settings from "./routes/Settings";
 import Storage from "./routes/Storage";
 import Synchronization from "./routes/Synchronization";
+import { WEB_ACCOUNT_CHANGED_EVENT } from "./webAccountSync";
 
 type AuthState =
   | { status: "loading" }
@@ -103,7 +104,13 @@ function AppShell() {
   // strand the login on the Login screen with no error.
   const pendingDeepLinks = useRef<string[] | null>(null);
 
+  const refreshInFlight = useRef(false);
+
   const refreshStatus = useCallback(async () => {
+    // Guard: the 60s tick, the focus handler and the account-changed
+    // event can fire together — one fetch at a time.
+    if (refreshInFlight.current) return;
+    refreshInFlight.current = true;
     try {
       const status = await webSessionStatus();
       if (status.authenticated) {
@@ -122,12 +129,34 @@ function AppShell() {
       // No backend (plain-browser preview) — show the login page,
       // whose calls fail with the same clear message.
       setAuth({ status: "unauthenticated", sessionExpired: false });
+    } finally {
+      refreshInFlight.current = false;
     }
   }, []);
 
   useEffect(() => {
     void refreshStatus();
   }, [refreshStatus]);
+
+  // Live sync (W4-full): while signed in, re-fetch the web account
+  // (package + limits + usage) every 60s, whenever the window regains
+  // focus, and whenever an account link changes — so the app and the
+  // web stay in sync in real time. The fetch also heartbeats the
+  // device, so the web's last-seen stays fresh. The offline rule is
+  // unchanged: a failed fetch keeps the session and the last-known
+  // cached account.
+  useEffect(() => {
+    if (auth.status !== "authenticated") return;
+    const id = window.setInterval(() => void refreshStatus(), 60_000);
+    const onRefresh = () => void refreshStatus();
+    window.addEventListener("focus", onRefresh);
+    window.addEventListener(WEB_ACCOUNT_CHANGED_EVENT, onRefresh);
+    return () => {
+      window.clearInterval(id);
+      window.removeEventListener("focus", onRefresh);
+      window.removeEventListener(WEB_ACCOUNT_CHANGED_EVENT, onRefresh);
+    };
+  }, [auth.status, refreshStatus]);
 
   const handleDeepLink = useCallback(
     async (urls: string[]) => {

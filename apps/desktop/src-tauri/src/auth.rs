@@ -278,43 +278,46 @@ fn parse_expires_at(value: Option<String>) -> CommandResult<Option<DateTime<Utc>
 /// be — a fresh database used to mint a new identity, so the web
 /// counted one machine as several devices and the broker forgot
 /// the pairing (2026-11-28: three device rows for one machine
-/// after two database deletes). The settings table is a
-/// write-through cache the background agent reads
-/// (`device.identifier`). Also the web device key: the desktop
-/// registers this same identifier with the web on login, so one
-/// device is one row in both places.
+/// after two database deletes). The store is read FIRST because
+/// the settings table is per-database: a machine can have two
+/// databases (dev build + installed exe), and reading settings
+/// first let two instances use different ids — each became an
+/// active web device row (2026-11-28: Devices 2/2 on one machine).
+/// The settings table is only a write-through cache the
+/// background agent reads (`device.identifier`). Also the web
+/// device key: the desktop registers this same identifier with
+/// the web on login, so one device is one row in both places.
 pub(crate) async fn device_identifier(
     auth: &AuthState,
     database: &Database,
 ) -> CommandResult<String> {
-    if let Some(setting) = get_setting(&database.pool, "device_identifier").await? {
-        // Migrate existing installs: persist the settings value in
-        // the OS store so the next fresh database reuses it.
-        if !auth
-            .store
-            .exists(SERVICE_DEVICE, ACCOUNT_DEVICE_IDENTIFIER)
-            .map_err(CommandError::from)?
-        {
-            auth.store
-                .store(SERVICE_DEVICE, ACCOUNT_DEVICE_IDENTIFIER, &setting.value)
-                .map_err(CommandError::from)?;
-        }
-        return Ok(setting.value);
-    }
     if let Some(stored) = auth
         .store
         .get(SERVICE_DEVICE, ACCOUNT_DEVICE_IDENTIFIER)
         .map_err(CommandError::from)?
     {
         let id = stored.expose().to_string();
+        // Write through so the agent's cache and the settings
+        // lookup agree with the machine identity.
         set_setting(&database.pool, "device_identifier", &id).await?;
+        set_setting(&database.pool, "device.identifier", &id).await?;
         return Ok(id);
+    }
+    if let Some(setting) = get_setting(&database.pool, "device_identifier").await? {
+        // Migrate existing installs: persist the settings value in
+        // the OS store so the next fresh database reuses it.
+        auth.store
+            .store(SERVICE_DEVICE, ACCOUNT_DEVICE_IDENTIFIER, &setting.value)
+            .map_err(CommandError::from)?;
+        set_setting(&database.pool, "device.identifier", &setting.value).await?;
+        return Ok(setting.value);
     }
     let id = Uuid::new_v4().to_string();
     auth.store
         .store(SERVICE_DEVICE, ACCOUNT_DEVICE_IDENTIFIER, &id)
         .map_err(CommandError::from)?;
     set_setting(&database.pool, "device_identifier", &id).await?;
+    set_setting(&database.pool, "device.identifier", &id).await?;
     Ok(id)
 }
 

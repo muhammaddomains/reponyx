@@ -3070,3 +3070,65 @@ themselves is not yet confirmed.
   the next snapshot push; the workflow upload `8086892` is
   already on GitHub and is NOT part of the snapshot (`.github/`
   is excluded from manifests).
+
+## 2026-11-28 bug batch — OAuth return leg, already-installed discovery, sync InvalidInput (local only, not pushed)
+
+User reports 2026-11-28 03:14–03:26 MST, all on the fresh DB (deleted
+twice; agent recreated it 02:58 MST; accounts re-added + paired 03:17+;
+repos re-discovered; syncs queued 03:15–03:27 MST).
+
+- **Desktop OAuth never completes (GitHub/Google):** email+password
+  login works. Vercel logs: Google start hit once, zero callback
+  hits. Root causes in the desktop: (1) `reponyx://` is registered
+  by the NSIS installer only — `tauri dev` never registers it, so
+  the browser cannot hand the OAuth result back to the running dev
+  app. Fix: `lib.rs` setup calls `DeepLinkExt::register_all()` on
+  Windows, best-effort (warn on failure). (2) A deep link arriving
+  while the first session check is still running was dropped;
+  `App.tsx` now queues it and flushes once the state resolves to
+  signed-out (discarded if signed in). Retest still open: user
+  retries OAuth and reports what the browser shows after
+  authorizing.
+- **Already-installed GitHub App invisible:** the broker recorded
+  installations only via its setup callback, so an App already
+  installed on GitHub never appeared (user had to uninstall +
+  reinstall; video 03:23 shows the dance for 185410556 → new
+  186770686). Fix: `GET /installations` now records any GitHub-
+  listed installation missing from the store (same call it already
+  made for logins; pairing stays empty; per-item failures ignored).
+  BrokerSetup notice updated. Test
+  `callback_rejects_installation_not_in_github_list` updated: the
+  rejected callback still records nothing for 777, but the listed
+  999 now appears with its login.
+- **Syncs fail permanently with InvalidInput:** six jobs,
+  10:15–10:27Z, all `code="InvalidInput"` (user's log
+  `reponyx.log-ef2fccbd.2026-11-28`). Root cause: the agent builds
+  its credential resolver ONCE at startup, snapshotting
+  `device.identifier`; the agent started 02:58 MST, pairing
+  completed 03:17+, so every GitHub App job failed with "GitHub
+  App sync requires a paired device identifier" — permanent,
+  because `classify_error` maps everything non-retryable
+  (incl. InvalidInput) to Permanent. Fix: `resolve_github_app`
+  reads `device.identifier` from settings on every job; the
+  snapshot field is removed from `DefaultCredentialResolver`.
+  `storage.root` was ruled out (the agent persists its default
+  into settings at startup). Executor failure logs now include
+  the error message, not just the code. New test
+  `github_app_reads_device_identifier_paired_after_resolver_built`.
+  Workaround until this ships: restart the agent once so it picks
+  up the pairing, then Sync now works.
+- **Web "Linked accounts 0/2" (user, 03:26 MST):** NOT a bug in
+  this batch — the web has no way to know about desktop-linked
+  accounts yet. The web count moves only in W4 (broker↔web
+  linking: the broker reports installations to the web user).
+  The desktop Settings card mirrors the web number; the
+  desktop's own count is Overview / Connected accounts (2).
+- **Verified:** fmt clean; clippy `-D warnings` clean; cargo test
+  (excl. desktop) 478 passed, 0 failed (was 477, +1 new test);
+  desktop frontend 15 files, 127/127; typecheck clean; lint
+  clean; vite build clean; local Semgrep 0 findings;
+  `check-no-private-key.sh` passed. MinGW desktop check now
+  PASSES: mingw-w64 was reinstalled on this VM (`apt-get update`
+  + `apt-get install gcc-mingw-w64-x86-64` 13.2.0; `cargo check
+  -p reponyx-desktop --target x86_64-pc-windows-gnu` clean in
+  17.66s).

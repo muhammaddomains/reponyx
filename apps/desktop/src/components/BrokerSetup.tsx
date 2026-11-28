@@ -212,7 +212,7 @@ export default function BrokerSetup() {
               () => createBrokerSetupState(),
               (state) =>
                 setNotice(
-                  `Install page opened in your browser — complete the install there within 10 minutes (before ${new Date(state.expiresAt).toLocaleString()}), then press Refresh below. The installation will appear here and you can pair this device.`,
+                  `Install page opened in your browser — complete the install there within 10 minutes (before ${new Date(state.expiresAt).toLocaleString()}), then press Refresh below. The installation will appear here and you can pair this device. If the App is already installed on GitHub, it appears below right away — no need to uninstall and reinstall it.`,
                 ),
             )
           }

@@ -138,6 +138,27 @@ pub fn run() {
             if let Err(e) = tray::setup_tray(app.handle()) {
                 tracing::warn!(error = %e, "tray setup failed; continuing without tray");
             }
+            // The `reponyx://` scheme is registered by the installer,
+            // but `tauri dev` never registers it — and a dev run is
+            // how this app is usually exercised. Without a runtime
+            // registration the browser has nowhere to send the OAuth
+            // result (`reponyx://auth?code=...`): the user authorizes
+            // on GitHub/Google and the desktop login silently never
+            // completes. Register the scheme for this running binary
+            // (best-effort — a failure only warns; the app still
+            // opens and email login still works). The installed app
+            // re-registers itself on its own start, so the handler
+            // heals back to the installed binary.
+            #[cfg(target_os = "windows")]
+            {
+                use tauri_plugin_deep_link::DeepLinkExt;
+                if let Err(e) = app.deep_link().register_all() {
+                    tracing::warn!(
+                        error = %e,
+                        "could not register reponyx:// deep-link scheme; desktop OAuth login will not return to the app"
+                    );
+                }
+            }
             agent::start_progress_forwarder(app.handle());
             // One system: the app brings its services up with it.
             // The agent and the broker start here (best-effort —

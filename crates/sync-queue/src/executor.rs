@@ -221,7 +221,12 @@ async fn handle_failure(
                     next_attempt: None,
                 },
             );
-            warn!(job_id = %job.id, code = err.code.as_str(), "permanent job failure");
+            // Log the message, not just the code: a bare code (e.g.
+            // `InvalidInput`) cannot be diagnosed from the log alone
+            // — on 2026-11-28 six syncs failed this way and the
+            // reason ("GitHub App sync requires a paired device
+            // identifier") was only in the UI event, not the log.
+            warn!(job_id = %job.id, code = err.code.as_str(), message = %err.message, "permanent job failure");
             Ok(ExecutionOutcome::FailedPermanent)
         }
         FailureClass::Transient => {
@@ -302,7 +307,7 @@ async fn handle_failure(
                         next_attempt: None,
                     },
                 );
-                warn!(job_id = %job.id, "transient failure but attempt budget exhausted");
+                warn!(job_id = %job.id, code = err.code.as_str(), message = %err.message, "transient failure but attempt budget exhausted");
                 Ok(ExecutionOutcome::FailedPermanent)
             }
         }

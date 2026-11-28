@@ -1257,7 +1257,10 @@ async fn callback_rejects_installation_not_in_github_list() {
         "unverified installation must say so: {}",
         body["error"]["message"]
     );
-    // Nothing was recorded.
+    // The rejected callback recorded nothing for 777 — but listing
+    // discovers installations that already exist on GitHub, so the
+    // listed installation 999 (login "octocat") shows up without
+    // any install flow.
     let installations: serde_json::Value = fixture
         .client
         .get(format!("{}/installations", fixture.base))
@@ -1268,7 +1271,16 @@ async fn callback_rejects_installation_not_in_github_list() {
         .json()
         .await
         .unwrap();
-    assert_eq!(installations.as_array().unwrap().len(), 0);
+    let installations = installations.as_array().unwrap();
+    assert!(
+        !installations
+            .iter()
+            .any(|item| item["installation_id"] == INSTALLATION_ID),
+        "rejected installation must not be recorded: {installations:?}"
+    );
+    assert_eq!(installations.len(), 1);
+    assert_eq!(installations[0]["installation_id"], "999");
+    assert_eq!(installations[0]["account_login"], "octocat");
 }
 
 #[tokio::test]

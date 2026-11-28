@@ -33,21 +33,13 @@ pub struct DefaultCredentialResolver {
     store: Arc<dyn CredentialStore>,
     /// Auth Broker base URL (default `http://127.0.0.1:8765`).
     broker_base_url: String,
-    /// Desktop device identifier used to look up `device-token:<id>`.
-    /// Required for GitHub App accounts; optional for PAT-only setups.
-    device_identifier: Option<String>,
 }
 
 impl DefaultCredentialResolver {
-    pub fn new(
-        store: Arc<dyn CredentialStore>,
-        broker_base_url: impl Into<String>,
-        device_identifier: Option<String>,
-    ) -> Self {
+    pub fn new(store: Arc<dyn CredentialStore>, broker_base_url: impl Into<String>) -> Self {
         Self {
             store,
             broker_base_url: broker_base_url.into(),
-            device_identifier,
         }
     }
 
@@ -57,7 +49,6 @@ impl DefaultCredentialResolver {
         Self {
             store,
             broker_base_url: reponyx_github_provider::DEFAULT_BROKER_BASE_URL.to_string(),
-            device_identifier: None,
         }
     }
 }
@@ -133,16 +124,27 @@ impl DefaultCredentialResolver {
         pool: &SqlitePool,
         account: &Account,
     ) -> Result<Arc<dyn CredentialSource>, RepoNyxError> {
-        let device_id = self.device_identifier.as_deref().ok_or_else(|| {
-            RepoNyxError::new(
-                ErrorCode::InvalidInput,
-                "GitHub App sync requires a paired device identifier",
-            )
-        })?;
+        // The paired device id is read from settings on EVERY job,
+        // never snapshotted when the resolver is built: the agent
+        // starts before the device is paired, and pairing writes
+        // `device.identifier` while the agent is already running.
+        // A startup snapshot made the agent reject every GitHub App
+        // sync with InvalidInput until it was restarted — on
+        // 2026-11-28 six queued syncs failed permanently for
+        // exactly this reason ("GitHub App sync requires a paired
+        // device identifier") even though pairing had completed.
+        let device_id = device_identifier_from_settings(pool)
+            .await?
+            .ok_or_else(|| {
+                RepoNyxError::new(
+                    ErrorCode::InvalidInput,
+                    "GitHub App sync requires a paired device identifier",
+                )
+            })?;
 
         let device_token = self
             .store
-            .get(SERVICE_BROKER, &device_token_account(device_id))?
+            .get(SERVICE_BROKER, &device_token_account(&device_id))?
             .ok_or_else(|| {
                 RepoNyxError::new(
                     ErrorCode::CredentialStoreError,
@@ -225,17 +227,17 @@ pub async fn storage_root_from_settings(
     Ok(std::path::PathBuf::from(path))
 }
 
-/// Convenience: build a default resolver from a store + optional device id setting.
+/// Convenience: build a default resolver from a store. The paired
+/// device identifier is read from settings on every job (see
+/// `resolve_github_app`), so the pool is not needed here.
 pub async fn default_resolver_from_settings(
-    pool: &SqlitePool,
+    _pool: &SqlitePool,
     store: Arc<dyn CredentialStore>,
     broker_base_url: &str,
 ) -> Result<Arc<DefaultCredentialResolver>, RepoNyxError> {
-    let device = device_identifier_from_settings(pool).await?;
     Ok(Arc::new(DefaultCredentialResolver::new(
         store,
         broker_base_url,
-        device,
     )))
 }
 
@@ -248,4 +250,101 @@ fn _pat_service_key(account_id: Uuid) -> String {
 #[allow(dead_code)]
 fn _broker_prefix() -> &'static str {
     ACCOUNT_DEVICE_TOKEN_PREFIX
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use reponyx_core::{AccountType, Provider};
+    use reponyx_credential_store::SecretString;
+    use reponyx_database::accounts::{NewAccount, create_account};
+    use reponyx_database::settings::set_setting;
+
+    /// Credential store that holds nothing: every lookup misses.
+    struct EmptyStore;
+
+    impl CredentialStore for EmptyStore {
+        fn store(&self, _service: &str, _account: &str, _secret: &str) -> Result<(), RepoNyxError> {
+            Ok(())
+        }
+
+        fn get(
+            &self,
+            _service: &str,
+            _account: &str,
+        ) -> Result<Option<SecretString>, RepoNyxError> {
+            Ok(None)
+        }
+
+        fn delete(&self, _service: &str, _account: &str) -> Result<(), RepoNyxError> {
+            Ok(())
+        }
+    }
+
+    #[tokio::test]
+    async fn github_app_reads_device_identifier_paired_after_resolver_built() {
+        let dir = tempfile::tempdir().unwrap();
+        let db = reponyx_database::open_database(&dir.path().join("reponyx.sqlite"))
+            .await
+            .unwrap();
+        let pool = &db.pool;
+
+        // The resolver is built BEFORE the device is paired — as the
+        // agent does at startup.
+        let resolver =
+            default_resolver_from_settings(pool, Arc::new(EmptyStore), "http://127.0.0.1:8765")
+                .await
+                .unwrap();
+
+        let account = create_account(
+            pool,
+            NewAccount {
+                provider: Provider::GitHub,
+                provider_account_id: format!("prov-{}", Uuid::new_v4()),
+                username: "tester".into(),
+                display_name: None,
+                label: None,
+                account_type: AccountType::Personal,
+                authentication_method: AuthenticationMethod::GitHubApp,
+            },
+        )
+        .await
+        .unwrap();
+
+        // Unpaired: the clear error.
+        let err = match resolver.resolve(pool, &account).await {
+            Ok(_) => panic!("resolve should fail without a paired device"),
+            Err(e) => e,
+        };
+        assert_eq!(err.code, ErrorCode::InvalidInput);
+        assert!(
+            err.message.contains("paired device identifier"),
+            "{}",
+            err.message
+        );
+
+        // Pair the device AFTER the resolver was built.
+        set_setting(
+            pool,
+            "device.identifier",
+            "d63f8c6e-f553-48e2-810f-797deaefdedd",
+        )
+        .await
+        .unwrap();
+
+        // The resolver must see the fresh device id: the failure
+        // moves past the device-id check to the (empty) device-token
+        // lookup. With the old startup snapshot this still returned
+        // the "paired device identifier" error.
+        let err = match resolver.resolve(pool, &account).await {
+            Ok(_) => panic!("resolve should fail without a device token"),
+            Err(e) => e,
+        };
+        assert_eq!(err.code, ErrorCode::CredentialStoreError);
+        assert!(
+            err.message.contains("device token not found"),
+            "{}",
+            err.message
+        );
+    }
 }

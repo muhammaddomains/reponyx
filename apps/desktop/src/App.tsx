@@ -8,7 +8,9 @@
  *  hands its pending token to Login, and a registration that still
  *  needs a name hands its token to Login. Deep links are ignored
  *  while already signed in — exchanging one then could sign a
- *  second account in over the first. */
+ *  second account in over the first. A link that arrives while the
+ *  first session check is still running is held, not dropped, and
+ *  processed once the state resolves to signed-out. */
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { HashRouter, Route, Routes } from "react-router";
@@ -95,6 +97,11 @@ function AppShell() {
   );
   const authRef = useRef(auth);
   authRef.current = auth;
+  // Deep links held while the first session check is still running
+  // (cold start via `reponyx://...`, or the browser handing the
+  // OAuth result back to a just-launched app). Dropping them would
+  // strand the login on the Login screen with no error.
+  const pendingDeepLinks = useRef<string[] | null>(null);
 
   const refreshStatus = useCallback(async () => {
     try {
@@ -124,6 +131,17 @@ function AppShell() {
 
   const handleDeepLink = useCallback(
     async (urls: string[]) => {
+      // Hold links that arrive before the session check finishes;
+      // the flush effect below processes them once the state
+      // resolves. Dropping them here would lose the OAuth result
+      // whenever the app was launched by the link itself.
+      if (authRef.current.status === "loading") {
+        pendingDeepLinks.current = [
+          ...(pendingDeepLinks.current ?? []),
+          ...urls,
+        ];
+        return;
+      }
       // Only while signed out (see the module doc).
       if (authRef.current.status !== "unauthenticated") return;
       for (const raw of urls) {
@@ -185,6 +203,18 @@ function AppShell() {
       if (unlisten !== null) unlisten();
     };
   }, [handleDeepLink]);
+
+  // Flush deep links held while the session check was running.
+  useEffect(() => {
+    if (auth.status === "unauthenticated" && pendingDeepLinks.current !== null) {
+      const urls = pendingDeepLinks.current;
+      pendingDeepLinks.current = null;
+      void handleDeepLink(urls);
+    } else if (auth.status === "authenticated") {
+      // Signed in already — a held link is stale; drop it.
+      pendingDeepLinks.current = null;
+    }
+  }, [auth.status, handleDeepLink]);
 
   const handleLogout = useCallback(async () => {
     try {

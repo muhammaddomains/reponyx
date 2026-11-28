@@ -656,6 +656,26 @@ async fn list_installations(
     // call for all installations); on any failure the recorded
     // value stands and the list still succeeds.
     let logins = crate::tokens::list_app_installations(&state.http, &state.config).await;
+    // An installation that already exists on GitHub but was never
+    // recorded — the App was installed outside this broker's setup
+    // flow, or the broker store was reset — would otherwise never
+    // show up, forcing the user to uninstall + reinstall the App
+    // before it appears. Record it now from the same GitHub call
+    // (no extra request): the login comes from GitHub and the
+    // pairing stays empty until the device pairs. A failure to
+    // record one installation is ignored — the list still succeeds
+    // and the next refresh retries.
+    for (installation_id, login) in &logins {
+        if state.installation(installation_id).await.is_some() {
+            continue;
+        }
+        if let Err(e) = state
+            .record_installation(installation_id, "install", Some(login.clone()))
+            .await
+        {
+            tracing::warn!(error = %e, installation_id = %installation_id, "could not record discovered installation; it will not show up until the next refresh");
+        }
+    }
     Ok(Json(
         state
             .list_installations()

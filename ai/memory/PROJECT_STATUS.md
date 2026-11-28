@@ -3071,7 +3071,7 @@ themselves is not yet confirmed.
   already on GitHub and is NOT part of the snapshot (`.github/`
   is excluded from manifests).
 
-## 2026-11-28 bug batch — OAuth return leg, already-installed discovery, sync InvalidInput (local only, not pushed)
+## 2026-11-28 bug batch — OAuth return leg, already-installed discovery, sync InvalidInput (pushed as snapshot `f355c40`, sync 79, 2026-11-28 ~03:49 MST; deploy+CI check ran 04:10 MST)
 
 User reports 2026-11-28 03:14–03:26 MST, all on the fresh DB (deleted
 twice; agent recreated it 02:58 MST; accounts re-added + paired 03:17+;
@@ -3099,7 +3099,15 @@ repos re-discovered; syncs queued 03:15–03:27 MST).
   BrokerSetup notice updated. Test
   `callback_rejects_installation_not_in_github_list` updated: the
   rejected callback still records nothing for 777, but the listed
-  999 now appears with its login.
+  999 now appears with its login. **REVERTED in the sync-80 batch
+  below (2026-11-28 ~04:07 MST):** listing-based discovery pulls
+  in every installation of the shared App — the user proved it by
+  installing two accounts (ZohanZaheer 186785209,
+  ahmaddomains7-hue 186784678) straight from
+  `github.com/apps/reponyx` and watching them appear on Refresh
+  with no desktop Install click, and noted that with 100 users
+  every desktop would see every account. Only the install
+  callback records installations now.
 - **Syncs fail permanently with InvalidInput:** six jobs,
   10:15–10:27Z, all `code="InvalidInput"` (user's log
   `reponyx.log-ef2fccbd.2026-11-28`). Root cause: the agent builds
@@ -3132,3 +3140,83 @@ repos re-discovered; syncs queued 03:15–03:27 MST).
   + `apt-get install gcc-mingw-w64-x86-64` 13.2.0; `cargo check
   -p reponyx-desktop --target x86_64-pc-windows-gnu` clean in
   17.66s).
+
+## 2026-11-28 live-refresh batch + discovery revert (local only, not pushed)
+
+User reports 2026-11-28 04:07–04:10 MST, after sync 79 shipped:
+syncs now complete (both repos synced 03:54 + 03:56 MST) and
+Google/GitHub login both work — but the UI does not refresh
+itself.
+
+- **Repositories page (04:07 MST):** the green "Sync queued for
+  X (job …)" notice stays until the page is changed, and the
+  "Open folder" button stays disabled until then too — both only
+  update on a page change. Root cause: the page loads on mount
+  (and after its own actions) only; nothing listens for the
+  job's completion, even though the app already forwards the
+  agent's progress as `sync-progress` Tauri events (the
+  Synchronization page listens). Fix: `Repositories.tsx`
+  subscribes to `sync-progress`; a terminal event
+  (`job_completed` / `job_failed` / `job_cancelled`) for a repo
+  this page queued clears that repo's entry, and when the last
+  one finishes the queued notice goes away (only if the current
+  notice is still a queued one — another action's notice is never
+  cleared); a failed job shows its message as the error instead.
+  The list reloads silently on a terminal event for any visible
+  repo, so the row's badge, last-synced time and "Open folder"
+  update in place — including scheduler jobs finishing while the
+  page is open. Bulk sync tracks each queued repo the same way
+  (and no queued notice is shown when nothing queued). New
+  tests: queued notice clears + row refreshes on `job_completed`
+  (Open folder becomes enabled); failure shows the message +
+  clears the notice.
+- **Broker card (04:07 MST):** after installing on a new account
+  the account does not show until Refresh is pressed. Fix:
+  `BrokerSetup.tsx` polls `listBrokerInstallations` every 2 s
+  for up to 90 s after the Install click and stops the moment a
+  new installation appears, naming it in the notice; on timeout
+  it says to press Refresh. The poll is a background interval
+  (not `run()` — no busy state, no notice wipe), cleaned up on
+  unmount. Install notice rewritten: the page watches for the
+  installation you choose; no Refresh needed. New test: the
+  installation appears after the click via the poll (fake
+  timers).
+- **Discovery reverted (user, 04:07 + 04:09 + 04:10 MST):** the
+  sync-79 `GET /installations` recording loop is removed. The
+  user installed two accounts (ZohanZaheer 186785209,
+  ahmaddomains7-hue 186784678) straight from
+  `github.com/apps/reponyx` — no desktop Install click, no
+  callback — and both appeared on Refresh; and pointed out that
+  with 100 users on the shared App every desktop would see every
+  account. Only the install callback records installations now:
+  it is the only path with proof the user owns it (it verifies
+  the installation belongs to this App and consumes the one-time
+  setup state from the browser flow). The callback already
+  records `setup_action=update` too, so an already-installed
+  account picked on the GitHub install page arrives via the
+  callback + the poll — no uninstall/reinstall, no Refresh, and
+  no other account pulled in. The already-recorded rows stay in
+  the broker store (the 6 installations currently listed,
+  including the 2 unpaired ones, can still be paired from the
+  list); the revert only stops future over-fetching. Broker test
+  `callback_rejects_installation_not_in_github_list` reverted to
+  asserting an empty list.
+- **Same mount-only pattern on other pages:** the user notes the
+  refresh problem is on almost every page. This batch fixes the
+  two named spots (Repositories sync, BrokerSetup install); the
+  other pages still load on mount only. A pass over all pages
+  with the same listener pattern is a separate batch if the user
+  wants it.
+- **Verified:** fmt clean; clippy `-D warnings` clean; cargo test
+  (excl. desktop) 478 passed, 0 failed; desktop frontend 15
+  files, 130/130 (was 127, +3 new tests); typecheck clean; lint
+  clean; vite build clean (only the known
+  INEFFECTIVE_DYNAMIC_IMPORT warning); local Semgrep 0 findings;
+  `check-no-private-key.sh` passed. MinGW desktop check passes
+  (`cargo check -p reponyx-desktop --target
+  x86_64-pc-windows-gnu` clean; desktop Rust unchanged in this
+  batch). Two test-authoring mistakes caught by the run and
+  fixed: the listener refs were declared before the `refresh`
+  callback they mirror (TDZ — whole Repositories file failed),
+  and `act` was imported from `vitest` instead of
+  `@testing-library/react`.

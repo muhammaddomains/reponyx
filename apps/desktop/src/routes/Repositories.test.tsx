@@ -7,9 +7,29 @@ import {
   it,
   vi,
 } from "vitest";
-import { render, screen, fireEvent, within } from "@testing-library/react";
+import {
+  act,
+  render,
+  screen,
+  fireEvent,
+  waitFor,
+  within,
+} from "@testing-library/react";
 import type { Repository } from "@reponyx/shared";
 import Repositories from "./Repositories";
+
+const { progressListeners } = vi.hoisted(() => ({
+  progressListeners: [] as Array<(event: { payload: unknown }) => void>,
+}));
+
+vi.mock("@tauri-apps/api/event", () => ({
+  listen: vi.fn(
+    (_eventName: string, handler: (event: { payload: unknown }) => void) => {
+      progressListeners.push(handler);
+      return Promise.resolve(() => {});
+    },
+  ),
+}));
 
 vi.mock("@reponyx/api-client", () => ({
   agentEnqueue: vi.fn(),
@@ -24,11 +44,21 @@ vi.mock("@reponyx/api-client", () => ({
 }));
 
 import {
+  agentEnqueue,
   deleteRepository,
+  ensureAgentRunning,
   listAccounts,
   listRepositories,
   updateRepository,
 } from "@reponyx/api-client";
+
+function emitProgress(payload: unknown) {
+  act(() => {
+    for (const listener of progressListeners) {
+      listener({ payload });
+    }
+  });
+}
 
 function repo(fullName: string): Repository {
   const [owner, name] = fullName.split("/");
@@ -113,6 +143,7 @@ afterAll(() => {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  progressListeners.length = 0;
   vi.mocked(listAccounts).mockResolvedValue([]);
 });
 
@@ -273,5 +304,94 @@ describe("Repositories page (virtualized list)", () => {
         "muhammaddomains/reponyx mode set to working.",
       ),
     ).toBeInTheDocument();
+  });
+
+  it("clears the queued notice and refreshes the row when the sync completes", async () => {
+    const pending: Repository = {
+      ...repo("DashingMZA/sendcms"),
+      archiveStatus: "pending",
+      localPath: null,
+      lastSyncedAt: null,
+    };
+    const synced: Repository = {
+      ...pending,
+      archiveStatus: "synced",
+      localPath:
+        "D:\\github\\zb\\articles\\working-clones\\DashingMZA\\sendcms",
+      lastSyncedAt: "2026-11-28T03:56:14Z",
+    };
+    vi.mocked(listRepositories)
+      .mockResolvedValueOnce({ items: [pending], total: 1 })
+      .mockResolvedValueOnce({ items: [pending], total: 1 })
+      .mockResolvedValue({ items: [synced], total: 1 });
+    vi.mocked(ensureAgentRunning).mockResolvedValue({
+      reachable: true,
+      status: null,
+      message: "ok",
+    });
+    vi.mocked(agentEnqueue).mockResolvedValue(
+      "080c7a5b-0000-4000-8000-000000000000",
+    );
+    render(<Repositories />);
+    await screen.findByText("DashingMZA/sendcms");
+    expect(screen.getByRole("button", { name: "Open folder" })).toBeDisabled();
+    fireEvent.click(screen.getByRole("button", { name: "Sync now" }));
+    expect(
+      await screen.findByText(/Sync queued for DashingMZA\/sendcms/),
+    ).toBeInTheDocument();
+    // The post-enqueue refresh still shows the pending row.
+    expect(screen.getByRole("button", { name: "Open folder" })).toBeDisabled();
+    emitProgress({
+      type: "job_completed",
+      job_id: "080c7a5b-0000-4000-8000-000000000000",
+      repository_id: "id-sendcms",
+      duration_ms: 1000,
+    });
+    await waitFor(() => {
+      expect(screen.queryByText(/Sync queued for/)).not.toBeInTheDocument();
+    });
+    expect(screen.getByRole("button", { name: "Open folder" })).toBeEnabled();
+  });
+
+  it("shows the failure and clears the queued notice when the sync fails", async () => {
+    const pending: Repository = {
+      ...repo("DashingMZA/sendcms"),
+      archiveStatus: "pending",
+      localPath: null,
+      lastSyncedAt: null,
+    };
+    vi.mocked(listRepositories).mockResolvedValue({
+      items: [pending],
+      total: 1,
+    });
+    vi.mocked(ensureAgentRunning).mockResolvedValue({
+      reachable: true,
+      status: null,
+      message: "ok",
+    });
+    vi.mocked(agentEnqueue).mockResolvedValue(
+      "080c7a5b-0000-4000-8000-000000000000",
+    );
+    render(<Repositories />);
+    await screen.findByText("DashingMZA/sendcms");
+    fireEvent.click(screen.getByRole("button", { name: "Sync now" }));
+    expect(
+      await screen.findByText(/Sync queued for DashingMZA\/sendcms/),
+    ).toBeInTheDocument();
+    emitProgress({
+      type: "job_failed",
+      job_id: "080c7a5b-0000-4000-8000-000000000000",
+      repository_id: "id-sendcms",
+      error_code: "InvalidInput",
+      message: "GitHub App sync requires a paired device identifier",
+      will_retry: false,
+      next_attempt: null,
+    });
+    expect(
+      await screen.findByText(
+        "DashingMZA/sendcms: GitHub App sync requires a paired device identifier",
+      ),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/Sync queued for/)).not.toBeInTheDocument();
   });
 });

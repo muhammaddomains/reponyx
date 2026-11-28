@@ -655,27 +655,22 @@ async fn list_installations(
     // recorded login is usually absent. Fill it from GitHub (one
     // call for all installations); on any failure the recorded
     // value stands and the list still succeeds.
+    //
+    // This list deliberately records NOTHING: the install callback
+    // is the only way an installation enters the store, because it
+    // is the only path with proof the user owns it — it verifies
+    // the installation belongs to this App and consumes the
+    // one-time setup state from the browser flow the user just
+    // completed. `GET /app/installations` lists every installation
+    // of the shared App, including other GitHub accounts (and, once
+    // the web platform has more users, other RepoNyx users), so
+    // recording from the list would pull in accounts the user never
+    // chose — the 2026-11-28 sync-79 discovery did exactly that
+    // and was reverted for it. An installation the user installs
+    // or configures through the Install button arrives via the
+    // callback (setup_action install or update); the desktop polls
+    // this list after the click until it appears.
     let logins = crate::tokens::list_app_installations(&state.http, &state.config).await;
-    // An installation that already exists on GitHub but was never
-    // recorded — the App was installed outside this broker's setup
-    // flow, or the broker store was reset — would otherwise never
-    // show up, forcing the user to uninstall + reinstall the App
-    // before it appears. Record it now from the same GitHub call
-    // (no extra request): the login comes from GitHub and the
-    // pairing stays empty until the device pairs. A failure to
-    // record one installation is ignored — the list still succeeds
-    // and the next refresh retries.
-    for (installation_id, login) in &logins {
-        if state.installation(installation_id).await.is_some() {
-            continue;
-        }
-        if let Err(e) = state
-            .record_installation(installation_id, "install", Some(login.clone()))
-            .await
-        {
-            tracing::warn!(error = %e, installation_id = %installation_id, "could not record discovered installation; it will not show up until the next refresh");
-        }
-    }
     Ok(Json(
         state
             .list_installations()

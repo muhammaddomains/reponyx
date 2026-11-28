@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { fireEvent, render, screen } from "@testing-library/react";
+import { act, fireEvent, render, screen } from "@testing-library/react";
 import { MemoryRouter } from "react-router";
 import AddAccount from "./AddAccount";
 
@@ -145,7 +145,7 @@ describe("Add account page — GitHub App install", () => {
     ).toBeInTheDocument();
   });
 
-  it("opens the install flow and tells the user to press Refresh after installing", async () => {
+  it("opens the install flow and watches for the chosen installation", async () => {
     renderAddAccount();
     const install = await screen.findByRole("button", {
       name: "Install GitHub App",
@@ -156,8 +156,42 @@ describe("Add account page — GitHub App install", () => {
       await screen.findByText(/Install page opened in your browser/),
     ).toBeInTheDocument();
     expect(
-      screen.getByText(/then press Refresh below/),
+      screen.getByText(/watches for the installation you choose/),
     ).toBeInTheDocument();
+  });
+
+  it("shows the installation when it appears after the Install click, without Refresh", async () => {
+    const installation = {
+      installationId: "777",
+      setupAction: "install",
+      accountLogin: "octocat",
+      installedAt: "2026-11-24T00:00:00Z",
+      pairedDevice: null,
+    };
+    renderAddAccount();
+    const install = await screen.findByRole("button", {
+      name: "Install GitHub App",
+    });
+    vi.useFakeTimers();
+    try {
+      vi.mocked(listBrokerInstallations).mockResolvedValue([installation]);
+      fireEvent.click(install);
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(0);
+      });
+      expect(
+        screen.getByText(/watches for the installation you choose/),
+      ).toBeInTheDocument();
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(2000);
+      });
+      expect(screen.getByText("Installation 777 (octocat)")).toBeInTheDocument();
+      expect(
+        screen.getByText(/is here — pair this device/),
+      ).toBeInTheDocument();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("disables the Install button until the broker is configured", async () => {

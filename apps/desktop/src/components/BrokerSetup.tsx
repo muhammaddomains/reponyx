@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   completePairing,
   createBrokerSetupState,
@@ -121,6 +121,52 @@ export default function BrokerSetup() {
     }
   }
 
+  // After the Install click, the installation only exists once the
+  // user completes the GitHub flow in the browser and the broker
+  // callback records it. Poll the list until a new installation
+  // appears (or 90 s pass): the user should not have to press
+  // Refresh to see the account they just installed. Only the
+  // installation from this flow can appear — listing records
+  // nothing on its own (see the broker's list_installations), so
+  // no other account is pulled in.
+  const installPollRef = useRef<number | null>(null);
+  const stopInstallPoll = useCallback(() => {
+    if (installPollRef.current !== null) {
+      window.clearInterval(installPollRef.current);
+      installPollRef.current = null;
+    }
+  }, []);
+  useEffect(() => stopInstallPoll, [stopInstallPoll]);
+
+  const startInstallPoll = useCallback(() => {
+    stopInstallPoll();
+    const known = new Set(installations.map((i) => i.installationId));
+    let ticks = 0;
+    installPollRef.current = window.setInterval(() => {
+      ticks += 1;
+      if (ticks > 45) {
+        stopInstallPoll();
+        setNotice(
+          "Still waiting for the installation — if you completed it in the browser, press Refresh below.",
+        );
+        return;
+      }
+      listBrokerInstallations()
+        .then((list) => {
+          const found = list.find((item) => !known.has(item.installationId));
+          if (!found) return;
+          stopInstallPoll();
+          setInstallations(list);
+          setNotice(
+            `Installation ${found.installationId}${found.accountLogin ? ` (${found.accountLogin})` : ""} is here — pair this device to add the account.`,
+          );
+        })
+        .catch(() => {
+          // Broker briefly unreachable — the next tick retries.
+        });
+    }, 2000);
+  }, [installations, stopInstallPoll]);
+
   return (
     <Card className="space-y-3 p-4">
       {error && (
@@ -210,10 +256,12 @@ export default function BrokerSetup() {
           onClick={() =>
             run(
               () => createBrokerSetupState(),
-              (state) =>
+              (state) => {
                 setNotice(
-                  `Install page opened in your browser — complete the install there within 10 minutes (before ${new Date(state.expiresAt).toLocaleString()}), then press Refresh below. The installation will appear here and you can pair this device. If the App is already installed on GitHub, it appears below right away — no need to uninstall and reinstall it.`,
-                ),
+                  `Install page opened in your browser — complete the install there within 10 minutes (before ${new Date(state.expiresAt).toLocaleString()}). This page watches for the installation you choose and shows it here when it arrives — no need to press Refresh. Only the installation you pick comes in, whether it is new or already installed on that account.`,
+                );
+                startInstallPoll();
+              },
             )
           }
         >

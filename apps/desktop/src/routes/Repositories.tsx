@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { listen } from "@tauri-apps/api/event";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import {
   agentEnqueue,
@@ -18,6 +19,7 @@ import type {
   Repository,
   SyncMode,
 } from "@reponyx/shared";
+import { syncProgressEventSchema } from "@reponyx/shared";
 import { Badge, Button, Card, ConfirmDialog } from "@reponyx/ui";
 
 const inputClass =
@@ -190,9 +192,90 @@ export default function Repositories() {
     };
   }, [refresh]);
 
+  // Repos whose "Sync queued" notice is on screen (repo id ->
+  // full name). A terminal sync-progress event for one of them
+  // clears that notice entry; when the map empties, the notice
+  // goes away — it used to stay until the page changed.
+  const queuedNoticeRepos = useRef(new Map<string, string>());
+  // Mirrors for the sync-progress listener (subscribed once, so it
+  // reads refs instead of stale closures).
+  const refreshRef = useRef(refresh);
+  const repoIdsRef = useRef<ReadonlySet<string>>(new Set());
+  const noticeRef = useRef<string | null>(null);
+  useEffect(() => {
+    refreshRef.current = refresh;
+  });
+  useEffect(() => {
+    repoIdsRef.current = new Set(repositories.map((r) => r.id));
+  });
+  useEffect(() => {
+    noticeRef.current = notice;
+  }, [notice]);
+
+  // Live refresh: the desktop forwards the agent's progress events
+  // as `sync-progress` Tauri events. A terminal event for a repo
+  // this page queued clears the "Sync queued" notice and reloads
+  // the list silently, so the row's badge, last-synced time and
+  // "Open folder" button update in place. A terminal event for any
+  // visible repo reloads the list too (scheduled syncs finishing
+  // while the page is open). In the web preview there is no Tauri
+  // event bridge — the listen fails and the page still works.
+  useEffect(() => {
+    let unlisten: (() => void) | undefined;
+    listen("sync-progress", (event) => {
+      const parsed = syncProgressEventSchema.safeParse(event.payload);
+      if (!parsed.success) return;
+      const progressEvent = parsed.data;
+      if (
+        progressEvent.type !== "job_completed" &&
+        progressEvent.type !== "job_failed" &&
+        progressEvent.type !== "job_cancelled"
+      ) {
+        return;
+      }
+      const repoId = progressEvent.repository_id;
+      const queued = queuedNoticeRepos.current;
+      const queuedName = queued.get(repoId);
+      if (queuedName !== undefined) {
+        queued.delete(repoId);
+        if (queued.size === 0) {
+          const current = noticeRef.current;
+          if (
+            current !== null &&
+            (current.startsWith("Sync queued for") ||
+              current.startsWith("Queued "))
+          ) {
+            setNotice(null);
+          }
+        }
+      }
+      if (progressEvent.type === "job_failed") {
+        setError(`${queuedName ?? repoId}: ${progressEvent.message}`);
+      }
+      if (repoIdsRef.current.has(repoId)) {
+        refreshRef.current().catch((e: unknown) => {
+          setError(commandMessage(e));
+        });
+      }
+    })
+      .then((fn) => {
+        unlisten = fn;
+      })
+      .catch(() => {
+        // No Tauri event bridge (web preview); the page still works.
+      });
+    return () => {
+      unlisten?.();
+    };
+  }, []);
+
   async function run<T>(action: () => Promise<T>, done?: (value: T) => void) {
     setError(null);
     setNotice(null);
+    // A new action replaces the notice, so a queued-sync notice it
+    // supersedes must not be cleared later by that sync's terminal
+    // event.
+    queuedNoticeRepos.current.clear();
     setBusy(true);
     try {
       const value = await action();
@@ -218,6 +301,9 @@ export default function Repositories() {
     setError(null);
     setNotice(null);
     setSyncingId(repository.id);
+    // Track the repo before the enqueue returns: the terminal
+    // event for it clears the queued notice below.
+    queuedNoticeRepos.current.set(repository.id, repository.fullName);
     try {
       await ensureAgent();
       const jobId = await agentEnqueue(repository.id);
@@ -228,6 +314,7 @@ export default function Repositories() {
       );
       await refresh();
     } catch (e: unknown) {
+      queuedNoticeRepos.current.delete(repository.id);
       setError(commandMessage(e));
     } finally {
       setSyncingId(null);
@@ -248,15 +335,22 @@ export default function Repositories() {
         try {
           await agentEnqueue(id);
           queued += 1;
+          const repo = repositories.find((r) => r.id === id);
+          queuedNoticeRepos.current.set(id, repo?.fullName ?? id);
         } catch (e: unknown) {
           failed.push(`${id.slice(0, 8)}: ${commandMessage(e)}`);
         }
       }
       setSelected(new Set());
-      setNotice(
-        `Queued ${queued} of ${ids.length} selected repositories.` +
-          (failed.length > 0 ? ` ${failed.length} failed.` : ""),
-      );
+      // No queued notice when nothing queued: no terminal event
+      // would ever clear it, and the error below already reports
+      // the failures.
+      if (queued > 0) {
+        setNotice(
+          `Queued ${queued} of ${ids.length} selected repositories.` +
+            (failed.length > 0 ? ` ${failed.length} failed.` : ""),
+        );
+      }
       if (failed.length > 0) setError(failed.join("\n"));
       await refresh();
     } catch (e: unknown) {

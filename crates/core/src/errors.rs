@@ -6,7 +6,6 @@
 //! conditions listed here.
 
 use serde::{Deserialize, Serialize};
-use thiserror::Error;
 
 /// Stable error codes. The string form is the wire/stable identifier.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -145,14 +144,30 @@ impl std::fmt::Display for ErrorCode {
 }
 
 /// The single error type for RepoNyx operations.
-#[derive(Debug, Error, Clone, Serialize, Deserialize)]
-#[error("[{code}] {message}")]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RepoNyxError {
     pub code: ErrorCode,
     pub message: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub details: Option<String>,
 }
+
+/// Display renders `[{code}] {message}`, plus `: {details}` when
+/// diagnostics are attached. The details carry the underlying
+/// cause (e.g. the SQLite message) — without them a log line can
+/// only ever say "database operation failed" and the real reason
+/// stays hidden. Details never hold secrets: they are sqlx / I/O
+/// messages, never tokens or keys.
+impl std::fmt::Display for RepoNyxError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match &self.details {
+            Some(details) => write!(f, "[{}] {}: {}", self.code, self.message, details),
+            None => write!(f, "[{}] {}", self.code, self.message),
+        }
+    }
+}
+
+impl std::error::Error for RepoNyxError {}
 
 impl RepoNyxError {
     pub fn new(code: ErrorCode, message: impl Into<String>) -> Self {
@@ -259,5 +274,20 @@ mod tests {
         let json = serde_json::to_string(&err).unwrap();
         assert!(json.contains("GitFetchFailed"));
         assert!(json.contains("fetch failed"));
+    }
+
+    #[test]
+    fn display_includes_details_when_present() {
+        let with_details = RepoNyxError::new(ErrorCode::DatabaseError, "database operation failed")
+            .with_details("database is locked");
+        assert_eq!(
+            format!("{with_details}"),
+            "[DatabaseError] database operation failed: database is locked"
+        );
+        let plain = RepoNyxError::new(ErrorCode::DatabaseError, "database operation failed");
+        assert_eq!(
+            format!("{plain}"),
+            "[DatabaseError] database operation failed"
+        );
     }
 }

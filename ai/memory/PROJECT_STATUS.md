@@ -2951,7 +2951,31 @@ profile is complete before login is allowed.
   instead of the generic banner. Verified: i18n 158 keys 0
   failures, typecheck clean, desktop frontend 15 files 127/127,
   lint + vite build clean, Prettier clean, local Semgrep 0
-  findings.
+  findings. **Pushed + deployed 2026-11-27 ~08:30 MST
+  (snapshot `5845f0c`, sync 75):** Vercel production
+  deployment READY (reponyx.bond; home + /login 200). CI #106
+  ALL GREEN (11m 11s): rust 4m 1s, frontend 43s (127/127),
+  windows-build 10m 22s, windows-installer 11m 8s (56.6 MB),
+  Lint, CodeQL, Security audit (Semgrep clean) — the last
+  three are separate workflow runs, reported Success at 08:42.
+
+**Update 2026-11-28 ~01:06 MST — the lock theory is ruled out:**
+the user restarted the system and ran `pnpm dev:all` — Task
+Manager shows no RepoNyx process — and the agent still failed
+with the same generic `[DatabaseError] database operation
+failed`, 12 ms after the pre-migration backup was written.
+Backup (VACUUM INTO) succeeding means the file is a readable
+SQLite database, and `integrity_check` returns a named
+`InvalidInput` error, so the failure is in the migration step
+(`repair_unrecorded_migrations` or `migrator.run()`), failing
+fast — not a lock (a lock would wait up to the 5 s busy
+timeout). **Fix (user-approved 2026-11-28 ~01:07 MST, local
+commit `f73c2dc`):** `RepoNyxError` Display now renders
+`details` when present, so the next run prints the exact SQLite
+reason instead of the generic message. Verified: fmt clean,
+clippy `-D warnings` clean, cargo test (excl. desktop) 477
+passed, 0 failed (was 476, +1 new test), local Semgrep 0
+findings. Push approved as sync 76.
 
 ## Accounts page restructure — DONE (2026-11-27, branch `feature/admin-control-plane`, local only)
 

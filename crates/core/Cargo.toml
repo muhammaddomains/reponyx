@@ -9,7 +9,6 @@ description = "RepoNyx domain types and structured errors"
 [dependencies]
 chrono.workspace = true
 serde.workspace = true
-thiserror.workspace = true
 uuid.workspace = true
 zeroize.workspace = true
 

@@ -1,5 +1,6 @@
 import type { DbClient } from "./client";
 import type {
+  AdminUserRow,
   AuditLogRow,
   DeviceRow,
   EmailVerificationTokenRow,
@@ -10,6 +11,7 @@ import type {
   PasswordResetTokenRow,
   SessionRow,
   SubscriptionRow,
+  TotpBackupCodeRow,
   UserRow,
 } from "./types";
 
@@ -769,5 +771,283 @@ export async function recordAudit(
   );
   const row = rows[0];
   if (!row) throw new Error("recordAudit returned no row");
+  return row;
+}
+
+// --- TOTP enrollment (W5) ---
+
+/** Store the secret generated at enrollment; it becomes live only on confirm. */
+export async function setTotpPendingSecret(
+  client: DbClient,
+  userId: string,
+  secret: string
+): Promise<void> {
+  await client.query(
+    `/* setTotpPendingSecret */
+     UPDATE users SET totp_pending_secret = $2, updated_at = now() WHERE id = $1`,
+    [userId, secret]
+  );
+}
+
+/**
+ * Confirm enrollment: the pending secret becomes the live secret and
+ * the pending slot is cleared. Callers verify the code first.
+ */
+export async function confirmTotpSecret(
+  client: DbClient,
+  userId: string
+): Promise<UserRow | null> {
+  const rows = await client.query<UserRow>(
+    `/* confirmTotpSecret */
+     UPDATE users
+     SET totp_secret = totp_pending_secret, totp_pending_secret = NULL,
+         updated_at = now()
+     WHERE id = $1 AND totp_pending_secret IS NOT NULL
+     RETURNING *`,
+    [userId]
+  );
+  return rows[0] ?? null;
+}
+
+/** Disable 2FA: clears the live secret, the pending secret, and all backup codes. */
+export async function clearTotp(
+  client: DbClient,
+  userId: string
+): Promise<void> {
+  await client.query(
+    `/* clearTotp */ DELETE FROM totp_backup_codes WHERE user_id = $1`,
+    [userId]
+  );
+  await client.query(
+    `/* clearTotp */ UPDATE users
+     SET totp_secret = NULL, totp_pending_secret = NULL, updated_at = now()
+     WHERE id = $1`,
+    [userId]
+  );
+}
+
+/** Replace all backup codes for a user with a fresh set of hashes. */
+export async function replaceBackupCodes(
+  client: DbClient,
+  userId: string,
+  codeHashes: string[]
+): Promise<void> {
+  await client.query(
+    `/* replaceBackupCodes */ DELETE FROM totp_backup_codes WHERE user_id = $1`,
+    [userId]
+  );
+  for (const codeHash of codeHashes) {
+    await client.query(
+      `/* replaceBackupCodes */
+       INSERT INTO totp_backup_codes (user_id, code_hash) VALUES ($1, $2)`,
+      [userId, codeHash]
+    );
+  }
+}
+
+/** Count the unspent backup codes a user has left. */
+export async function countBackupCodes(
+  client: DbClient,
+  userId: string
+): Promise<number> {
+  const rows = await client.query<{ count: string }>(
+    `/* countBackupCodes */
+     SELECT COUNT(*)::text AS count FROM totp_backup_codes
+     WHERE user_id = $1 AND consumed_at IS NULL`,
+    [userId]
+  );
+  return Number(rows[0]?.count ?? 0);
+}
+
+/**
+ * Spend a backup code: finds the unconsumed code by its hash and marks
+ * it consumed. Returns true only when a code was actually spent.
+ */
+export async function consumeBackupCode(
+  client: DbClient,
+  userId: string,
+  codeHash: string
+): Promise<boolean> {
+  const rows = await client.query<TotpBackupCodeRow>(
+    `/* consumeBackupCode */
+     UPDATE totp_backup_codes SET consumed_at = now()
+     WHERE user_id = $1 AND code_hash = $2 AND consumed_at IS NULL
+     RETURNING *`,
+    [userId, codeHash]
+  );
+  return rows.length > 0;
+}
+
+// --- admin (W5) ---
+
+/**
+ * Every user for the admin dashboard, with their package and usage
+ * counts. Optional case-insensitive search over email and name.
+ * Newest first; the admin UI pages through it with limit/offset.
+ */
+export async function listUsersAdmin(
+  client: DbClient,
+  args: { q?: string; limit: number; offset: number }
+): Promise<AdminUserRow[]> {
+  const pattern = args.q ? `%${args.q}%` : null;
+  return client.query<AdminUserRow>(
+    `/* listUsersAdmin */
+     SELECT u.*,
+       p.name AS package_name,
+       s.expires_at AS subscription_expires_at,
+       (SELECT COUNT(*) FROM linked_github_accounts l WHERE l.user_id = u.id) AS linked_count,
+       (SELECT COUNT(*) FROM devices d WHERE d.user_id = u.id AND d.revoked_at IS NULL) AS device_count
+     FROM users u
+     LEFT JOIN subscriptions s
+       ON s.user_id = u.id AND s.status = 'active'
+       AND (s.expires_at IS NULL OR s.expires_at > now())
+     LEFT JOIN packages p ON p.id = s.package_id
+     WHERE ($1::text IS NULL OR u.email ILIKE $1 OR u.name ILIKE $1)
+     ORDER BY u.created_at DESC
+     LIMIT $2 OFFSET $3`,
+    [pattern, args.limit, args.offset]
+  );
+}
+
+export async function countUsersAdmin(
+  client: DbClient,
+  q?: string
+): Promise<number> {
+  const pattern = q ? `%${q}%` : null;
+  const rows = await client.query<{ count: string }>(
+    `/* countUsersAdmin */
+     SELECT COUNT(*)::text AS count FROM users u
+     WHERE ($1::text IS NULL OR u.email ILIKE $1 OR u.name ILIKE $1)`,
+    [pattern]
+  );
+  return Number(rows[0]?.count ?? 0);
+}
+
+/** Totals for the admin home: users, linked accounts, active devices, 2FA users. */
+export async function adminStats(client: DbClient): Promise<{
+  users: number;
+  linkedAccounts: number;
+  activeDevices: number;
+  twoFactorUsers: number;
+}> {
+  const rows = await client.query<{
+    users: string;
+    linked_accounts: string;
+    active_devices: string;
+    two_factor_users: string;
+  }>(
+    `/* adminStats */
+     SELECT
+       (SELECT COUNT(*) FROM users) AS users,
+       (SELECT COUNT(*) FROM linked_github_accounts) AS linked_accounts,
+       (SELECT COUNT(*) FROM devices WHERE revoked_at IS NULL) AS active_devices,
+       (SELECT COUNT(*) FROM users WHERE totp_secret IS NOT NULL) AS two_factor_users`
+  );
+  const row = rows[0];
+  return {
+    users: Number(row?.users ?? 0),
+    linkedAccounts: Number(row?.linked_accounts ?? 0),
+    activeDevices: Number(row?.active_devices ?? 0),
+    twoFactorUsers: Number(row?.two_factor_users ?? 0),
+  };
+}
+
+/** All packages including inactive ones — the admin manages the whole set. */
+export async function listAllPackages(client: DbClient): Promise<PackageRow[]> {
+  return client.query<PackageRow>(
+    `/* listAllPackages */ SELECT * FROM packages ORDER BY max_linked_accounts ASC`
+  );
+}
+
+export async function findPackageById(
+  client: DbClient,
+  id: string
+): Promise<PackageRow | null> {
+  const rows = await client.query<PackageRow>(
+    `/* findPackageById */ SELECT * FROM packages WHERE id = $1`,
+    [id]
+  );
+  return rows[0] ?? null;
+}
+
+export async function createPackage(
+  client: DbClient,
+  args: {
+    name: string;
+    maxLinkedAccounts: number;
+    maxDevices: number;
+    priceCents: number;
+  }
+): Promise<PackageRow> {
+  const rows = await client.query<PackageRow>(
+    `/* createPackage */
+     INSERT INTO packages (name, max_linked_accounts, max_devices, price_cents)
+     VALUES ($1, $2, $3, $4) RETURNING *`,
+    [args.name, args.maxLinkedAccounts, args.maxDevices, args.priceCents]
+  );
+  const row = rows[0];
+  if (!row) throw new Error("createPackage returned no row");
+  return row;
+}
+
+/**
+ * Edit a package. Only the fields given are changed; `isActive: false`
+ * retires a package instead of deleting it (subscriptions reference it).
+ */
+export async function updatePackage(
+  client: DbClient,
+  id: string,
+  args: {
+    name?: string;
+    maxLinkedAccounts?: number;
+    maxDevices?: number;
+    priceCents?: number;
+    isActive?: boolean;
+  }
+): Promise<PackageRow | null> {
+  const sets: string[] = [];
+  const params: unknown[] = [id];
+  const push = (sql: string, value: unknown) => {
+    params.push(value);
+    sets.push(`${sql} = $${params.length}`);
+  };
+  if (args.name !== undefined) push("name", args.name);
+  if (args.maxLinkedAccounts !== undefined)
+    push("max_linked_accounts", args.maxLinkedAccounts);
+  if (args.maxDevices !== undefined) push("max_devices", args.maxDevices);
+  if (args.priceCents !== undefined) push("price_cents", args.priceCents);
+  if (args.isActive !== undefined) push("is_active", args.isActive);
+  if (sets.length === 0) return findPackageById(client, id);
+  sets.push("updated_at = now()");
+  const rows = await client.query<PackageRow>(
+    `/* updatePackage */ UPDATE packages SET ${sets.join(", ")} WHERE id = $1 RETURNING *`,
+    params
+  );
+  return rows[0] ?? null;
+}
+
+/**
+ * Assign a package to a user: upserts their (single) subscription as
+ * active. `expiresAt` null means no expiry. Re-assigning the same
+ * package refreshes the subscription rather than duplicating it.
+ */
+export async function setUserPackage(
+  client: DbClient,
+  userId: string,
+  packageId: string,
+  expiresAt: string | null
+): Promise<SubscriptionRow> {
+  const rows = await client.query<SubscriptionRow>(
+    `/* setUserPackage */
+     INSERT INTO subscriptions (user_id, package_id, status, expires_at)
+     VALUES ($1, $2, 'active', $3)
+     ON CONFLICT (user_id) DO UPDATE
+       SET package_id = EXCLUDED.package_id, status = 'active',
+           expires_at = EXCLUDED.expires_at, updated_at = now()
+     RETURNING *`,
+    [userId, packageId, expiresAt]
+  );
+  const row = rows[0];
+  if (!row) throw new Error("setUserPackage returned no row");
   return row;
 }

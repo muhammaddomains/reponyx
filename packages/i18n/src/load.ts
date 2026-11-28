@@ -2,7 +2,14 @@ import { createTranslator, type Messages, type Translator } from "./translate";
 import { type Locale } from "./locales";
 
 /** Starter domain sets — more domains are added as screens land. */
-export const WEB_DOMAINS = ["common", "auth", "dashboard", "errors"] as const;
+export const WEB_DOMAINS = [
+  "common",
+  "auth",
+  "dashboard",
+  "errors",
+  "admin",
+  "security",
+] as const;
 export const DESKTOP_DOMAINS = ["common", "errors", "auth"] as const;
 export type WebDomain = (typeof WEB_DOMAINS)[number];
 export type DesktopDomain = (typeof DESKTOP_DOMAINS)[number];

@@ -37,6 +37,11 @@ const CODE_TO_MESSAGE_KEY: Record<string, string> = {
   installation_not_linked: "installationNotLinked",
   device_revoked: "deviceRevoked",
   limit_exceeded: "limitExceeded",
+  forbidden: "forbidden",
+  admin_2fa_required: "admin2faRequired",
+  two_factor_already_enabled: "twoFactorAlreadyEnabled",
+  no_pending_2fa: "noPending2fa",
+  two_factor_not_enabled: "twoFactorNotEnabled",
 };
 
 /** Renders a structured API error ({code, data}) from errors.json, with the retry time filled in. */

@@ -9,6 +9,8 @@ export interface UserRow {
   email_verified: boolean;
   is_admin: boolean;
   totp_secret: string | null;
+  /** Secret generated at enrollment, confirmed by a code before it moves to totp_secret (migration 0005). */
+  totp_pending_secret: string | null;
   locale: string;
   created_at: string;
   updated_at: string;
@@ -111,4 +113,24 @@ export interface AuditLogRow {
   details: Record<string, unknown> | null;
   ip_hash: string | null;
   created_at: string;
+}
+
+/** One TOTP backup code (migration 0005). Only the hash is stored. */
+export interface TotpBackupCodeRow {
+  id: string;
+  user_id: string;
+  code_hash: string;
+  consumed_at: string | null;
+  created_at: string;
+}
+
+/**
+ * One row of the admin user list: the user plus their package and
+ * usage counts. The counts come from the list query, not the table.
+ */
+export interface AdminUserRow extends UserRow {
+  package_name: string | null;
+  subscription_expires_at: string | null;
+  linked_count: number;
+  device_count: number;
 }

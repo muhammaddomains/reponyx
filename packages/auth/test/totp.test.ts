@@ -57,3 +57,14 @@ describe("totp", () => {
     assert.equal(verifyTotpCode(secret, generateTotpCode(secret)), true);
   });
 });
+
+describe("totpSetupUrl", () => {
+  it("builds a scannable otpauth URL for the user's email", async () => {
+    const { totpSetupUrl } = await import("../src/totp.ts");
+    const secret = generateTotpSecret();
+    const url = totpSetupUrl(secret, "user@example.com");
+    assert.match(url, /^otpauth:\/\/totp\/RepoNyx:user%40example\.com\?/);
+    assert.match(url, new RegExp(`secret=${secret}`));
+    assert.match(url, /issuer=RepoNyx/);
+  });
+});

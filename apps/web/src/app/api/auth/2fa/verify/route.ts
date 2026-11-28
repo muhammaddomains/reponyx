@@ -1,7 +1,12 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
-import { verifyTotpCode } from "@reponyx/auth";
-import { findUserById, recordAudit, upsertDevice } from "@reponyx/database";
+import { hashToken, normalizeBackupCode, verifyTotpCode } from "@reponyx/auth";
+import {
+  consumeBackupCode,
+  findUserById,
+  recordAudit,
+  upsertDevice,
+} from "@reponyx/database";
 import { ApiError, errorResponse, parseJsonBody } from "@/lib/api-errors";
 import {
   createSessionForUser,
@@ -25,7 +30,8 @@ const VerifyBody = z.object({
  * proves the password step passed (password login) or the provider
  * verified the account (OAuth login); the authenticator code is
  * checked against the stored TOTP secret, and only then is the
- * session created — never before.
+ * session created — never before. A 6-digit code is a TOTP code;
+ * anything else is tried as a one-time backup code (and spent).
  */
 export async function POST(req: Request) {
   try {
@@ -35,8 +41,18 @@ export async function POST(req: Request) {
     if (!userId) throw new ApiError("invalid_token", 404);
     const user = await findUserById(client, userId);
     if (!user || !user.totp_secret) throw new ApiError("invalid_token", 404);
-    if (!verifyTotpCode(user.totp_secret, body.code)) {
-      throw new ApiError("invalid_2fa_code", 401);
+    const isTotp = /^\d{6}$/.test(body.code.trim());
+    if (isTotp) {
+      if (!verifyTotpCode(user.totp_secret, body.code)) {
+        throw new ApiError("invalid_2fa_code", 401);
+      }
+    } else {
+      const spent = await consumeBackupCode(
+        client,
+        user.id,
+        hashToken(normalizeBackupCode(body.code))
+      );
+      if (!spent) throw new ApiError("invalid_2fa_code", 401);
     }
     const ip = clientIp(req);
     const ipHash = ip ? hashIp(ip) : null;

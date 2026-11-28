@@ -28,6 +28,18 @@ export function generateTotpSecret(): string {
   return new OTPAuth.Secret({ size: 20 }).base32;
 }
 
+/**
+ * The `otpauth://` URL an authenticator app scans at enrollment.
+ * The label is the user's email; the issuer is RepoNyx.
+ */
+export function totpSetupUrl(secret: string, email: string): string {
+  return new OTPAuth.TOTP({
+    issuer: "RepoNyx",
+    label: email,
+    secret: OTPAuth.Secret.fromBase32(secret),
+  }).toString();
+}
+
 /** The current code for a secret (test helper; also what an enrollment check uses). */
 export function generateTotpCode(secret: string): string {
   return new OTPAuth.TOTP({

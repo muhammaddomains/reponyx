@@ -1,6 +1,7 @@
 import { redirect } from "next/navigation";
 import { formatDate } from "@reponyx/i18n";
 import {
+  countBackupCodes,
   countDevicesForUser,
   countLinkedAccountsForUser,
   findActiveSubscriptionForUser,
@@ -19,7 +20,8 @@ import {
 import { LinkedAccounts } from "@/components/auth/LinkedAccounts";
 import { DevicesList } from "@/components/auth/DevicesList";
 import { ProfileNameForm } from "@/components/auth/ProfileNameForm";
-import { alertError, alertSuccess, card } from "@/components/ui";
+import { TwoFactorSetup } from "@/components/auth/TwoFactorSetup";
+import { alertError, alertSuccess, card, link } from "@/components/ui";
 
 const LINK_ERROR_KEYS: Record<string, string> = {
   email_mismatch: "emailMismatch",
@@ -28,10 +30,17 @@ const LINK_ERROR_KEYS: Record<string, string> = {
 };
 
 export default async function DashboardPage(props: {
-  searchParams: Promise<{ linked?: string; link_error?: string }>;
+  searchParams: Promise<{
+    linked?: string;
+    link_error?: string;
+    admin_2fa?: string;
+  }>;
 }) {
-  const { linked: linkedParam, link_error: linkError } =
-    await props.searchParams;
+  const {
+    linked: linkedParam,
+    link_error: linkError,
+    admin_2fa: admin2fa,
+  } = await props.searchParams;
   const client = getDb();
   const session = await getSessionFromCookies(client);
   if (!session) redirect("/login");
@@ -39,17 +48,19 @@ export default async function DashboardPage(props: {
   const subscription = await findActiveSubscriptionForUser(client, user.id);
   const pkg =
     subscription?.package ?? (await findPackageByName(client, "Free"));
-  const [linkedCount, deviceCount, devices, accounts, providers] =
+  const [linkedCount, deviceCount, devices, accounts, providers, remaining] =
     await Promise.all([
       countLinkedAccountsForUser(client, user.id),
       countDevicesForUser(client, user.id),
       listDevicesForUser(client, user.id),
       listLinkedAccountsForUser(client, user.id),
       listLinkedProvidersForUser(client, user.id),
+      user.totp_secret ? countBackupCodes(client, user.id) : 0,
     ]);
   const locale = await getRequestLocale();
   const t = await getWebTranslator("dashboard");
   const tCommon = await getWebTranslator("common");
+  const tSecurity = await getWebTranslator("security");
   const errors = await getErrorStrings();
   const linkErrorMessage =
     linkError && LINK_ERROR_KEYS[linkError]
@@ -104,6 +115,11 @@ export default async function DashboardPage(props: {
       {linkErrorMessage ? (
         <p role="alert" className={`${alertError} mt-6`}>
           {linkErrorMessage}
+        </p>
+      ) : null}
+      {admin2fa ? (
+        <p role="alert" className={`${alertError} mt-6`}>
+          {tSecurity("adminNote")}
         </p>
       ) : null}
       <div className="mt-6 grid gap-4 lg:grid-cols-2">
@@ -196,6 +212,59 @@ export default async function DashboardPage(props: {
             </ul>
           )}
         </section>
+      </div>
+      <div className="mt-6 grid gap-4 lg:grid-cols-2">
+        <section className={`${card} p-4`}>
+          <h2 className="text-lg font-semibold tracking-tight">
+            {tSecurity("title")}
+          </h2>
+          <TwoFactorSetup
+            initialEnabled={Boolean(user.totp_secret)}
+            initialRemaining={remaining}
+            hasPassword={user.has_password}
+            isAdmin={user.is_admin}
+            strings={{
+              subtitle: tSecurity("subtitle"),
+              enabled: tSecurity("enabled"),
+              disabled: tSecurity("disabled"),
+              remaining: tSecurity("remaining"),
+              enable: tSecurity("enable"),
+              setupTitle: tSecurity("setupTitle"),
+              setupSubtitle: tSecurity("setupSubtitle"),
+              secretLabel: tSecurity("secretLabel"),
+              confirmLabel: tSecurity("confirmLabel"),
+              confirm: tSecurity("confirm"),
+              enabledSuccess: tSecurity("enabledSuccess"),
+              backupCodesTitle: tSecurity("backupCodesTitle"),
+              backupCodesSubtitle: tSecurity("backupCodesSubtitle"),
+              codeLabel: tSecurity("codeLabel"),
+              regenerate: tSecurity("regenerate"),
+              regeneratedSuccess: tSecurity("regeneratedSuccess"),
+              disable: tSecurity("disable"),
+              disableConfirm: tSecurity("disableConfirm"),
+              disabledSuccess: tSecurity("disabledSuccess"),
+              passwordLabel: tSecurity("passwordLabel"),
+              adminRequired: tSecurity("adminRequired"),
+            }}
+            errors={errors}
+            locale={locale}
+          />
+        </section>
+        {user.is_admin ? (
+          <section className={`${card} p-4`}>
+            <h2 className="text-lg font-semibold tracking-tight">
+              {tSecurity("openAdmin")}
+            </h2>
+            <p className="mt-1 text-sm text-muted-foreground">
+              {tSecurity("adminNote")}
+            </p>
+            {user.totp_secret ? (
+              <a href="/admin" className={`${link} mt-3 inline-block`}>
+                {tSecurity("openAdmin")}
+              </a>
+            ) : null}
+          </section>
+        ) : null}
       </div>
     </main>
   );

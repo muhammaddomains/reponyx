@@ -3374,3 +3374,35 @@ itself.
 - **Follow-up (product):** the web should accept PKCS#1 keys
   server-side (GitHub generates PKCS#1 `.pem` files — every
   user would hit this) instead of requiring PKCS#8.
+
+## W5 — packages + limits + admin dashboard + TOTP enrollment (implemented 2026-11-28, local only, not pushed yet)
+
+- **Admin dashboard (`/admin`):** totals (users, linked accounts,
+  active devices, 2FA users) + links to users and packages.
+  Users page: every user newest-first with package + usage counts,
+  search over email/name; detail page: profile, package, devices,
+  linked accounts, package assignment (optional expiry). Packages
+  page: create/edit any package incl. Free (limits, price, active);
+  retiring keeps it out of the public list without deleting it.
+- **Admin guard:** admin routes require `is_admin` AND an enrolled
+  TOTP secret (2FA mandatory for admins, plan §10). Non-admins 403
+  `forbidden`; admins without 2FA 403 `admin_2fa_required` (admin
+  pages redirect to the dashboard with the enrolment notice).
+- **TOTP enrollment (dashboard 2FA card):** setup holds the secret
+  server-side as `totp_pending_secret` until confirmed with a code
+  (migration 0005); confirm issues 10 backup codes (plaintext once,
+  SHA-256 hashes of the normalized form stored). Disable needs the
+  password or a TOTP code; admins refused. Regenerate needs a TOTP
+  code. The login 2FA step also accepts a backup code (spent on
+  success) — 6 digits means TOTP, anything else is a backup code.
+- **Migration 0005** (`0005_totp_backup_codes`): pending secret
+  column + backup-codes table. Must be applied to the live DB after
+  the push (DATABASE_URL pasted again, transient use).
+- **Verified:** fmt clean; clippy `-D warnings` clean; cargo test
+  (excl. desktop) 479/479; auth 17/17; database 16/16; web 49/49
+  (new `admin.test.ts`: guard → enrollment → admin routes →
+  package assign → backup-code login + spent-code refusal);
+  desktop frontend 138/138; typecheck clean; lint clean; vite +
+  next build clean; i18n 232 keys, 0 failures; Semgrep 0
+  (85 rules, 211 files); prettier clean. No Rust/desktop changes.
+- **Not pushed yet (needs approval).**

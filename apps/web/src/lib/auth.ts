@@ -1,5 +1,6 @@
 import { createHmac, timingSafeEqual } from "node:crypto";
 import { cookies } from "next/headers";
+import { redirect } from "next/navigation";
 import { DAY_MS, expiresIn, hashToken, randomToken } from "@reponyx/auth";
 import {
   createSession,
@@ -92,12 +93,43 @@ export async function getSessionFromCookies(
   return getSessionFromToken(client, cookieStore.get(SESSION_COOKIE)?.value);
 }
 
+/**
+ * Admin pages (W5, server components): non-admins go to the
+ * dashboard; admins without 2FA go to the dashboard with the
+ * admin-2FA notice (2FA is mandatory for admin accounts).
+ */
+export async function requireAdminPage(
+  client: DbClient
+): Promise<AuthedSession> {
+  const session = await getSessionFromCookies(client);
+  if (!session) redirect("/login");
+  if (!session.user.is_admin) redirect("/dashboard");
+  if (!session.user.totp_secret) redirect("/dashboard?admin_2fa=1");
+  return session;
+}
+
 export async function requireSession(
   client: DbClient,
   req: Request
 ): Promise<AuthedSession> {
   const session = await getSessionFromRequest(client, req);
   if (!session) throw new ApiError("unauthorized", 401);
+  return session;
+}
+
+/**
+ * Admin-only routes (W5). The admin must be an admin AND have 2FA
+ * enrolled — 2FA is mandatory for admin accounts (plan §10), so an
+ * admin without a TOTP secret is refused with `admin_2fa_required`
+ * until they enroll on the dashboard.
+ */
+export async function requireAdmin(
+  client: DbClient,
+  req: Request
+): Promise<AuthedSession> {
+  const session = await requireSession(client, req);
+  if (!session.user.is_admin) throw new ApiError("forbidden", 403);
+  if (!session.user.totp_secret) throw new ApiError("admin_2fa_required", 403);
   return session;
 }
 

@@ -11,10 +11,14 @@ import commonEn from "@reponyx/i18n/locales/en/web/common.json";
 import authEn from "@reponyx/i18n/locales/en/web/auth.json";
 import dashboardEn from "@reponyx/i18n/locales/en/web/dashboard.json";
 import errorsEn from "@reponyx/i18n/locales/en/web/errors.json";
+import adminEn from "@reponyx/i18n/locales/en/web/admin.json";
+import securityEn from "@reponyx/i18n/locales/en/web/security.json";
 import commonUr from "@reponyx/i18n/locales/ur/web/common.json";
 import authUr from "@reponyx/i18n/locales/ur/web/auth.json";
 import dashboardUr from "@reponyx/i18n/locales/ur/web/dashboard.json";
 import errorsUr from "@reponyx/i18n/locales/ur/web/errors.json";
+import adminUr from "@reponyx/i18n/locales/ur/web/admin.json";
+import securityUr from "@reponyx/i18n/locales/ur/web/security.json";
 
 // Register once at module load; reads are then synchronous.
 // (Same pattern as sendcms's @sendcms/i18n: static JSON import +
@@ -23,10 +27,14 @@ registerTranslations("en", "web", "common", commonEn);
 registerTranslations("en", "web", "auth", authEn);
 registerTranslations("en", "web", "dashboard", dashboardEn);
 registerTranslations("en", "web", "errors", errorsEn);
+registerTranslations("en", "web", "admin", adminEn);
+registerTranslations("en", "web", "security", securityEn);
 registerTranslations("ur", "web", "common", commonUr);
 registerTranslations("ur", "web", "auth", authUr);
 registerTranslations("ur", "web", "dashboard", dashboardUr);
 registerTranslations("ur", "web", "errors", errorsUr);
+registerTranslations("ur", "web", "admin", adminUr);
+registerTranslations("ur", "web", "security", securityUr);
 
 export async function getRequestLocale(): Promise<Locale> {
   const cookieStore = await cookies();
@@ -60,5 +68,10 @@ export async function getErrorStrings(): Promise<Record<string, string>> {
     oauthFailed: t("oauthFailed"),
     twoFactorRequired: t("twoFactorRequired"),
     invalid2faCode: t("invalid2faCode"),
+    forbidden: t("forbidden"),
+    admin2faRequired: t("admin2faRequired"),
+    twoFactorAlreadyEnabled: t("twoFactorAlreadyEnabled"),
+    noPending2fa: t("noPending2fa"),
+    twoFactorNotEnabled: t("twoFactorNotEnabled"),
   };
 }

@@ -1,12 +1,14 @@
 {
   "accountNotFound": "No account found — please register on the web first",
   "accountSwitchBlocked": "You logged out of a different account recently — you can log in with a different account after {retryAt}",
+  "admin2faRequired": "Admin accounts need two-factor authentication — enable it first.",
   "alreadyLinked": "That account is already linked to another RepoNyx account",
   "deviceRevoked": "This device was revoked — pair it again to sync",
   "emailMismatch": "That account uses a different email — link an account with the same email as your RepoNyx account",
   "emailNotVerified": "Please verify your email first",
   "emailTaken": "An account with this email already exists",
   "emailUnavailable": "We could not send the email — try again later",
+  "forbidden": "You don't have permission to do that.",
   "installationNotLinked": "That GitHub App installation is not linked to your account",
   "internalError": "Something went wrong — try again",
   "invalid2faCode": "The code is incorrect — try again",
@@ -17,9 +19,12 @@
   "limitExceeded": "You have reached your package limit for linked accounts — upgrade or unlink an account",
   "loginFailed": "Email or password is incorrect",
   "notConfigured": "The service is not configured yet",
+  "noPending2fa": "No two-factor setup is in progress — start setup first.",
   "oauthFailed": "Could not sign you in with that provider — try again",
   "rateLimitedRegister": "Only one registration per IP every 24 hours — try again after {retryAt}",
   "required": "This field is required",
   "sessionExpired": "Your session expired — please log in again",
+  "twoFactorAlreadyEnabled": "Two-factor authentication is already enabled.",
+  "twoFactorNotEnabled": "Two-factor authentication is not enabled.",
   "twoFactorRequired": "Two-factor authentication is required — enter the code from your authenticator app"
 }

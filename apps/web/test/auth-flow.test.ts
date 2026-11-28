@@ -75,6 +75,7 @@ assert.deepEqual(applied, [
   "0002_seed_packages",
   "0003_add_user_name",
   "0004_linked_providers",
+  "0005_totp_backup_codes",
 ]);
 
 setDbClientForTests(client);

@@ -2,17 +2,29 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import type { DbClient } from "../src/client";
 import {
+  adminStats,
+  clearTotp,
+  confirmTotpSecret,
+  consumeBackupCode,
+  countBackupCodes,
   countLinkedAccountsForUser,
   countRecentRegistrations,
+  createPackage,
   createSession,
   createUser,
   deleteLinkedProvider,
+  findPackageById,
   findLinkedProviderByProviderUserId,
   findUserByEmail,
   findValidVerificationToken,
   listLinkedProvidersForUser,
+  listUsersAdmin,
   recordRegistrationAttempt,
+  replaceBackupCodes,
   revokeSession,
+  setTotpPendingSecret,
+  setUserPackage,
+  updatePackage,
   upsertDevice,
   upsertLinkedProvider,
 } from "../src/queries";
@@ -194,4 +206,115 @@ test("upsertDevice clears revoked_at so a running desktop re-activates", async (
   assert.equal(row.revoked_at, null);
   assert.match(db.calls[0].text, /ON CONFLICT \(user_id, device_key\)/);
   assert.match(db.calls[0].text, /revoked_at = NULL/);
+});
+
+test("TOTP enrollment: pending secret is stored, confirm moves it live", async () => {
+  const db = new FakeDbClient();
+  db.on("setTotpPendingSecret", () => []);
+  await setTotpPendingSecret(db, "u1", "SECRET");
+  assert.equal(db.calls[0].params[1], "SECRET");
+  assert.match(db.calls[0].text, /totp_pending_secret = \$2/);
+
+  db.on("confirmTotpSecret", () => [
+    { id: "u1", totp_secret: "SECRET", totp_pending_secret: null },
+  ]);
+  const confirmed = await confirmTotpSecret(db, "u1");
+  assert.equal(confirmed?.totp_secret, "SECRET");
+  assert.match(db.calls[1].text, /totp_pending_secret IS NOT NULL/);
+
+  db.on("confirmTotpSecret", () => []);
+  assert.equal(await confirmTotpSecret(db, "u1"), null);
+});
+
+test("clearTotp deletes backup codes and clears both secrets", async () => {
+  const db = new FakeDbClient();
+  db.on("clearTotp", () => []);
+  await clearTotp(db, "u1");
+  assert.match(db.calls[0].text, /DELETE FROM totp_backup_codes/);
+  assert.match(db.calls[1].text, /totp_secret = NULL/);
+});
+
+test("backup codes: replace stores hashes, consume spends once", async () => {
+  const db = new FakeDbClient();
+  db.on("replaceBackupCodes", () => []);
+  await replaceBackupCodes(db, "u1", ["h1", "h2"]);
+  assert.match(db.calls[0].text, /DELETE FROM totp_backup_codes/);
+  assert.equal(db.calls[1].params[1], "h1");
+  assert.equal(db.calls[2].params[1], "h2");
+
+  db.on("countBackupCodes", () => [{ count: "2" }]);
+  assert.equal(await countBackupCodes(db, "u1"), 2);
+
+  db.on("consumeBackupCode", () => [{ id: "c1", consumed_at: "now" }]);
+  assert.equal(await consumeBackupCode(db, "u1", "h1"), true);
+  db.on("consumeBackupCode", () => []);
+  assert.equal(await consumeBackupCode(db, "u1", "h1"), false);
+});
+
+test("admin: listUsersAdmin passes search, limit and offset", async () => {
+  const db = new FakeDbClient();
+  db.on("listUsersAdmin", () => []);
+  await listUsersAdmin(db, { q: "zaheer", limit: 50, offset: 0 });
+  assert.equal(db.calls[0].params[0], "%zaheer%");
+  assert.equal(db.calls[0].params[1], 50);
+  assert.match(db.calls[0].text, /ILIKE \$1/);
+  assert.match(db.calls[0].text, /linked_count/);
+  assert.match(db.calls[0].text, /device_count/);
+});
+
+test("admin: createPackage, updatePackage and setUserPackage", async () => {
+  const db = new FakeDbClient();
+  db.on("createPackage", (params) => [
+    {
+      id: "p1",
+      name: params[0],
+      max_linked_accounts: params[1],
+      max_devices: params[2],
+      price_cents: params[3],
+    },
+  ]);
+  const created = await createPackage(db, {
+    name: "Test",
+    maxLinkedAccounts: 3,
+    maxDevices: 3,
+    priceCents: 0,
+  });
+  assert.equal(created.name, "Test");
+  assert.match(db.calls[0].text, /INSERT INTO packages/);
+
+  db.on("updatePackage", () => [
+    { id: "p1", name: "Test", max_linked_accounts: 5 },
+  ]);
+  const updated = await updatePackage(db, "p1", { maxLinkedAccounts: 5 });
+  assert.equal(updated?.max_linked_accounts, 5);
+  assert.match(db.calls[1].text, /max_linked_accounts = \$2/);
+
+  db.on("findPackageById", () => [{ id: "p1", name: "Test" }]);
+  const unchanged = await updatePackage(db, "p1", {});
+  assert.equal(unchanged?.id, "p1");
+
+  db.on("setUserPackage", () => [
+    { user_id: "u1", package_id: "p1", status: "active" },
+  ]);
+  const sub = await setUserPackage(db, "u1", "p1", null);
+  assert.equal(sub.status, "active");
+  assert.match(db.calls[3].text, /ON CONFLICT \(user_id\) DO UPDATE/);
+});
+
+test("adminStats returns parsed totals", async () => {
+  const db = new FakeDbClient();
+  db.on("adminStats", () => [
+    {
+      users: "2",
+      linked_accounts: "6",
+      active_devices: "1",
+      two_factor_users: "1",
+    },
+  ]);
+  assert.deepEqual(await adminStats(db), {
+    users: 2,
+    linkedAccounts: 6,
+    activeDevices: 1,
+    twoFactorUsers: 1,
+  });
 });

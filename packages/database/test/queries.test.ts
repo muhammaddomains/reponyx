@@ -13,6 +13,7 @@ import {
   listLinkedProvidersForUser,
   recordRegistrationAttempt,
   revokeSession,
+  upsertDevice,
   upsertLinkedProvider,
 } from "../src/queries";
 
@@ -164,4 +165,33 @@ test("linked providers round-trip through upsert, find, list, delete", async () 
 
   await deleteLinkedProvider(db, "u1", "google");
   assert.equal((await listLinkedProvidersForUser(db, "u1")).length, 0);
+});
+
+test("upsertDevice clears revoked_at so a running desktop re-activates", async () => {
+  const db = new FakeDbClient();
+  db.on("upsertDevice", () => [
+    {
+      id: "d1",
+      user_id: "u1",
+      device_key: "dev-1",
+      machine_name: "DESKTOP-TEST",
+      platform: "Windows 11",
+      app_version: "0.1.0",
+      last_ip: null,
+      last_seen_at: "2026-11-28T14:00:00.000Z",
+      revoked_at: null,
+      created_at: "2026-11-28T10:00:00.000Z",
+    },
+  ]);
+  const row = await upsertDevice(db, {
+    userId: "u1",
+    deviceKey: "dev-1",
+    machineName: "DESKTOP-TEST",
+    platform: "Windows 11",
+    appVersion: "0.1.0",
+    lastIp: null,
+  });
+  assert.equal(row.revoked_at, null);
+  assert.match(db.calls[0].text, /ON CONFLICT \(user_id, device_key\)/);
+  assert.match(db.calls[0].text, /revoked_at = NULL/);
 });

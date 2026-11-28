@@ -336,6 +336,15 @@ export async function revokeAllSessionsForUser(
 }
 
 // --- devices ---
+//
+// Presence rule (user decision 2026-11-28): the dashboard Devices list is
+// a presence record, not a revocation record. Whenever the desktop runs it
+// heartbeats (login + session-status check) and re-registers the device —
+// and that re-registration clears a previous revoke, so the device shows
+// again with a fresh last-seen and counts toward the package limit. The
+// web Revoke button therefore only removes the device until it next runs;
+// the strong cut-off for a device is revoking its pairing in the desktop
+// (the broker then refuses to mint for it).
 
 export async function upsertDevice(
   client: DbClient,
@@ -357,7 +366,8 @@ export async function upsertDevice(
        platform = EXCLUDED.platform,
        app_version = EXCLUDED.app_version,
        last_ip = EXCLUDED.last_ip,
-       last_seen_at = now()
+       last_seen_at = now(),
+       revoked_at = NULL
      RETURNING *`,
     [
       args.userId,

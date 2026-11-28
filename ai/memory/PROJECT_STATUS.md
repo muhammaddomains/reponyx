@@ -3331,3 +3331,46 @@ itself.
   check passes (clippy 9 pre-existing warnings, none in this
   change).
 - **Not pushed yet (needs approval).**
+
+## W4 live test — device presence + link root cause (2026-11-28, branch `feature/admin-control-plane`, local only)
+
+- **Link `internal_error` RESOLVED (2026-11-28 ~07:03–07:08 MST):**
+  the `.pem` file is PKCS#1 (`-----BEGIN RSA PRIVATE KEY-----`),
+  but the web's jose `importPKCS8` accepts only PKCS#8
+  (`-----BEGIN PRIVATE KEY-----`) — proven with a throwaway key
+  (PKCS#1 fails, PKCS#8 parses). The user had pasted the file
+  exactly, so the values were "correct" and the format was the
+  bug. The user gave me the App id (`5896712`, screenshot
+  confirms) + the `.pem` file and told me to set Vercel myself:
+  the same key converted to PKCS#8 (public key verified
+  identical; converted key parses with the web's jose), both
+  Vercel vars set (`REPONYX_GITHUB_APP_PRIVATE_KEY` sensitive,
+  `REPONYX_GITHUB_APP_ID=5896712` encrypted), then a proper
+  production deployment (`dpl_FAfm5HB2mkCc16KB6svJqWetfbrx`,
+  target production, READY on `reponyx.bond`) — the first bare
+  redeploy (`dpl_6Targ...`) had target None and showed as
+  Preview, so a production redeploy was needed for the domain
+  (alias assignment alone does not make it production). Key file
+  deleted from the workspace after use; key value never
+  recorded. Live retest pending: user retries pairing with a
+  fresh code (old codes are spent).
+- **Devices are a presence record now (user decision 2026-11-28
+  ~07:00 MST):** `upsertDevice` clears `revoked_at` on every
+  re-registration (login + session-status heartbeat), so a
+  revoked device becomes active again the moment the desktop
+  runs — the dashboard shows it with a fresh last-seen and
+  counts it. The web Revoke button now only removes the device
+  until it next runs; the strong cut-off for a device is
+  revoking its pairing in the desktop (the broker then refuses
+  to mint for it). No migration (query change only). New test
+  pins the SQL; live-DB proof on the real revoked row
+  (`c4a5de34`, revoked 13:12:20Z) in a rolled-back transaction:
+  `revoked_at` → NULL, last_seen fresh, active count 1.
+- **Verified (device change):** database package tests 10/10
+  (was 9, +1 new); web tests 48/48; typecheck clean (database +
+  web); lint clean; prettier clean; local Semgrep 0 findings
+  (85 rules, 206 files). No Rust changes.
+- **Not pushed yet (needs approval).**
+- **Follow-up (product):** the web should accept PKCS#1 keys
+  server-side (GitHub generates PKCS#1 `.pem` files — every
+  user would hit this) instead of requiring PKCS#8.

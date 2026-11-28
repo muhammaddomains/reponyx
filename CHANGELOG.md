@@ -5,6 +5,12 @@ All notable changes to RepoNyx are documented here. Format follows
 
 ## [Unreleased]
 
+### Fixed — desktop build lock in `dev:all`: agent/broker now run the release binaries (2026-11-28, branch `feature/admin-control-plane`, local only)
+
+- **Root cause:** `tauri.conf.json` `bundle.resources` copies `target/release/reponyx-agent.exe` and `target/release/reponyx-auth-broker.exe` into the build's target dir (`target/debug` under `tauri dev`). But `pnpm broker` / `pnpm agent` ran `cargo run` in dev profile, which executes those very `target/debug/*.exe` files — and Windows cannot overwrite a running executable. The desktop build script runs minutes after the agent/broker have started (they compile in ~19 s), so its `fs::copy` failed with os error 32 every time. Not a stale process: no extra process holds the files; the running agent/broker themselves are the lock.
+- **Fix:** `pnpm broker` and `pnpm agent` now run `cargo run --release -p …`, i.e. the release binaries that `dev:all` already builds first (`agent:build && broker:build`). The desktop build script then writes to `target/debug/*.exe`, which nothing runs. Trade-off: agent/broker Rust changes rebuild in release profile (slower than a dev rebuild) instead of the dev profile; behaviour is otherwise identical, and the running binaries match what ships in the installer.
+- **Still open:** all 3 fresh sync jobs failed permanently with `AuthenticationExpired` (accounts not yet identified); the live database was found to be a fresh empty one in the 09:19 run — see PROJECT_STATUS.
+
 ### Fixed — database opens again: migration checksum mismatch was CRLF line endings (2026-11-28, branch `feature/admin-control-plane`, local only)
 
 - **Root cause:** sqlx checksums each migration file (SHA-384 over its bytes), and the user's Windows clone had CRLF in all 142 lines of `0001_init.sql` while `_sqlx_migrations` held LF hashes for v1–v4 and a CRLF hash for v5. The agent failed with `migration 1 was previously applied but has been modified` (surfaced by the sync-76 details fix). The earlier comment-rename theory was wrong: v1's stored checksum matches the current LF file exactly.

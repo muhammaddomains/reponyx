@@ -3011,6 +3011,37 @@ up. **Prevention (local commit `5bd2f68`, not yet pushed):**
 repo `.gitattributes` pins `*.sql text eol=lf` so no future
 clone can check out CRLF migrations.
 
+**Update 2026-11-28 ~02:25 MST — the build-lock cause is
+found, and it is NOT a stale process (the user confirmed no
+process is running):** `tauri.conf.json` `bundle.resources`
+copies `target/release/reponyx-agent.exe` and
+`target/release/reponyx-auth-broker.exe` into the build's
+target dir (`target/debug` under `tauri dev`). But `pnpm
+broker` / `pnpm agent` ran `cargo run` in dev profile, which
+executes those very `target/debug/*.exe` files — and Windows
+cannot overwrite a running executable. The desktop build
+script runs minutes after the agent/broker have started (they
+compile in ~19 s), so its `fs::copy` fails with os error 32
+every time. The `dev:all` structure is fine: the release
+binaries are already built first (`agent:build &&
+broker:build`). **Fix (local, not yet pushed):** `pnpm
+broker` / `pnpm agent` now run `cargo run --release -p …`,
+so the running binaries are the `target/release` ones and
+the desktop build script writes to `target/debug/*.exe`,
+which nothing runs. Trade-off: agent/broker Rust changes
+rebuild in release profile instead of dev. **Separate
+finding from the same run:** the agent log at 09:19 shows a
+fresh empty database was created (`no existing database
+found … existed=false`, `storage.root was not configured`,
+workers back to the default 5) — the old database file is
+gone from `%APPDATA%\RepoNyx\data\reponyx.sqlite`. All
+accounts, repos and schedules are in the pre-migration
+backups (`data/backups/reponyx-pre-migrate-*.sqlite`, latest
+20261128-083226 from the run where the database opened);
+restore by copying the latest backup over `reponyx.sqlite`
+while nothing runs. Whether the user deleted the database
+themselves is not yet confirmed.
+
 ## Accounts page restructure — DONE (2026-11-27, branch `feature/admin-control-plane`, local only)
 
 - The user approved the plan ("1 page pe 2 tab wala ... sai

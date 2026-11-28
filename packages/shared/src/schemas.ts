@@ -75,8 +75,6 @@ export const brokerStatusSchema = z.object({
   configured: z.boolean(),
   reachable: z.boolean(),
   baseUrl: z.string(),
-  appIdConfigured: z.boolean(),
-  privateKeyConfigured: z.boolean(),
   envFileConfigured: z.boolean(),
 });
 
@@ -456,4 +454,10 @@ export const webLoginSchema = z.object({
   step: z.string(),
   pendingToken: z.string().nullable(),
   user: webUserSchema.nullable(),
+});
+
+export const webLinkedAccountSchema = z.object({
+  id: z.string(),
+  login: z.string(),
+  authKind: z.string(),
 });

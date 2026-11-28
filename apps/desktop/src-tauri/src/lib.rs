@@ -210,7 +210,6 @@ pub fn run() {
             auth::reconnect_pat_account_command,
             auth::validate_pat_account_command,
             auth::get_pat_expiry_status_command,
-            auth::pick_broker_key_file_command,
             auth::get_broker_status_command,
             auth::list_broker_installations_command,
             auth::create_broker_setup_state_command,
@@ -262,6 +261,9 @@ pub fn run() {
             web_auth::web_open_dashboard_command,
             web_auth::web_open_url_command,
             web_auth::web_exchange_desktop_code_command,
+            web_auth::web_link_github_account_command,
+            web_auth::web_link_pat_account_command,
+            web_auth::web_unlink_pat_account_command,
         ])
         .build(tauri::generate_context!())
         .expect("error while building RepoNyx")

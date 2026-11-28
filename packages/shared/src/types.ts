@@ -86,8 +86,6 @@ export interface BrokerStatus {
   configured: boolean;
   reachable: boolean;
   baseUrl: string;
-  appIdConfigured: boolean;
-  privateKeyConfigured: boolean;
   envFileConfigured: boolean;
 }
 
@@ -534,4 +532,12 @@ export interface WebLogin {
   pendingToken: string | null;
   /** Present once the login completed (never the session token). */
   user: WebUser | null;
+}
+
+/** A GitHub account linked to the signed-in web account (W4).
+ *  `id` is the web row id — the unlink call needs it. */
+export interface WebLinkedAccount {
+  id: string;
+  login: string;
+  authKind: string;
 }

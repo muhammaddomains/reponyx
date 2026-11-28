@@ -453,6 +453,178 @@ export async function listLinkedAccountsForUser(
   );
 }
 
+export async function findInstallationByGithubId(
+  client: DbClient,
+  githubInstallationId: number
+): Promise<InstallationRow | null> {
+  const rows = await client.query<InstallationRow>(
+    `/* findInstallationByGithubId */
+     SELECT * FROM installations WHERE github_installation_id = $1`,
+    [githubInstallationId]
+  );
+  return rows[0] ?? null;
+}
+
+export async function findLinkedAccountById(
+  client: DbClient,
+  userId: string,
+  id: string
+): Promise<LinkedGithubAccountRow | null> {
+  const rows = await client.query<LinkedGithubAccountRow>(
+    `/* findLinkedAccountById */
+     SELECT * FROM linked_github_accounts WHERE id = $1 AND user_id = $2`,
+    [id, userId]
+  );
+  return rows[0] ?? null;
+}
+
+export async function findLinkedAccountByProviderAccount(
+  client: DbClient,
+  userId: string,
+  providerAccountId: string
+): Promise<LinkedGithubAccountRow | null> {
+  const rows = await client.query<LinkedGithubAccountRow>(
+    `/* findLinkedAccountByProviderAccount */
+     SELECT * FROM linked_github_accounts WHERE user_id = $1 AND provider_account_id = $2`,
+    [userId, providerAccountId]
+  );
+  return rows[0] ?? null;
+}
+
+/**
+ * Link a GitHub App installation to a user: upserts the
+ * `installations` row (by GitHub installation id) and the
+ * `linked_github_accounts` row (`auth_kind='app'`). The provider
+ * account id is the GitHub *account* id (stable across reinstalls —
+ * a reinstall mints a new installation id for the same account, so
+ * keying the linked row on the installation id would double-count).
+ * Idempotent: re-linking returns the existing rows.
+ */
+export async function linkInstallation(
+  client: DbClient,
+  args: {
+    userId: string;
+    githubInstallationId: number;
+    accountId: string;
+    login: string;
+  }
+): Promise<{ installation: InstallationRow; account: LinkedGithubAccountRow }> {
+  const installations = await client.query<InstallationRow>(
+    `/* linkInstallation */
+     INSERT INTO installations (user_id, github_installation_id, account_login)
+     VALUES ($1, $2, $3)
+     ON CONFLICT (github_installation_id) DO UPDATE
+       SET user_id = EXCLUDED.user_id, account_login = EXCLUDED.account_login
+     RETURNING *`,
+    [args.userId, args.githubInstallationId, args.login]
+  );
+  const installation = installations[0];
+  if (!installation) throw new Error("linkInstallation returned no row");
+  const accounts = await client.query<LinkedGithubAccountRow>(
+    `/* linkInstallationAccount */
+     INSERT INTO linked_github_accounts (user_id, provider, provider_account_id, login, auth_kind)
+     VALUES ($1, 'github', $2, $3, 'app')
+     ON CONFLICT (user_id, provider, provider_account_id) DO UPDATE
+       SET login = EXCLUDED.login
+     RETURNING *`,
+    [args.userId, args.accountId, args.login]
+  );
+  const account = accounts[0];
+  if (!account) throw new Error("linkInstallationAccount returned no row");
+  return { installation, account };
+}
+
+/**
+ * Link a PAT GitHub account (login only — the PAT itself is never
+ * sent to the web). The provider account id is the login: the
+ * desktop never learns the GitHub account id for a PAT account, and
+ * a login that is all digits (which would collide with an App
+ * account id) is vanishingly unlikely.
+ */
+export async function linkPatAccount(
+  client: DbClient,
+  args: { userId: string; login: string }
+): Promise<LinkedGithubAccountRow> {
+  const rows = await client.query<LinkedGithubAccountRow>(
+    `/* linkPatAccount */
+     INSERT INTO linked_github_accounts (user_id, provider, provider_account_id, login, auth_kind)
+     VALUES ($1, 'github', $2, $2, 'pat')
+     ON CONFLICT (user_id, provider, provider_account_id) DO UPDATE
+       SET login = EXCLUDED.login
+     RETURNING *`,
+    [args.userId, args.login]
+  );
+  const row = rows[0];
+  if (!row) throw new Error("linkPatAccount returned no row");
+  return row;
+}
+
+/**
+ * Unlink a GitHub account: deletes the linked row, and for `app`
+ * rows the `installations` row with the same login (one installation
+ * per GitHub account, so the login identifies it). The `auth_kind`
+ * guard matters: a user can hold the same login via PAT *and* via
+ * the App, and unlinking the PAT row must not drop the App link.
+ * Returns the deleted row, or null when it did not exist.
+ */
+export async function unlinkLinkedAccount(
+  client: DbClient,
+  args: { userId: string; id: string }
+): Promise<LinkedGithubAccountRow | null> {
+  const row = await findLinkedAccountById(client, args.userId, args.id);
+  if (!row) return null;
+  if (row.auth_kind === "app") {
+    await client.query(
+      `/* unlinkLinkedAccountInstallations */
+       DELETE FROM installations WHERE user_id = $1 AND account_login = $2`,
+      [args.userId, row.login]
+    );
+  }
+  await client.query(
+    `/* unlinkLinkedAccount */
+     DELETE FROM linked_github_accounts WHERE id = $1 AND user_id = $2`,
+    [args.id, args.userId]
+  );
+  return row;
+}
+
+export async function findDeviceByKey(
+  client: DbClient,
+  userId: string,
+  deviceKey: string
+): Promise<DeviceRow | null> {
+  const rows = await client.query<DeviceRow>(
+    `/* findDeviceByKey */
+     SELECT * FROM devices WHERE user_id = $1 AND device_key = $2`,
+    [userId, deviceKey]
+  );
+  return rows[0] ?? null;
+}
+
+/**
+ * 1-based rank of a linked account among the user's linked accounts,
+ * oldest first (created_at, then id as the tiebreaker). The mint
+ * endpoint allows minting only while the rank is within the package
+ * limit — so when a paid package expires back to Free, the oldest
+ * accounts keep working and only the excess ones pause.
+ */
+export async function linkedAccountRank(
+  client: DbClient,
+  userId: string,
+  linkedAccountId: string
+): Promise<number> {
+  const target = await findLinkedAccountById(client, userId, linkedAccountId);
+  if (!target) return 0;
+  const rows = await client.query<{ rank: string }>(
+    `/* linkedAccountRank */
+     SELECT count(*)::text AS rank FROM linked_github_accounts
+     WHERE user_id = $1
+       AND (created_at < $2 OR (created_at = $2 AND id <= $3))`,
+    [userId, target.created_at, target.id]
+  );
+  return Number(rows[0]?.rank ?? 0);
+}
+
 // --- packages + subscriptions ---
 
 export async function listPackages(client: DbClient): Promise<PackageRow[]> {

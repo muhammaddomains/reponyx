@@ -9,29 +9,28 @@ vi.mock("@reponyx/api-client", () => ({
   createBrokerSetupState: vi.fn(),
   deletePatAccount: vi.fn(),
   getBrokerStatus: vi.fn(),
-  getSettings: vi.fn(),
   listAccounts: vi.fn(),
   listBrokerInstallations: vi.fn(),
-  pickBrokerKeyFile: vi.fn(),
   reconnectPatAccount: vi.fn(),
   removePatAccount: vi.fn(),
   replacePatAccount: vi.fn(),
   revokeDevicePairing: vi.fn(),
-  setSetting: vi.fn(),
   startPairing: vi.fn(),
   validateGithubAppAccount: vi.fn(),
   validatePatAccount: vi.fn(),
+  webLinkGithubAccount: vi.fn(),
+  webLinkPatAccount: vi.fn(),
 }));
 
 import {
   addPatAccount,
+  completePairing,
   createBrokerSetupState,
   getBrokerStatus,
-  getSettings,
   listBrokerInstallations,
-  pickBrokerKeyFile,
-  setSetting,
   startPairing,
+  webLinkGithubAccount,
+  webLinkPatAccount,
 } from "@reponyx/api-client";
 import type { Account } from "@reponyx/shared";
 
@@ -49,28 +48,23 @@ beforeEach(() => {
     configured: true,
     reachable: true,
     baseUrl: "http://127.0.0.1:8765",
-    appIdConfigured: true,
-    privateKeyConfigured: true,
     envFileConfigured: false,
-  });
-  vi.mocked(getSettings).mockResolvedValue({
-    defaultSyncMode: null,
-    concurrency: null,
-    storageRoot: null,
-    theme: null,
-    locale: null,
-    notificationsEnabled: null,
-    deviceIdentifier: null,
-    brokerAppId: null,
-    brokerPrivateKeyPath: null,
-    dataDir: "",
-    appVersion: "0.1.0",
   });
   vi.mocked(listBrokerInstallations).mockResolvedValue([]);
   vi.mocked(createBrokerSetupState).mockResolvedValue({
     installUrl:
       "https://github.com/apps/reponyx/installations/new?state=abc",
     expiresAt: "2026-11-23T19:30:00Z",
+  });
+  vi.mocked(webLinkGithubAccount).mockResolvedValue({
+    id: "019c0000-0000-7000-8000-000000000004",
+    login: "octocat",
+    authKind: "app",
+  });
+  vi.mocked(webLinkPatAccount).mockResolvedValue({
+    id: "019c0000-0000-7000-8000-000000000005",
+    login: "octocat",
+    authKind: "pat",
   });
 });
 
@@ -106,7 +100,7 @@ describe("Add account page — PAT form", () => {
     updatedAt: "2026-11-24T00:00:00Z",
   };
 
-  it("adds a PAT account and shows a notice", async () => {
+  it("adds a PAT account, links it to the web, and shows a notice", async () => {
     vi.mocked(addPatAccount).mockResolvedValue(addedAccount);
     renderAddAccount();
     const patInput = await screen.findByPlaceholderText(
@@ -121,7 +115,29 @@ describe("Add account page — PAT form", () => {
       expiresAt: null,
     });
     expect(
-      await screen.findByText("Added PAT account octocat."),
+      await screen.findByText(
+        "Added PAT account octocat — linked to your web account.",
+      ),
+    ).toBeInTheDocument();
+    expect(webLinkPatAccount).toHaveBeenCalledWith("octocat");
+  });
+
+  it("keeps the PAT account when the web link fails, and says the link will be retried", async () => {
+    vi.mocked(addPatAccount).mockResolvedValue(addedAccount);
+    vi.mocked(webLinkPatAccount).mockRejectedValue(
+      new Error("could not reach the web"),
+    );
+    renderAddAccount();
+    const patInput = await screen.findByPlaceholderText(
+      "github_pat_… or ghp_…",
+    );
+    fireEvent.change(patInput, { target: { value: "github_pat_test" } });
+    fireEvent.click(screen.getByRole("button", { name: "Add PAT account" }));
+    expect(
+      await screen.findByText(/Added PAT account octocat\. Web link failed/),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(/will be retried when the Accounts page loads/),
     ).toBeInTheDocument();
   });
 
@@ -199,8 +215,6 @@ describe("Add account page — GitHub App install", () => {
       configured: false,
       reachable: true,
       baseUrl: "http://127.0.0.1:8765",
-      appIdConfigured: true,
-      privateKeyConfigured: true,
       envFileConfigured: false,
     });
     renderAddAccount();
@@ -254,6 +268,47 @@ describe("Add account page — pairing code", () => {
     expect(await screen.findByText("ABC-DEF-GHI")).toBeInTheDocument();
     expect(screen.getByText(/it does not expire/)).toBeInTheDocument();
   });
+
+  it("links the installation to the web after completing the pairing", async () => {
+    vi.mocked(listBrokerInstallations).mockResolvedValue([installation]);
+    vi.mocked(startPairing).mockResolvedValue({
+      pairingCode: "ABC-DEF-GHI",
+      expiresAt: null,
+      installationId: "777",
+      deviceIdentifier: "device-1",
+    });
+    vi.mocked(completePairing).mockResolvedValue({
+      id: "00000000-0000-0000-0000-000000000002",
+      provider: "github",
+      providerAccountId: "43",
+      username: "octocat",
+      displayName: null,
+      label: null,
+      accountType: "personal",
+      authenticationMethod: "github_app",
+      status: "connected",
+      patExpiresAt: null,
+      patExpiryStatus: "unknown",
+      patExpiryDaysLeft: null,
+      lastValidatedAt: null,
+      createdAt: "2026-11-24T00:00:00Z",
+      updatedAt: "2026-11-24T00:00:00Z",
+    });
+    renderAddAccount();
+    fireEvent.click(
+      await screen.findByRole("button", { name: "Pair this device" }),
+    );
+    await screen.findByText("ABC-DEF-GHI");
+    fireEvent.click(
+      screen.getByRole("button", { name: "Complete pairing" }),
+    );
+    expect(
+      await screen.findByText(
+        "Paired and added GitHub App account octocat — linked to your web account.",
+      ),
+    ).toBeInTheDocument();
+    expect(webLinkGithubAccount).toHaveBeenCalledWith("777");
+  });
 });
 
 describe("Add account page — broker down", () => {
@@ -262,8 +317,6 @@ describe("Add account page — broker down", () => {
       configured: true,
       reachable: false,
       baseUrl: "http://127.0.0.1:8765",
-      appIdConfigured: true,
-      privateKeyConfigured: true,
       envFileConfigured: false,
     });
     renderAddAccount();
@@ -276,82 +329,27 @@ describe("Add account page — broker down", () => {
   });
 });
 
-describe("Add account page — in-app broker setup", () => {
-  const unconfigured = {
-    configured: false,
-    reachable: false,
-    baseUrl: "http://127.0.0.1:8765",
-    appIdConfigured: false,
-    privateKeyConfigured: false,
-    envFileConfigured: false,
-  };
-
-  it("shows the setup form when the broker has no configuration", async () => {
-    vi.mocked(getBrokerStatus).mockResolvedValue(unconfigured);
-    renderAddAccount();
-    expect(
-      await screen.findByRole("button", { name: "Save broker setup" }),
-    ).toBeInTheDocument();
-    expect(
-      screen.getByPlaceholderText("GitHub App id, e.g. 5896712"),
-    ).toBeInTheDocument();
-    expect(
-      screen.getByRole("button", { name: "Choose file…" }),
-    ).toBeInTheDocument();
-    // The setup token is automatic (.env file, else generated per
-    // install): no token field and no Generate button anywhere.
-    expect(
-      screen.queryByPlaceholderText("Broker setup token"),
-    ).not.toBeInTheDocument();
-    expect(
-      screen.queryByRole("button", { name: "Generate" }),
-    ).not.toBeInTheDocument();
-  });
-
-  it("hides the setup form once the broker is configured", async () => {
+describe("Add account page — zero-config broker (W4)", () => {
+  it("never shows a setup form — no App id, key file, or token field", async () => {
+    vi.mocked(getBrokerStatus).mockResolvedValue({
+      configured: false,
+      reachable: false,
+      baseUrl: "http://127.0.0.1:8765",
+      envFileConfigured: false,
+    });
     renderAddAccount();
     await screen.findByRole("button", { name: "Install GitHub App" });
     expect(
       screen.queryByRole("button", { name: "Save broker setup" }),
     ).not.toBeInTheDocument();
-  });
-
-  it("saves the App id and key path from the form", async () => {
-    vi.mocked(getBrokerStatus).mockResolvedValue(unconfigured);
-    vi.mocked(pickBrokerKeyFile).mockResolvedValue("C:\\keys\\reponyx.pem");
-    vi.mocked(setSetting).mockResolvedValue("saved");
-    renderAddAccount();
-    fireEvent.change(
-      await screen.findByPlaceholderText("GitHub App id, e.g. 5896712"),
-      { target: { value: "5896712" } },
-    );
-    fireEvent.click(screen.getByRole("button", { name: "Choose file…" }));
     expect(
-      await screen.findByDisplayValue("C:\\keys\\reponyx.pem"),
-    ).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "Save broker setup" }));
-    expect(
-      await screen.findByText(/Broker setup saved/),
-    ).toBeInTheDocument();
-    expect(vi.mocked(setSetting)).toHaveBeenCalledWith(
-      "broker.app_id",
-      "5896712",
-    );
-    expect(vi.mocked(setSetting)).toHaveBeenCalledWith(
-      "broker.private_key_path",
-      "C:\\keys\\reponyx.pem",
-    );
-  });
-
-  it("never shows a setup-token field, configured or not", async () => {
-    vi.mocked(getBrokerStatus).mockResolvedValue(unconfigured);
-    renderAddAccount();
-    await screen.findByRole("button", { name: "Save broker setup" });
-    expect(
-      screen.queryByPlaceholderText("Broker setup token"),
+      screen.queryByPlaceholderText("GitHub App id, e.g. 5896712"),
     ).not.toBeInTheDocument();
     expect(
-      screen.queryByRole("button", { name: "Save setup token" }),
+      screen.queryByRole("button", { name: "Choose file…" }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByPlaceholderText("Broker setup token"),
     ).not.toBeInTheDocument();
   });
 });

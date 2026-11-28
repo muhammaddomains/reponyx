@@ -8,33 +8,28 @@
 //! a broker the user started by hand (or via `dev:all`) is left
 //! alone on quit.
 //!
-//! Broker configuration: in dev the spawned broker runs with the
-//! repo root as its working directory, so it reads the same `.env`
-//! and the same relative `broker-data` dir as `pnpm broker`. For an
-//! installed app there is no repo root: the broker runs with the
-//! data dir as its working directory and its state in
-//! `<data_dir>/broker-data` — and its configuration comes from the
-//! desktop itself, not from a hand-made file. The GitHub App id and
-//! the private-key *path* are ordinary settings (Accounts → Auth
-//! Broker). The setup token is never typed and never shown: it
-//! comes from a broker `.env` file when one exists (dev, or a
-//! hand-made file), and otherwise the desktop generates one per
-//! install, stores it in the OS credential store, and passes it to
-//! the broker it spawns as an environment variable. It is
+//! Broker configuration (W4): the broker holds no key and needs
+//! no App id or key path — it asks the web to mint tokens and
+//! verify installations, with the session from the OS store. The
+//! desktop passes it only the web's base URL and the setup token.
+//! The setup token is never typed and never shown: it comes from
+//! a broker `.env` file when one exists (dev, or a hand-made
+//! file), and otherwise the desktop generates one per install,
+//! stores it in the OS credential store, and passes it to the
+//! broker it spawns as an environment variable. It is
 //! deliberately NOT baked into the build: a token in the binary
 //! would be the same for every user and readable by anyone with
 //! the installer, so anyone could pair a device to anyone's local
-//! broker. The private key itself never passes through the
-//! desktop — only where the file is. A `<data_dir>/.env` file, when
-//! the user made one, still works as an override: explicit
-//! variables win over it, because dotenv never overwrites a
-//! variable that is already set.
+//! broker. The old `broker.app_id` / `broker.private_key_path`
+//! settings stay stored but are ignored — no migration deletes
+//! the user's values. A `<data_dir>/.env` file, when the user
+//! made one, still works as an override: explicit variables win
+//! over it, because dotenv never overwrites a variable that is
+//! already set.
 
 use crate::auth::AuthState;
 use crate::exe;
 use reponyx_core::SecretString;
-use reponyx_database::Database;
-use reponyx_database::settings::get_setting;
 use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::process::{Child, Command};
@@ -48,41 +43,38 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 pub struct BrokerProcess(pub Mutex<Option<Child>>);
 
 /// What the broker needs to start, resolved from the desktop's own
-/// stores: the GitHub App id and the private-key *path* from
-/// settings, the setup token from a broker `.env` file when one
-/// exists, otherwise generated per install and kept in the OS
-/// credential store (see [`crate::auth::ensure_broker_setup_token`]).
-/// The key itself is never here — only where its file is.
+/// stores: the web's base URL and the setup token from a broker
+/// `.env` file when one exists, otherwise generated per install
+/// and kept in the OS credential store (see
+/// [`crate::auth::ensure_broker_setup_token`]). The broker holds
+/// no key (W4) — it mints tokens through the web — so there is no
+/// App id or key path here at all.
 #[derive(Debug, Default)]
 pub struct BrokerSpawnConfig {
-    pub app_id: Option<String>,
-    pub private_key_path: Option<String>,
+    pub web_base_url: Option<String>,
     pub setup_token: Option<SecretString>,
 }
 
 impl BrokerSpawnConfig {
     /// Whether the broker has everything it needs to start. A
     /// `.env` file (repo checkout in dev, or a hand-made
-    /// `<data_dir>/.env`) can supply all three values on its own;
-    /// without one, the App id and the key path must be present —
-    /// the setup token is not required here, it is generated per
-    /// install when the config resolves (see
-    /// [`crate::auth::ensure_broker_setup_token`]).
+    /// `<data_dir>/.env`) can supply the setup token on its own;
+    /// without one, the setup token must be present — it is
+    /// generated per install when the config resolves (see
+    /// [`crate::auth::ensure_broker_setup_token`]). The web URL
+    /// is never required: it defaults to `https://reponyx.bond`.
     pub fn is_complete(&self, env_file_present: bool) -> bool {
-        env_file_present || (self.app_id.is_some() && self.private_key_path.is_some())
+        env_file_present || self.setup_token.is_some()
     }
 
     /// Environment variables for the spawned broker. Explicit
     /// variables win over any `.env` file, because dotenv never
-    /// overwrites a variable that is already set — so settings the
-    /// user saved in the app always beat a stale file.
+    /// overwrites a variable that is already set — so values the
+    /// desktop resolved always beat a stale file.
     pub fn env_vars(&self) -> Vec<(String, String)> {
         let mut vars = Vec::new();
-        if let Some(app_id) = &self.app_id {
-            vars.push(("REPONYX_BROKER_APP_ID".to_string(), app_id.clone()));
-        }
-        if let Some(path) = &self.private_key_path {
-            vars.push(("REPONYX_BROKER_PRIVATE_KEY_PATH".to_string(), path.clone()));
+        if let Some(url) = &self.web_base_url {
+            vars.push(("REPONYX_WEB_URL".to_string(), url.clone()));
         }
         if let Some(token) = &self.setup_token {
             vars.push((
@@ -101,21 +93,13 @@ impl BrokerSpawnConfig {
 /// store, else generated per install), so a resolved config that
 /// is complete always carries one.
 async fn resolve_spawn_config(app: &AppHandle) -> BrokerSpawnConfig {
-    let mut config = BrokerSpawnConfig::default();
-    if let Some(database) = app.state::<Option<Database>>().as_ref() {
-        if let Ok(Some(setting)) = get_setting(&database.pool, "broker.app_id").await {
-            if !setting.value.trim().is_empty() {
-                config.app_id = Some(setting.value);
-            }
-        }
-        if let Ok(Some(setting)) = get_setting(&database.pool, "broker.private_key_path").await {
-            if !setting.value.trim().is_empty() {
-                config.private_key_path = Some(setting.value);
-            }
-        }
+    // The web URL is the same one the desktop itself uses
+    // (`REPONYX_WEB_URL` env override, else reponyx.bond) — the
+    // broker must talk to the same web the desktop logged into.
+    BrokerSpawnConfig {
+        web_base_url: Some(crate::web_auth::web_base_url()),
+        setup_token: crate::auth::ensure_broker_setup_token(&app.state::<AuthState>()).ok(),
     }
-    config.setup_token = crate::auth::ensure_broker_setup_token(&app.state::<AuthState>()).ok();
-    config
 }
 
 /// The setup token from a broker `.env` file, if one exists and
@@ -281,7 +265,7 @@ pub async fn ensure_broker_running(app: &AppHandle) -> Result<bool, String> {
     }
     let config = resolve_spawn_config(app).await;
     if !config.is_complete(broker_env_file_present()) {
-        return Err("Auth Broker is not configured: open Accounts → GitHub App (Auth Broker) and enter the GitHub App ID and the private-key file. The setup token is created automatically. No .env file is needed."
+        return Err("Auth Broker is not configured: the setup token could not be created — check the OS credential store and try again. No App id or key file is needed."
             .to_string());
     }
     let child = spawn_broker_process(Some(app), &config)?;
@@ -318,7 +302,7 @@ pub async fn ensure_broker_running(app: &AppHandle) -> Result<bool, String> {
         };
         if let Some(status) = exited {
             return Err(format!(
-                "broker process exited during startup ({status}) — check the broker configuration (REPONYX_BROKER_APP_ID / private key / setup token)"
+                "broker process exited during startup ({status}) — check the broker binary and the web URL (REPONYX_WEB_URL)"
             ));
         }
     }
@@ -378,30 +362,24 @@ mod tests {
 
     fn full_config() -> BrokerSpawnConfig {
         BrokerSpawnConfig {
-            app_id: Some("5896712".to_string()),
-            private_key_path: Some("C:\\keys\\reponyx.pem".to_string()),
+            web_base_url: Some("https://reponyx.bond".to_string()),
             setup_token: Some(SecretString::new("a".repeat(32))),
         }
     }
 
     #[test]
-    fn spawn_config_needs_app_id_and_key_without_an_env_file() {
+    fn spawn_config_needs_only_the_setup_token_without_an_env_file() {
         assert!(full_config().is_complete(false));
-        let mut missing_id = full_config();
-        missing_id.app_id = None;
-        assert!(!missing_id.is_complete(false));
-        let mut missing_key = full_config();
-        missing_key.private_key_path = None;
-        assert!(!missing_key.is_complete(false));
-        // The setup token is NOT required here: it resolves itself
-        // (.env file, else the OS store, else generated per install)
-        // when the config resolves, so a config with the App id and
-        // the key path but no token yet is already complete.
+        // Without a token the broker cannot start — unless an
+        // `.env` file supplies it. (In practice the token
+        // resolves itself when the config resolves, so a resolved
+        // config is complete; this guards the store-failure case.)
         let mut missing_token = full_config();
         missing_token.setup_token = None;
-        assert!(missing_token.is_complete(false));
+        assert!(!missing_token.is_complete(false));
+        assert!(missing_token.is_complete(true));
         // An empty config is complete only when an .env file can
-        // supply everything instead.
+        // supply the token instead.
         assert!(!BrokerSpawnConfig::default().is_complete(false));
         assert!(BrokerSpawnConfig::default().is_complete(true));
     }
@@ -431,11 +409,10 @@ mod tests {
     #[test]
     fn spawn_env_passes_exactly_the_values_present() {
         let vars = full_config().env_vars();
-        assert_eq!(vars.len(), 3);
-        assert!(vars.contains(&("REPONYX_BROKER_APP_ID".to_string(), "5896712".to_string())));
+        assert_eq!(vars.len(), 2);
         assert!(vars.contains(&(
-            "REPONYX_BROKER_PRIVATE_KEY_PATH".to_string(),
-            "C:\\keys\\reponyx.pem".to_string()
+            "REPONYX_WEB_URL".to_string(),
+            "https://reponyx.bond".to_string()
         )));
         assert!(vars.contains(&("REPONYX_BROKER_SETUP_TOKEN".to_string(), "a".repeat(32))));
         assert!(BrokerSpawnConfig::default().env_vars().is_empty());

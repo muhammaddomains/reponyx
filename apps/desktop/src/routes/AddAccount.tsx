@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { addPatAccount } from "@reponyx/api-client";
+import { addPatAccount, webLinkPatAccount } from "@reponyx/api-client";
 import { Button, Card } from "@reponyx/ui";
 import AccountsTabs from "../components/AccountsTabs";
 import BrokerSetup from "../components/BrokerSetup";
@@ -34,13 +34,16 @@ export default function AddAccount() {
   >("personal");
   const [patExpires, setPatExpires] = useState("");
 
-  async function run<T>(action: () => Promise<T>, done?: (value: T) => void) {
+  async function run<T>(
+    action: () => Promise<T>,
+    done?: (value: T) => void | Promise<void>,
+  ) {
     setError(null);
     setNotice(null);
     setBusy(true);
     try {
       const value = await action();
-      done?.(value);
+      await done?.(value);
     } catch (e: unknown) {
       setError(commandMessage(e));
     } finally {
@@ -130,11 +133,25 @@ export default function AddAccount() {
                     accountType: patAccountType,
                     expiresAt: expiryDateToRfc3339(patExpires),
                   }),
-                (account) => {
+                async (account) => {
                   setPat("");
                   setPatLabel("");
                   setPatExpires("");
-                  setNotice(`Added PAT account ${account.username}.`);
+                  // Link the PAT login to the web account right
+                  // away, so the dashboard count moves. A link
+                  // failure does not undo the add — the account
+                  // works locally, and the Accounts page
+                  // reconcile retries the link on its next load.
+                  try {
+                    await webLinkPatAccount(account.username);
+                    setNotice(
+                      `Added PAT account ${account.username} — linked to your web account.`,
+                    );
+                  } catch (e: unknown) {
+                    setNotice(
+                      `Added PAT account ${account.username}. Web link failed (${commandMessage(e)}) — it will be retried when the Accounts page loads.`,
+                    );
+                  }
                 },
               )
             }

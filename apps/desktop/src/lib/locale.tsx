@@ -136,6 +136,14 @@ export function errorMessageKey(code: string): string {
       return "oauthFailed";
     case "not_configured":
       return "notConfigured";
+    case "installation_not_linked":
+      return "installationNotLinked";
+    case "device_revoked":
+      return "deviceRevoked";
+    case "limit_exceeded":
+      return "limitExceeded";
+    case "already_linked":
+      return "alreadyLinked";
     case "unauthorized":
       return "sessionExpired";
     case "session_expired":

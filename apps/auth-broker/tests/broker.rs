@@ -1,13 +1,13 @@
 //! Auth Broker integration tests: the full HTTP surface against a
-//! mocked GitHub API (wiremock). The App private key is a throwaway
-//! RSA key generated in-memory per test; every token is obviously
-//! fake (`test-…`); no real credentials, no network to github.com.
+//! mocked web (wiremock). The broker holds no key (W4) — it asks the
+//! mocked web to mint tokens and verify installations, with a
+//! throwaway session pre-loaded in a memory credential store. Every
+//! token is obviously fake (`test-…`); no real credentials, no
+//! network to reponyx.bond or github.com.
 
-use pkcs8::{EncodePrivateKey, EncodePublicKey};
 use reponyx_auth_broker::config::BrokerConfig;
 use reponyx_auth_broker::{BrokerState, app};
-use rsa::PrivateKey;
-use serde::Deserialize;
+use reponyx_credential_store::{ACCOUNT_WEB_SESSION, SERVICE_WEB, memory_store};
 use serde_json::json;
 use std::net::SocketAddr;
 use std::sync::{Arc, Mutex};
@@ -16,32 +16,19 @@ use wiremock::matchers::{header, method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
 const SETUP_TOKEN: &str = "test-setup-token-do-not-use";
+const WEB_SESSION: &str = "test-web-session";
 const INSTALLATION_ID: &str = "777";
 const DEVICE_ID: &str = "device-test-1";
 const DEVICE_NAME: &str = "Test Machine";
-const MINTED_TOKEN: &str = "test-installation-token-abc";
-
-/// A throwaway RSA keypair, generated in-memory. Never committed,
-/// never real.
-fn throwaway_keypair() -> (String, String) {
-    let mut rng = rand::rng();
-    let private = PrivateKey::new(&mut rng, 2048).unwrap();
-    let private_pem = private
-        .to_pkcs8_pem(pkcs8::LineEnding::LF)
-        .unwrap()
-        .to_string();
-    let public_pem = private
-        .to_public_key()
-        .to_public_key_pem(pkcs8::LineEnding::LF)
-        .unwrap();
-    (private_pem, public_pem)
-}
+const MINTED_TOKEN: &str = "test-installation-token-777";
 
 struct Fixture {
     base: String,
     client: reqwest::Client,
-    github: MockServer,
-    public_pem: String,
+    web: MockServer,
+    /// The broker's credential store (same Arc the broker reads),
+    /// so a test can drop the web session mid-flow.
+    credential_store: Arc<dyn reponyx_credential_store::CredentialStore>,
 }
 
 async fn start_broker(mint_per_minute: f64) -> Fixture {
@@ -54,14 +41,33 @@ async fn start_broker_with(
     mint_per_minute: f64,
     configure: impl FnOnce(&mut BrokerConfig),
 ) -> Fixture {
-    let github = MockServer::start().await;
-    let (private_pem, public_pem) = throwaway_keypair();
-    let mut config = BrokerConfig::for_tests("123456", private_pem, github.uri());
+    start_broker_with_session(mint_per_minute, configure, true).await
+}
+
+/// A broker whose credential store holds no web session: minting and
+/// the install callback fail closed with `WebSessionExpired`.
+async fn start_broker_without_session() -> Fixture {
+    start_broker_with_session(30.0, |_| {}, false).await
+}
+
+async fn start_broker_with_session(
+    mint_per_minute: f64,
+    configure: impl FnOnce(&mut BrokerConfig),
+    with_session: bool,
+) -> Fixture {
+    let web = MockServer::start().await;
+    let mut config = BrokerConfig::for_tests(web.uri());
     // Short TTL so the expired-state test does not wait 10 minutes.
     config.state_ttl = Duration::from_secs(2);
     config.mint_per_minute_per_device = mint_per_minute;
     configure(&mut config);
-    let state = BrokerState::new(config);
+    let credential_store = memory_store();
+    if with_session {
+        credential_store
+            .store(SERVICE_WEB, ACCOUNT_WEB_SESSION, WEB_SESSION)
+            .unwrap();
+    }
+    let state = BrokerState::new_with_store(config, Arc::clone(&credential_store));
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
     let router = app(Arc::clone(&state)).into_make_service_with_connect_info::<SocketAddr>();
@@ -71,65 +77,59 @@ async fn start_broker_with(
     Fixture {
         base: format!("http://{addr}"),
         client: reqwest::Client::new(),
-        github,
-        public_pem,
+        web,
+        credential_store,
     }
 }
 
-/// Mock GitHub's installations list for the given ids. Scoped: the
-/// mock is removed when the returned guard is dropped, so a test
-/// that needs "GitHub has no installations" afterwards still works.
-/// The callback (audit B3) verifies the installation against this
-/// list, so every install in a test needs its id listed here.
-async fn mock_installations_scoped(
-    github: &MockServer,
-    installation_ids: &[&str],
+/// Mock the web's installation verification for one installation.
+/// Scoped: the mock is removed when the returned guard is dropped,
+/// so a test that needs "the web does not know this installation"
+/// afterwards still works. The callback (audit B3) verifies the
+/// installation against the web, so every install in a test needs
+/// its id mocked here.
+async fn mock_web_installation_scoped(
+    web: &MockServer,
+    installation_id: &str,
 ) -> wiremock::MockGuard {
-    let body: Vec<serde_json::Value> = installation_ids
-        .iter()
-        .map(|id| {
-            json!({
-                "id": id.parse::<u64>().unwrap(),
-                "account": { "login": "octocat" },
-            })
-        })
-        .collect();
     Mock::given(method("GET"))
-        .and(path("/app/installations"))
-        .respond_with(ResponseTemplate::new(200).set_body_json(body))
-        .mount_as_scoped(github)
+        .and(path(format!("/api/broker/installations/{installation_id}")))
+        .and(header("authorization", format!("Bearer {WEB_SESSION}")))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "installationId": installation_id.parse::<u64>().unwrap(),
+            "accountId": 42,
+            "accountLogin": "octocat",
+        })))
+        .mount_as_scoped(web)
         .await
 }
 
-/// Mock GitHub's token-minting endpoint for one installation.
-async fn mock_mint_for(github: &MockServer, installation_id: &str) {
+/// Mock the web's token-minting endpoint for one installation.
+async fn mock_web_mint_for(web: &MockServer, installation_id: &str) {
     Mock::given(method("POST"))
-        .and(path(format!(
-            "/app/installations/{installation_id}/access_tokens"
-        )))
-        .respond_with(ResponseTemplate::new(201).set_body_json(json!({
-            "token": MINTED_TOKEN,
-            "expires_at": "2027-01-01T00:00:00Z",
-            "permissions": {},
-            "repository_selection": "all",
+        .and(path("/api/broker/mint"))
+        .and(header("authorization", format!("Bearer {WEB_SESSION}")))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "token": format!("test-installation-token-{installation_id}"),
+            "expiresAt": "2027-01-01T00:00:00Z",
         })))
-        .mount(github)
+        .mount(web)
         .await;
 }
 
-/// Mock GitHub's token-minting endpoint for installation 777.
-async fn mock_mint(github: &MockServer) {
-    mock_mint_for(github, INSTALLATION_ID).await;
+/// Mock the web's token-minting endpoint for installation 777.
+async fn mock_web_mint(web: &MockServer) {
+    mock_web_mint_for(web, INSTALLATION_ID).await;
 }
 
 impl Fixture {
     /// Install the GitHub App for one installation via the real
     /// state + callback flow. Returns the recorded installation id.
-    /// The callback verifies the installation against GitHub (audit
-    /// B3), so the mock installations list carries this id for the
-    /// duration of the call.
+    /// The callback verifies the installation against the web
+    /// (audit B3), so the mock web installation carries this id
+    /// for the duration of the call.
     async fn install_app_with(&self, installation_id: &str) -> String {
-        let _installations = mock_installations_scoped(&self.github, &[installation_id]).await;
+        let _installation = mock_web_installation_scoped(&self.web, installation_id).await;
         let state: serde_json::Value = self
             .client
             .post(format!("{}/setup/state", self.base))
@@ -293,6 +293,8 @@ async fn callback_records_installation_and_state_is_single_use() {
         .unwrap();
     assert_eq!(installations.as_array().unwrap().len(), 1);
     assert_eq!(installations[0]["installation_id"], INSTALLATION_ID);
+    // The callback records the web-verified login.
+    assert_eq!(installations[0]["account_login"], "octocat");
 
     // Reusing the same state value fails: single-use.
     let state: serde_json::Value = fixture
@@ -306,9 +308,9 @@ async fn callback_records_installation_and_state_is_single_use() {
         .await
         .unwrap();
     let state_value = state["state"].as_str().unwrap();
-    // The 888 callback must verify against GitHub too (audit B3):
-    // hold the installations mock for both calls.
-    let _installations = mock_installations_scoped(&fixture.github, &["888"]).await;
+    // The 888 callback must verify against the web too (audit B3):
+    // hold the web installation mock for both calls.
+    let _installation = mock_web_installation_scoped(&fixture.web, "888").await;
     let callback = format!(
         "{}/github/callback?installation_id=888&setup_action=install&state={state_value}",
         fixture.base
@@ -508,7 +510,7 @@ async fn pairing_wrong_device_is_rejected_and_locks_out() {
 async fn pairing_revoke_invalidates_device_token_and_pending_codes() {
     let fixture = start_broker(30.0).await;
     fixture.install_app().await;
-    mock_mint(&fixture.github).await;
+    mock_web_mint(&fixture.web).await;
     let device_token = fixture.pair_device(DEVICE_ID).await;
     // The device token mints fine…
     let mint = fixture
@@ -573,18 +575,11 @@ async fn pairing_revoke_invalidates_device_token_and_pending_codes() {
     assert_eq!(confirm.status(), 400);
 }
 
-#[derive(Debug, Deserialize)]
-struct AppJwtClaims {
-    iss: String,
-    iat: i64,
-    exp: i64,
-}
-
 #[tokio::test]
-async fn mint_uses_a_real_signed_jwt_and_caches() {
+async fn mint_asks_the_web_and_caches() {
     let fixture = start_broker(30.0).await;
     fixture.install_app().await;
-    mock_mint(&fixture.github).await;
+    mock_web_mint(&fixture.web).await;
     let device_token = fixture.pair_device(DEVICE_ID).await;
 
     let first = fixture
@@ -602,15 +597,13 @@ async fn mint_uses_a_real_signed_jwt_and_caches() {
     let body: serde_json::Value = first.json().await.unwrap();
     assert_eq!(body["token"], MINTED_TOKEN);
 
-    // The broker presented a real RS256 JWT to GitHub: three parts,
-    // signature verifiable with the throwaway public key, claims
-    // correct (iss = App id, 9-minute lifetime, iat backdated).
-    // (The install callback also calls GET /app/installations to
-    // verify the installation — audit B3 — so count only the mint
-    // requests, not every GitHub request.)
-    let mint_path = "/app/installations/777/access_tokens";
+    // The broker asked the web exactly once, with the session as a
+    // Bearer token and the device identifier in the body. (The
+    // install callback also calls the web to verify the
+    // installation — audit B3 — so count only the mint requests.)
+    let mint_path = "/api/broker/mint";
     let mint_requests: Vec<_> = fixture
-        .github
+        .web
         .received_requests()
         .await
         .unwrap()
@@ -624,21 +617,13 @@ async fn mint_uses_a_real_signed_jwt_and_caches() {
         .unwrap()
         .to_str()
         .unwrap()
-        .strip_prefix("Bearer ")
-        .unwrap()
         .to_string();
-    assert_eq!(auth.split('.').count(), 3);
-    let key = jsonwebtoken::DecodingKey::from_rsa_pem(fixture.public_pem.as_bytes()).unwrap();
-    let decoded = jsonwebtoken::decode::<AppJwtClaims>(
-        &auth,
-        &key,
-        &jsonwebtoken::Validation::new(jsonwebtoken::Algorithm::RS256),
-    )
-    .unwrap();
-    assert_eq!(decoded.claims.iss, "123456");
-    assert_eq!(decoded.claims.exp - decoded.claims.iat, 600);
+    assert_eq!(auth, format!("Bearer {WEB_SESSION}"));
+    let mint_body: serde_json::Value = serde_json::from_slice(&mint_requests[0].body).unwrap();
+    assert_eq!(mint_body["installationId"], INSTALLATION_ID);
+    assert_eq!(mint_body["deviceIdentifier"], DEVICE_ID);
 
-    // A second mint is served from the cache: no second GitHub call.
+    // A second mint is served from the cache: no second web call.
     let second = fixture
         .client
         .post(format!(
@@ -652,7 +637,7 @@ async fn mint_uses_a_real_signed_jwt_and_caches() {
         .unwrap();
     assert_eq!(second.status(), 200);
     let mint_count = fixture
-        .github
+        .web
         .received_requests()
         .await
         .unwrap()
@@ -675,7 +660,7 @@ async fn mint_uses_a_real_signed_jwt_and_caches() {
         .unwrap();
     assert_eq!(third.status(), 200);
     let mint_count = fixture
-        .github
+        .web
         .received_requests()
         .await
         .unwrap()
@@ -686,10 +671,79 @@ async fn mint_uses_a_real_signed_jwt_and_caches() {
 }
 
 #[tokio::test]
+async fn mint_without_a_web_session_fails_closed() {
+    let fixture = start_broker(30.0).await;
+    fixture.install_app().await;
+    mock_web_mint(&fixture.web).await;
+    let device_token = fixture.pair_device(DEVICE_ID).await;
+    // Log the desktop out mid-flow: the session leaves the store.
+    fixture
+        .credential_store
+        .delete(SERVICE_WEB, ACCOUNT_WEB_SESSION)
+        .unwrap();
+    let mint = fixture
+        .client
+        .post(format!(
+            "{}/installations/{}/token",
+            fixture.base, INSTALLATION_ID
+        ))
+        .header("authorization", format!("Bearer {device_token}"))
+        .json(&json!({ "force_refresh": false }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(mint.status(), 401);
+    let body: serde_json::Value = mint.json().await.unwrap();
+    assert_eq!(body["error"]["code"], "WebSessionExpired");
+    // The web was never asked: no session, no mint call.
+    assert_eq!(
+        fixture
+            .web
+            .received_requests()
+            .await
+            .unwrap()
+            .iter()
+            .filter(|request| request.url.path() == "/api/broker/mint")
+            .count(),
+        0
+    );
+}
+
+#[tokio::test]
+async fn callback_without_a_web_session_fails_closed() {
+    let fixture = start_broker_without_session().await;
+    let state: serde_json::Value = fixture
+        .client
+        .post(format!("{}/setup/state", fixture.base))
+        .header("x-reponyx-setup-token", SETUP_TOKEN)
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    let state_value = state["state"].as_str().unwrap();
+    let response = fixture
+        .client
+        .get(format!("{}/github/callback", fixture.base))
+        .query(&[
+            ("installation_id", INSTALLATION_ID),
+            ("setup_action", "install"),
+            ("state", state_value),
+        ])
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 401);
+    let body: serde_json::Value = response.json().await.unwrap();
+    assert_eq!(body["error"]["code"], "WebSessionExpired");
+}
+
+#[tokio::test]
 async fn mint_rejects_wrong_device_and_wrong_installation() {
     let fixture = start_broker(30.0).await;
     fixture.install_app().await;
-    mock_mint(&fixture.github).await;
+    mock_web_mint(&fixture.web).await;
     let device_token = fixture.pair_device(DEVICE_ID).await;
     // No token at all.
     let response = fixture
@@ -731,8 +785,8 @@ async fn mint_allows_any_installation_paired_to_the_same_device() {
     let fixture = start_broker(30.0).await;
     fixture.install_app().await;
     fixture.install_app_with("888").await;
-    mock_mint(&fixture.github).await;
-    mock_mint_for(&fixture.github, "888").await;
+    mock_web_mint(&fixture.web).await;
+    mock_web_mint_for(&fixture.web, "888").await;
     let token_for_777 = fixture.pair_device(DEVICE_ID).await;
     let token_for_888 = fixture.pair_device_for(DEVICE_ID, "888").await;
     // The token confirmed for 888 mints for 777 (same device):
@@ -789,12 +843,13 @@ async fn mint_allows_any_installation_paired_to_the_same_device() {
 }
 
 #[tokio::test]
-async fn list_installations_fills_account_login_from_github() {
+async fn list_installations_shows_the_recorded_login() {
     let fixture = start_broker(30.0).await;
     fixture.install_app().await;
     let list_url = format!("{}/installations", fixture.base);
-    // GitHub has no mock yet: the list still succeeds, login stays null.
-    let before: serde_json::Value = fixture
+    // The callback recorded the web-verified login, so the list
+    // shows it with no further web call.
+    let listed: serde_json::Value = fixture
         .client
         .get(&list_url)
         .header("x-reponyx-setup-token", SETUP_TOKEN)
@@ -804,26 +859,16 @@ async fn list_installations_fills_account_login_from_github() {
         .json()
         .await
         .unwrap();
-    assert_eq!(before[0]["account_login"], serde_json::Value::Null);
-    // Now GitHub answers with the account login.
-    Mock::given(method("GET"))
-        .and(path("/app/installations"))
-        .respond_with(ResponseTemplate::new(200).set_body_json(json!([
-            { "id": 777, "account": { "login": "octocat" } }
-        ])))
-        .mount(&fixture.github)
-        .await;
-    let after: serde_json::Value = fixture
-        .client
-        .get(&list_url)
-        .header("x-reponyx-setup-token", SETUP_TOKEN)
-        .send()
+    assert_eq!(listed[0]["account_login"], "octocat");
+    let verify_calls = fixture
+        .web
+        .received_requests()
         .await
         .unwrap()
-        .json()
-        .await
-        .unwrap();
-    assert_eq!(after[0]["account_login"], "octocat");
+        .iter()
+        .filter(|request| request.url.path() == "/api/broker/installations/777")
+        .count();
+    assert_eq!(verify_calls, 1, "only the callback verifies");
 }
 
 #[tokio::test]
@@ -831,7 +876,7 @@ async fn mint_rate_limit_returns_429_with_retry_after() {
     // Two mints per minute per device.
     let fixture = start_broker(2.0).await;
     fixture.install_app().await;
-    mock_mint(&fixture.github).await;
+    mock_web_mint(&fixture.web).await;
     let device_token = fixture.pair_device(DEVICE_ID).await;
     let url = format!("{}/installations/{}/token", fixture.base, INSTALLATION_ID);
     for _ in 0..2 {
@@ -861,7 +906,7 @@ async fn mint_rate_limit_returns_429_with_retry_after() {
 async fn audit_events_never_contain_a_token_or_code() {
     let fixture = start_broker(30.0).await;
     fixture.install_app().await;
-    mock_mint(&fixture.github).await;
+    mock_web_mint(&fixture.web).await;
     let code = fixture.request_code(DEVICE_ID).await;
     let pairing_code = code["pairing_code"].as_str().unwrap().to_string();
     let confirmed = fixture
@@ -979,7 +1024,7 @@ async fn broker_logs_never_contain_a_token() {
     // Drive the full flow for this test's own installation:
     // install, pair, mint.
     let fixture = start_broker(60.0).await;
-    mock_mint_for(&fixture.github, LOG_TEST_INSTALLATION).await;
+    mock_web_mint_for(&fixture.web, LOG_TEST_INSTALLATION).await;
     fixture.install_app_with(LOG_TEST_INSTALLATION).await;
     let device_token = fixture
         .pair_device_for(LOG_TEST_DEVICE, LOG_TEST_INSTALLATION)
@@ -1019,21 +1064,21 @@ async fn broker_logs_never_contain_a_token() {
 
 #[tokio::test]
 async fn provider_validates_through_the_real_broker() {
-    // End to end: a real broker (throwaway key) mints a real
-    // installation token, `BrokerTokenSource` fetches it, and
-    // `GitHubProvider` validates against the mocked GitHub API.
-    // The mint endpoint and `/user` both live on the same mock
-    // server, which the broker and the provider both point at.
+    // End to end: a real broker asks the mocked web for a token,
+    // `BrokerTokenSource` fetches it, and `GitHubProvider` validates
+    // against the mocked GitHub API. The web mint endpoint and
+    // `/user` both live on the same mock server, which the broker
+    // and the provider both point at.
     let fixture = start_broker(30.0).await;
     fixture.install_app().await;
-    mock_mint(&fixture.github).await;
+    mock_web_mint(&fixture.web).await;
     Mock::given(method("GET"))
         .and(path("/user"))
         .and(header("authorization", format!("Bearer {MINTED_TOKEN}")))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({
             "id": 42, "login": "octocat", "name": "The Octocat", "type": "User",
         })))
-        .mount(&fixture.github)
+        .mount(&fixture.web)
         .await;
     let device_token = fixture.pair_device(DEVICE_ID).await;
     let source = reponyx_github_provider::broker::BrokerTokenSource::new(
@@ -1043,18 +1088,17 @@ async fn provider_validates_through_the_real_broker() {
     )
     .unwrap();
     let provider =
-        reponyx_github_provider::GitHubProvider::new(&fixture.github.uri(), Arc::new(source))
-            .unwrap();
+        reponyx_github_provider::GitHubProvider::new(&fixture.web.uri(), Arc::new(source)).unwrap();
     let info = provider.validate_auth().await.unwrap();
     assert_eq!(info.username, "octocat");
     assert_eq!(info.provider_account_id, "42");
-    // Exactly one mint for the whole validation (the token is
+    // Exactly one web mint for the whole validation (the token is
     // cached by the source; the provider asked once).
-    let mint_requests = fixture.github.received_requests().await.unwrap();
+    let mint_requests = fixture.web.received_requests().await.unwrap();
     assert_eq!(
         mint_requests
             .iter()
-            .filter(|request| request.url.path() == "/app/installations/777/access_tokens")
+            .filter(|request| request.url.path() == "/api/broker/mint")
             .count(),
         1
     );
@@ -1070,7 +1114,7 @@ async fn device_token_expires_and_requires_repairing() {
     })
     .await;
     fixture.install_app().await;
-    mock_mint(&fixture.github).await;
+    mock_web_mint(&fixture.web).await;
     let device_token = fixture.pair_device(DEVICE_ID).await;
     let url = format!("{}/installations/{}/token", fixture.base, INSTALLATION_ID);
     let mint = fixture
@@ -1107,7 +1151,7 @@ async fn device_token_expires_and_requires_repairing() {
 async fn repairing_revokes_the_previous_device_token() {
     let fixture = start_broker(30.0).await;
     fixture.install_app().await;
-    mock_mint(&fixture.github).await;
+    mock_web_mint(&fixture.web).await;
     let first_token = fixture.pair_device(DEVICE_ID).await;
     // Pair the same device again: a new code, a new token.
     let second_token = fixture.pair_device(DEVICE_ID).await;
@@ -1139,7 +1183,7 @@ async fn repairing_revokes_the_previous_device_token() {
 async fn reinstall_preserves_pairing() {
     let fixture = start_broker(30.0).await;
     fixture.install_app().await;
-    mock_mint(&fixture.github).await;
+    mock_web_mint(&fixture.web).await;
     let device_token = fixture.pair_device(DEVICE_ID).await;
     // Re-install the same installation (new state + callback).
     fixture.install_app().await;
@@ -1221,10 +1265,10 @@ async fn setup_token_lockout_after_repeated_failures() {
 }
 
 #[tokio::test]
-async fn callback_rejects_installation_not_in_github_list() {
+async fn callback_rejects_installation_the_web_does_not_know() {
     let fixture = start_broker(30.0).await;
-    // GitHub lists only installation 999; the callback claims 777.
-    let _installations = mock_installations_scoped(&fixture.github, &["999"]).await;
+    // The web has no mock for installation 777: it answers 404, so
+    // the callback must reject the claim.
     let state: serde_json::Value = fixture
         .client
         .post(format!("{}/setup/state", fixture.base))
@@ -1259,8 +1303,7 @@ async fn callback_rejects_installation_not_in_github_list() {
     );
     // The rejected callback recorded nothing for 777 — and listing
     // records nothing either. Only the install callback records an
-    // installation, so the list stays empty even though GitHub
-    // lists installation 999.
+    // installation, so the list stays empty.
     let installations: serde_json::Value = fixture
         .client
         .get(format!("{}/installations", fixture.base))
@@ -1287,7 +1330,7 @@ async fn callback_rate_limit_returns_429() {
         config.callback_per_minute_per_ip = 2.0;
     })
     .await;
-    let _installations = mock_installations_scoped(&fixture.github, &[INSTALLATION_ID]).await;
+    let _installation = mock_web_installation_scoped(&fixture.web, INSTALLATION_ID).await;
     for attempt in 0..3 {
         let state: serde_json::Value = fixture
             .client

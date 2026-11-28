@@ -17,6 +17,7 @@ import {
   getWebTranslator,
 } from "@/lib/i18n";
 import { LinkedAccounts } from "@/components/auth/LinkedAccounts";
+import { DevicesList } from "@/components/auth/DevicesList";
 import { ProfileNameForm } from "@/components/auth/ProfileNameForm";
 import { alertError, alertSuccess, card } from "@/components/ui";
 
@@ -160,15 +161,23 @@ export default async function DashboardPage(props: {
               {t("noDevices")}
             </p>
           ) : (
-            <ul className="mt-2 divide-y divide-border">
-              {devices.map((device) => (
-                <li key={device.id} className="py-2 text-sm">
-                  {device.machine_name ?? device.device_key} — {t("lastSeen")}:{" "}
-                  {formatDate(locale, new Date(device.last_seen_at))}
-                  {device.revoked_at ? ` (${t("revoked")})` : ""}
-                </li>
-              ))}
-            </ul>
+            <DevicesList
+              initial={devices.map((device) => ({
+                id: device.id,
+                machineName: device.machine_name,
+                deviceKey: device.device_key,
+                lastSeenAt: device.last_seen_at,
+                revokedAt: device.revoked_at,
+              }))}
+              strings={{
+                lastSeen: t("lastSeen"),
+                revoked: t("revoked"),
+                revoke: t("revoke"),
+                revokedSuccess: t("revokedSuccess"),
+              }}
+              errors={errors}
+              locale={locale}
+            />
           )}
         </section>
         <section className={`${card} p-4`}>

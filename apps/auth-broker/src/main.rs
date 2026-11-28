@@ -2,10 +2,8 @@
 //! serve the HTTP API on the configured (loopback) address.
 //!
 //! Configuration (all via environment; see `README.md`):
-//! - `REPONYX_BROKER_APP_ID` — GitHub App id (required)
+//! - `REPONYX_WEB_URL` — web base URL (default `https://reponyx.bond`)
 //! - `REPONYX_BROKER_APP_SLUG` — GitHub App slug (default `reponyx`)
-//! - `REPONYX_BROKER_PRIVATE_KEY` or `REPONYX_BROKER_PRIVATE_KEY_PATH`
-//!   — the App's private key (required)
 //! - `REPONYX_BROKER_SETUP_TOKEN` — operator token for pairing
 //!   requests (required, at least 16 characters)
 //! - `REPONYX_BROKER_BIND` — bind address (default `127.0.0.1:8765`)
@@ -13,8 +11,6 @@
 //!   non-loopback bind (audit B2). Without it the broker refuses to
 //!   bind anywhere but loopback: a LAN-visible broker would expose
 //!   setup-token auth to the whole network.
-//! - `REPONYX_BROKER_GITHUB_API_URL` — GitHub API base (default
-//!   `https://api.github.com`)
 //! - `REPONYX_BROKER_ENV_FILE` — explicit `.env` file to load
 //!   first (the desktop sets this when it spawns the broker for an
 //!   installed app, pointing at `<data_dir>/.env`); a missing file
@@ -23,7 +19,9 @@
 //!   `broker-data`); holds `broker.sqlite`, the installations,
 //!   pairing codes, setup states, device tokens, and audit log.
 //!   Only hashes of codes/tokens are stored — never the raw values,
-//!   and never the private key.
+//!   and never the private key (W4: the broker holds no key; the
+//!   web mints tokens and the broker asks it with the user's web
+//!   session from the OS credential store).
 //!
 //! The broker also reads a `.env` file from the working directory at
 //! startup (see `.env.example`), so `pnpm broker` / `pnpm dev:all`
@@ -76,13 +74,12 @@ async fn main() {
             std::process::exit(2);
         }
     };
-    // Register the long-lived secrets for redaction (audit A7): a
-    // prefix-less setup token or private key that ever appears bare
-    // in a log line is replaced with `[REDACTED]`, even though no
-    // pattern could match it.
+    // Register the long-lived secret for redaction (audit A7): a
+    // prefix-less setup token that ever appears bare in a log line
+    // is replaced with `[REDACTED]`, even though no pattern could
+    // match it.
     reponyx_logging::register_secret(config.setup_token.expose());
-    reponyx_logging::register_secret(config.private_key_pem.expose());
-    // The broker's secrets come from a `.env` file by default: warn
+    // The broker's secret comes from a `.env` file by default: warn
     // when that file is readable by other users (audit A4). On
     // Windows the check is skipped — ACLs, not modes, govern access
     // there, and the file lives under the user's %APPDATA%.
@@ -134,10 +131,10 @@ async fn main() {
 }
 
 /// Warn when a `.env` file the broker loads is readable by users
-/// other than the owner (audit A4). The broker's setup token and
-/// private key live in that file; a world-readable copy defeats
-/// every other secret control. Unix only: on Windows the file lives
-/// under the user's profile and access is governed by ACLs.
+/// other than the owner (audit A4). The broker's setup token lives
+/// in that file; a world-readable copy defeats every other secret
+/// control. Unix only: on Windows the file lives under the user's
+/// profile and access is governed by ACLs.
 #[cfg(unix)]
 fn warn_if_env_file_world_readable() {
     use std::os::unix::fs::PermissionsExt;
@@ -155,7 +152,7 @@ fn warn_if_env_file_world_readable() {
         let mode = metadata.permissions().mode();
         if mode & 0o044 != 0 {
             eprintln!(
-                "auth-broker: WARNING: {} is readable by other users (mode {:o}); run `chmod 600 {}` so only you can read the setup token and private key",
+                "auth-broker: WARNING: {} is readable by other users (mode {:o}); run `chmod 600 {}` so only you can read the setup token",
                 path.display(),
                 mode & 0o777,
                 path.display()

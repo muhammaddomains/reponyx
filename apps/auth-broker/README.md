@@ -1,29 +1,33 @@
 # Auth Broker
 
-The Auth Broker is the **only** component that holds the GitHub App
-private key. It mints short-lived installation access tokens for
-paired devices, runs the device-pairing flow, and audits auth
-events. It is a separate binary — it is **not** a dependency of the
-desktop app, and the private key must never appear in the desktop
-binary, the frontend, local config, or logs.
+The Auth Broker is the **local key agent** for GitHub App auth.
+Since W4 it holds **no private key at all**: it mints short-lived
+installation access tokens by asking the web
+(`POST /api/broker/mint`, which holds the key server-side and
+mints only for installations linked to the signed-in user), runs
+the device-pairing flow, and audits auth events. It is a separate
+binary — it is **not** a dependency of the desktop app, and no key
+material must ever appear in the desktop binary, the frontend,
+local config, or logs.
 
 ## Running it (local dev)
 
 ```bash
-export REPONYX_BROKER_APP_ID="123456"
-export REPONYX_BROKER_APP_SLUG="reponyx"
-# One of the two key options (never commit the file):
-export REPONYX_BROKER_PRIVATE_KEY_PATH="$HOME/.config/reponyx/broker-key.pem"
+# The web to mint through (default https://reponyx.bond):
+export REPONYX_WEB_URL="https://reponyx.bond"
 export REPONYX_BROKER_SETUP_TOKEN="$(openssl rand -hex 32)"
 export REPONYX_BROKER_BIND="127.0.0.1:8765"
 cargo run -p reponyx-auth-broker
 ```
 
-The broker refuses to start without the App id, the private key,
-and a setup token of at least 16 characters. State is **durable
-SQLite** (`broker.sqlite` under `REPONYX_BROKER_DATA_DIR`,
-default `broker-data`): restarting the broker keeps
-installations, pairing codes, device tokens, and the audit log.
+The broker refuses to start without a setup token of at least 16
+characters. The web session it mints with comes from the OS
+credential store (`reponyx:web` / `session`, written by the
+desktop on login) — the desktop passes no token in argv or env.
+State is **durable SQLite** (`broker.sqlite` under
+`REPONYX_BROKER_DATA_DIR`, default `broker-data`): restarting
+the broker keeps installations, pairing codes, device tokens,
+and the audit log.
 
 ## Protecting the broker's secrets
 
@@ -32,9 +36,8 @@ installations, pairing codes, device tokens, and the audit log.
   the file; `REPONYX_BROKER_ENV_FILE` points at a different file
   when the app is installed). On Unix the broker warns at startup
   if that file is readable by other users — keep it `chmod 600`
-  (owner read/write only). The file holds the GitHub App private
-  key and the setup token; anyone who can read it can mint tokens
-  for every installed account.
+  (owner read/write only). The file holds the setup token; anyone
+  who can read it can pair a device to the local broker.
 - **The broker binds loopback only by default.** Setting
   `REPONYX_BROKER_BIND` to a non-loopback address refuses to
   start unless `REPONYX_BROKER_ALLOW_NON_LOOPBACK=true` is also
@@ -53,7 +56,7 @@ installations, pairing codes, device tokens, and the audit log.
 | POST | `/pairing/confirm` | setup token | confirm a code → receive a device token |
 | POST | `/pairing/status` | setup token | pairing-code status (code in the JSON body, never in a URL query) |
 | POST | `/pairing/revoke` | setup token | revoke a device's codes and tokens |
-| POST | `/installations/{id}/token` | device token | mint an installation access token (cached until 5 min before expiry) |
+| POST | `/installations/{id}/token` | device token | mint an installation access token via the web (cached until 5 min before expiry) |
 | GET | `/installations` | setup token | list recorded installations |
 | GET | `/audit` | setup token | audit events |
 

@@ -13,6 +13,10 @@ use serde::{Deserialize, Serialize};
 pub enum ErrorCode {
     AuthenticationExpired,
     AuthenticationRevoked,
+    /// The web session the broker needs to mint tokens is missing or
+    /// expired (W4: the broker holds no key and mints via the web).
+    /// Permanent: the user must log in again on the desktop.
+    WebSessionExpired,
     InsufficientPermissions,
     RepositoryNotFound,
     RepositoryDeletedRemotely,
@@ -43,6 +47,7 @@ impl ErrorCode {
         match self {
             Self::AuthenticationExpired => "AuthenticationExpired",
             Self::AuthenticationRevoked => "AuthenticationRevoked",
+            Self::WebSessionExpired => "WebSessionExpired",
             Self::InsufficientPermissions => "InsufficientPermissions",
             Self::RepositoryNotFound => "RepositoryNotFound",
             Self::RepositoryDeletedRemotely => "RepositoryDeletedRemotely",
@@ -91,6 +96,7 @@ impl ErrorCode {
             Self::AuthenticationRevoked => {
                 "Re-authorize the account; the previous grant was revoked."
             }
+            Self::WebSessionExpired => "Log in again on the desktop to refresh the web session.",
             Self::InsufficientPermissions => {
                 "Check the GitHub App installation / PAT permissions (Contents: Read, Metadata: Read)."
             }

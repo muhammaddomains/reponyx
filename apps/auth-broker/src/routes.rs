@@ -92,6 +92,7 @@ impl ApiError {
         match self.error.code {
             ErrorCode::InvalidInput => StatusCode::BAD_REQUEST,
             ErrorCode::AuthenticationExpired => StatusCode::UNAUTHORIZED,
+            ErrorCode::WebSessionExpired => StatusCode::UNAUTHORIZED,
             ErrorCode::AuthenticationRevoked => StatusCode::FORBIDDEN,
             ErrorCode::InsufficientPermissions => StatusCode::FORBIDDEN,
             ErrorCode::RateLimitExceeded => StatusCode::TOO_MANY_REQUESTS,
@@ -301,7 +302,6 @@ struct CallbackQuery {
     installation_id: Option<String>,
     setup_action: Option<String>,
     state: Option<String>,
-    account_login: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -363,13 +363,13 @@ async fn github_callback(
         Err(err) => return Err(ApiError::new(err)),
     }
     // Audit B3: verify the installation really belongs to THIS
-    // GitHub App before recording it. A GitHub failure fails
-    // closed (502) — a forged callback must not slip through
-    // during a GitHub outage.
-    match crate::tokens::verify_app_installation(&state.http, &state.config, &installation_id).await
-    {
-        Ok(true) => {}
-        Ok(false) => {
+    // GitHub App before recording it — via the web, which holds the
+    // key (W4). A web failure fails closed — a forged callback must
+    // not slip through during a web outage. The web also returns
+    // the account login, which the callback itself never carries.
+    let account_login = match state.verify_installation(&installation_id).await {
+        Ok(Some(login)) => Some(login),
+        Ok(None) => {
             state
                 .audit(
                     &ip,
@@ -386,9 +386,9 @@ async fn github_callback(
             )));
         }
         Err(err) => return Err(ApiError::new(err)),
-    }
+    };
     state
-        .record_installation(&installation_id, &setup_action, query.account_login)
+        .record_installation(&installation_id, &setup_action, account_login)
         .await
         .map_err(ApiError::new)?;
     state
@@ -601,7 +601,13 @@ async fn mint_token(
         state.config.mint_per_minute_per_device,
         state.config.mint_per_minute_per_device / 60.0,
     )?;
-    let minted = state.mint_token(&installation_id, body.force_refresh).await;
+    let minted = state
+        .mint_token(
+            &installation_id,
+            &device.0.device_identifier,
+            body.force_refresh,
+        )
+        .await;
     match minted {
         Ok(token) => {
             // Safe by construction: ids only, never the token.
@@ -651,26 +657,20 @@ async fn list_installations(
     headers: HeaderMap,
 ) -> Result<Json<Vec<InstallationResponse>>, ApiError> {
     SetupToken::check(&state, &headers).await?;
-    // The install callback does not carry the account login, so the
-    // recorded login is usually absent. Fill it from GitHub (one
-    // call for all installations); on any failure the recorded
-    // value stands and the list still succeeds.
+    // The recorded login stands: the install callback records the
+    // web-verified login (W4), so no GitHub call is needed here.
     //
     // This list deliberately records NOTHING: the install callback
     // is the only way an installation enters the store, because it
     // is the only path with proof the user owns it — it verifies
     // the installation belongs to this App and consumes the
     // one-time setup state from the browser flow the user just
-    // completed. `GET /app/installations` lists every installation
-    // of the shared App, including other GitHub accounts (and, once
-    // the web platform has more users, other RepoNyx users), so
-    // recording from the list would pull in accounts the user never
-    // chose — the 2026-11-28 sync-79 discovery did exactly that
-    // and was reverted for it. An installation the user installs
-    // or configures through the Install button arrives via the
-    // callback (setup_action install or update); the desktop polls
-    // this list after the click until it appears.
-    let logins = crate::tokens::list_app_installations(&state.http, &state.config).await;
+    // completed. Recording from a list would pull in accounts the
+    // user never chose — the 2026-11-28 sync-79 discovery did
+    // exactly that and was reverted for it. An installation the
+    // user installs or configures through the Install button
+    // arrives via the callback (setup_action install or update);
+    // the desktop polls this list after the click until it appears.
     Ok(Json(
         state
             .list_installations()
@@ -679,9 +679,7 @@ async fn list_installations(
             .map(|record| InstallationResponse {
                 installation_id: record.installation_id.clone(),
                 setup_action: record.setup_action,
-                account_login: record
-                    .account_login
-                    .or_else(|| logins.get(&record.installation_id).cloned()),
+                account_login: record.account_login,
                 installed_at: record.installed_at,
                 paired_device: record.paired_device,
             })

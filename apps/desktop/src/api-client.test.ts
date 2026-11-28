@@ -22,6 +22,8 @@ import {
   createSchedule,
   removePatAccount,
   webExchangeDesktopCode,
+  webLinkGithubAccount,
+  webLinkPatAccount,
   webLogin,
   webLogout,
   webOpenDashboard,
@@ -29,6 +31,7 @@ import {
   webOpenRegister,
   webOpenUrl,
   webSessionStatus,
+  webUnlinkPatAccount,
   webVerify2fa,
 } from "@reponyx/api-client";
 
@@ -264,5 +267,43 @@ describe("web login commands (W3)", () => {
       { code: "desktop-code" },
     );
     expect(result.user?.name).toBe("Test User");
+  });
+});
+
+describe("web linked accounts (W4)", () => {
+  const linkedAccount = {
+    id: "019c0000-0000-7000-8000-000000000004",
+    login: "octocat",
+    authKind: "app",
+  };
+
+  it("webLinkGithubAccount sends the installation id", async () => {
+    invokeMock.mockResolvedValue(linkedAccount);
+    const result = await webLinkGithubAccount("777");
+    expect(invokeMock).toHaveBeenCalledWith(
+      "web_link_github_account_command",
+      { installationId: "777" },
+    );
+    expect(result.login).toBe("octocat");
+    expect(result.authKind).toBe("app");
+  });
+
+  it("webLinkPatAccount sends the login", async () => {
+    invokeMock.mockResolvedValue({ ...linkedAccount, authKind: "pat" });
+    const result = await webLinkPatAccount("octocat");
+    expect(invokeMock).toHaveBeenCalledWith(
+      "web_link_pat_account_command",
+      { login: "octocat" },
+    );
+    expect(result.authKind).toBe("pat");
+  });
+
+  it("webUnlinkPatAccount sends the login", async () => {
+    invokeMock.mockResolvedValue(undefined);
+    await webUnlinkPatAccount("octocat");
+    expect(invokeMock).toHaveBeenCalledWith(
+      "web_unlink_pat_account_command",
+      { login: "octocat" },
+    );
   });
 });

@@ -3,12 +3,10 @@ import {
   completePairing,
   createBrokerSetupState,
   getBrokerStatus,
-  getSettings,
   listBrokerInstallations,
-  pickBrokerKeyFile,
   revokeDevicePairing,
-  setSetting,
   startPairing,
+  webLinkGithubAccount,
 } from "@reponyx/api-client";
 import type {
   BrokerInstallation,
@@ -16,9 +14,6 @@ import type {
   PairingInfo,
 } from "@reponyx/shared";
 import { Button, Card } from "@reponyx/ui";
-
-const inputClass =
-  "w-full rounded-md border border-zinc-300 bg-white px-3 py-2 text-sm dark:border-zinc-700 dark:bg-zinc-900";
 
 function commandMessage(error: unknown): string {
   if (typeof error === "object" && error !== null) {
@@ -33,10 +28,11 @@ function commandMessage(error: unknown): string {
 }
 
 /** The GitHub App (Auth Broker) card on the Add account tab:
- *  broker status, the one-time in-app setup form, Install +
- *  Refresh, the installations list, and the "Pair this device"
- *  flow. Self-contained: it loads the broker state itself and
- *  shows its own errors and notices. */
+ *  broker status, Install + Refresh, the installations list,
+ *  and the "Pair this device" flow. Self-contained: it loads the
+ *  broker state itself and shows its own errors and notices.
+ *  Zero-config since W4 — the broker needs no App id or key
+ *  file, so there is no setup form here at all. */
 export default function BrokerSetup() {
   const [broker, setBroker] = useState<BrokerStatus | null>(null);
   const [brokerError, setBrokerError] = useState<string | null>(null);
@@ -45,25 +41,6 @@ export default function BrokerSetup() {
   const [notice, setNotice] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [pairing, setPairing] = useState<PairingInfo | null>(null);
-
-  // In-app broker setup: the GitHub App id and the private-key file
-  // path, saved as settings so the desktop can start the broker it
-  // spawns — no hand-made `.env` file. Loaded once at mount, not on
-  // every refresh: a refresh after "Choose file…" must not wipe a
-  // value the user typed but has not saved yet.
-  const [brokerAppId, setBrokerAppId] = useState("");
-  const [brokerKeyPath, setBrokerKeyPath] = useState("");
-
-  // The setup form shows only when the broker has no configuration
-  // at all: no `.env` file supplies it (dev, or a hand-made file),
-  // and the App id or the key path is missing. The setup token is
-  // never part of it — it resolves itself (.env file, else the OS
-  // store, else generated per install), so there is no token
-  // field anywhere on this page.
-  const brokerNeedsSetup =
-    broker !== null &&
-    !broker.envFileConfigured &&
-    (!broker.appIdConfigured || !broker.privateKeyConfigured);
 
   // Broker status and installations load independently of the
   // accounts list (which lives on the Connected tab): in the web
@@ -91,29 +68,22 @@ export default function BrokerSetup() {
     refresh().catch((e: unknown) => {
       if (!cancelled) setBrokerError(commandMessage(e));
     });
-    getSettings()
-      .then((settings) => {
-        if (cancelled) return;
-        setBrokerAppId(settings.brokerAppId ?? "");
-        setBrokerKeyPath(settings.brokerPrivateKeyPath ?? "");
-      })
-      .catch(() => {
-        // Settings unreadable — leave the fields empty; the user
-        // can still type the values and save them.
-      });
     return () => {
       cancelled = true;
     };
   }, [refresh]);
 
-  async function run<T>(action: () => Promise<T>, done?: (value: T) => void) {
+  async function run<T>(
+    action: () => Promise<T>,
+    done?: (value: T) => void | Promise<void>,
+  ) {
     setError(null);
     setNotice(null);
     setBusy(true);
     try {
       const value = await action();
       await refresh();
-      done?.(value);
+      await done?.(value);
     } catch (e: unknown) {
       setError(commandMessage(e));
     } finally {
@@ -182,72 +152,8 @@ export default function BrokerSetup() {
           ? (brokerError ?? "Checking the Auth Broker…")
           : broker.configured
             ? `Broker at ${broker.baseUrl} is ${broker.reachable ? "reachable" : "not reachable"}.`
-            : `Broker at ${broker.baseUrl} — set up the Auth Broker below to connect GitHub accounts.`}
+            : `Broker at ${broker.baseUrl} — the broker could not be started (the setup token could not be created).`}
       </p>
-      {brokerNeedsSetup && (
-        <Card className="space-y-3 border-amber-200 bg-amber-50 p-4 dark:border-amber-900 dark:bg-amber-950">
-          <p className="text-sm">
-            Set up the Auth Broker once — no .env file needed. The App
-            id and the private-key file are saved as settings; the setup
-            token is created automatically on this device and never
-            shown. The key itself never leaves its file.
-          </p>
-          <input
-            className={inputClass}
-            type="text"
-            inputMode="numeric"
-            placeholder="GitHub App id, e.g. 5896712"
-            autoComplete="off"
-            value={brokerAppId}
-            onChange={(e) => setBrokerAppId(e.target.value)}
-          />
-          <div className="flex gap-3">
-            <input
-              className={inputClass}
-              type="text"
-              readOnly
-              placeholder="No private-key file chosen"
-              aria-label="Private-key file"
-              value={brokerKeyPath}
-            />
-            <Button
-              variant="secondary"
-              disabled={busy}
-              onClick={() =>
-                run(
-                  () => pickBrokerKeyFile(),
-                  (path) => {
-                    if (path) setBrokerKeyPath(path);
-                  },
-                )
-              }
-            >
-              Choose file…
-            </Button>
-          </div>
-          <Button
-            disabled={busy || !brokerAppId.trim() || !brokerKeyPath.trim()}
-            onClick={() =>
-              run(
-                async () => {
-                  await setSetting("broker.app_id", brokerAppId.trim());
-                  await setSetting(
-                    "broker.private_key_path",
-                    brokerKeyPath.trim(),
-                  );
-                },
-                () => {
-                  setNotice(
-                    "Broker setup saved — the broker starts with these settings.",
-                  );
-                },
-              )
-            }
-          >
-            Save broker setup
-          </Button>
-        </Card>
-      )}
 
       <div className="flex flex-wrap gap-3">
         <Button
@@ -340,11 +246,23 @@ export default function BrokerSetup() {
               onClick={() =>
                 run(
                   () => completePairing(pairing.pairingCode),
-                  (account) => {
+                  async (account) => {
                     setPairing(null);
-                    setNotice(
-                      `Paired and added GitHub App account ${account.username}.`,
-                    );
+                    // Link the installation to the web account
+                    // right away, so the dashboard count moves
+                    // without waiting for the Accounts page
+                    // reconcile. A link failure does not undo the
+                    // pairing — the reconcile retries it.
+                    try {
+                      await webLinkGithubAccount(pairing.installationId);
+                      setNotice(
+                        `Paired and added GitHub App account ${account.username} — linked to your web account.`,
+                      );
+                    } catch (e: unknown) {
+                      setNotice(
+                        `Paired and added GitHub App account ${account.username}. Web link failed (${commandMessage(e)}) — it will be retried when the Accounts page loads.`,
+                      );
+                    }
                   },
                 )
               }

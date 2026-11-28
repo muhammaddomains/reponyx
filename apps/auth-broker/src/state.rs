@@ -26,9 +26,12 @@ use crate::auth::{normalize_pairing_code, pairing_code, random_token, sha256_hex
 use crate::config::BrokerConfig;
 use crate::rate_limit::RateLimiter;
 use crate::store::BrokerStore;
-use crate::tokens::{InstallationTokenResponse, mint_installation_token};
+use crate::tokens::{
+    InstallationTokenResponse, mint_installation_token_via_web, verify_installation_via_web,
+};
 use chrono::{DateTime, Utc};
 use reponyx_core::{ErrorCode, RepoNyxError, SecretString};
+use reponyx_credential_store::{ACCOUNT_WEB_SESSION, CredentialStore, SERVICE_WEB, default_store};
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
@@ -154,6 +157,11 @@ struct SetupAuthTracker {
 pub struct BrokerState {
     pub config: BrokerConfig,
     pub http: reqwest::Client,
+    /// The web session, read from the OS credential store on every
+    /// web call (W4: the broker holds no key and mints via the web;
+    /// the session is the credential). Production uses the OS store;
+    /// tests inject a memory store pre-loaded with a session.
+    credential_store: Arc<dyn CredentialStore>,
     /// Durable backing store. `None` means pure in-memory mode
     /// (tests, and `BrokerState::new`); production uses
     /// [`BrokerState::open`].
@@ -176,7 +184,11 @@ fn store_error(err: sqlx::Error) -> RepoNyxError {
 }
 
 impl BrokerState {
-    fn new_inner(config: BrokerConfig, store: Option<Arc<BrokerStore>>) -> Self {
+    fn new_inner(
+        config: BrokerConfig,
+        store: Option<Arc<BrokerStore>>,
+        credential_store: Arc<dyn CredentialStore>,
+    ) -> Self {
         let http = reqwest::Client::builder()
             .timeout(std::time::Duration::from_secs(30))
             .user_agent("RepoNyx-Auth-Broker/0.1.0")
@@ -185,6 +197,7 @@ impl BrokerState {
         Self {
             config,
             http,
+            credential_store,
             store,
             installations: RwLock::new(HashMap::new()),
             pairing_codes: RwLock::new(HashMap::new()),
@@ -198,7 +211,16 @@ impl BrokerState {
     }
 
     pub fn new(config: BrokerConfig) -> Arc<Self> {
-        Arc::new(Self::new_inner(config, None))
+        Arc::new(Self::new_inner(config, None, default_store()))
+    }
+
+    /// Test-only constructor with an injected credential store (a
+    /// memory store pre-loaded with a web session).
+    pub fn new_with_store(
+        config: BrokerConfig,
+        credential_store: Arc<dyn CredentialStore>,
+    ) -> Arc<Self> {
+        Arc::new(Self::new_inner(config, None, credential_store))
     }
 
     /// Open broker state backed by `store`: prune spent rows and
@@ -217,7 +239,11 @@ impl BrokerState {
         let setup_states = store.load_setup_states().await?;
         let device_tokens = store.load_device_tokens().await?;
         let audit_events = store.load_audit_events().await?;
-        let state = Arc::new(Self::new_inner(config, Some(Arc::clone(&store))));
+        let state = Arc::new(Self::new_inner(
+            config,
+            Some(Arc::clone(&store)),
+            default_store(),
+        ));
         {
             let mut installations_map = state.installations.write().await;
             for record in installations {
@@ -779,15 +805,53 @@ impl BrokerState {
             .is_some_and(|record| !record.revoked && record.is_expired())
     }
 
-    // -- token minting -----------------------------------------------
+    // -- web session + token minting ---------------------------------
+
+    /// The user's web session from the OS credential store (W4: the
+    /// session is the broker's credential for the web). `None` when
+    /// the desktop is logged out — the broker then cannot mint or
+    /// verify, and callers fail closed with `WebSessionExpired`.
+    /// A store failure is an error, never a silent `None`: on Linux
+    /// without a secret service the read fails and the broker says
+    /// so instead of minting with no session.
+    fn web_session(&self) -> Result<Option<String>, RepoNyxError> {
+        self.credential_store
+            .get(SERVICE_WEB, ACCOUNT_WEB_SESSION)
+            .map(|secret| secret.map(|value| value.expose().to_string()))
+            .map_err(|e| {
+                RepoNyxError::new(
+                    ErrorCode::CredentialStoreError,
+                    "cannot read the web session from the credential store",
+                )
+                .with_details(e.to_string())
+            })
+    }
+
+    /// Verify an installation id against the web: `Some(login)` only
+    /// when the id is an installation of the shared App.
+    pub async fn verify_installation(
+        &self,
+        installation_id: &str,
+    ) -> Result<Option<String>, RepoNyxError> {
+        let session = self.web_session()?;
+        verify_installation_via_web(
+            &self.http,
+            &self.config.web_base_url,
+            session.as_deref(),
+            installation_id,
+        )
+        .await
+    }
 
     /// Mint (or return the cached) installation token for an
     /// installation. The cache is used until 5 minutes before
     /// expiry; `force_refresh` bypasses it (callers use this after a
-    /// 401 with a cached token).
+    /// 401 with a cached token). The mint itself goes through the
+    /// web with the user's session — the broker holds no key.
     pub async fn mint_token(
         &self,
         installation_id: &str,
+        device_identifier: &str,
         force_refresh: bool,
     ) -> Result<InstallationTokenResponse, RepoNyxError> {
         if !force_refresh {
@@ -803,7 +867,20 @@ impl BrokerState {
                 });
             }
         }
-        let minted = mint_installation_token(&self.http, &self.config, installation_id).await?;
+        let session = self.web_session()?.ok_or_else(|| {
+            RepoNyxError::new(
+                ErrorCode::WebSessionExpired,
+                "no web session — log in again on the desktop to mint a token",
+            )
+        })?;
+        let minted = mint_installation_token_via_web(
+            &self.http,
+            &self.config.web_base_url,
+            &session,
+            installation_id,
+            device_identifier,
+        )
+        .await?;
         self.token_cache.write().await.insert(
             installation_id.to_string(),
             CachedInstallationToken {

@@ -4,31 +4,17 @@
 //! (simulating a restart — the store file stays), re-opens it, and
 //! asserts the state is exactly what the first instance left.
 //!
-//! The App private key is a throwaway RSA key generated in-memory
-//! per test; every token is obviously fake; no real credentials.
+//! The broker holds no key (W4); every token is obviously fake; no
+//! real credentials.
 
-use pkcs8::EncodePrivateKey;
 use reponyx_auth_broker::BrokerStore;
 use reponyx_auth_broker::config::BrokerConfig;
 use reponyx_auth_broker::state::{BrokerState, DeviceTokenRecord, InstallationRecord};
-use rsa::PrivateKey;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
-
-/// A throwaway RSA keypair, generated in-memory. Never committed,
-/// never real.
-fn throwaway_private_pem() -> String {
-    let mut rng = rand::rng();
-    let private = PrivateKey::new(&mut rng, 2048).unwrap();
-    private
-        .to_pkcs8_pem(pkcs8::LineEnding::LF)
-        .unwrap()
-        .to_string()
-}
-
 fn test_config(state_ttl: Duration) -> BrokerConfig {
-    let mut config = BrokerConfig::for_tests("123456", throwaway_private_pem(), "http://localhost");
+    let mut config = BrokerConfig::for_tests("http://localhost");
     config.state_ttl = state_ttl;
     config
 }

@@ -1,26 +1,18 @@
-//! GitHub App JWT signing and installation-token minting.
+//! Installation-token minting via the web (W4).
 //!
-//! The private key is used ONLY here: to sign a short-lived JWT
-//! (RS256, `exp` ~9 minutes) that authorizes
-//! `POST /app/installations/{id}/access_tokens`. The JWT and the
-//! minted installation token are never logged and never appear in
-//! error messages. Minted tokens are cached per installation until
-//! 5 minutes before expiry; `force_refresh` bypasses the cache
-//! (used when a caller reports a 401 with a cached token).
+//! The broker no longer holds the GitHub App private key: the web is
+//! the single holder of the key and mints installation tokens. The
+//! broker asks the web (`POST /api/broker/mint`) with the user's web
+//! session (read from the OS credential store) and the device
+//! identifier, and verifies installations the same way (`GET
+//! /api/broker/installations/{id}`). The session token and the minted
+//! GitHub token are never logged and never appear in error messages.
+//! Minted tokens are cached per installation until 5 minutes before
+//! expiry; `force_refresh` bypasses the cache (used when a caller
+//! reports a 401 with a cached token).
 
-use crate::config::BrokerConfig;
 use reponyx_core::{ErrorCode, RepoNyxError};
-use serde::{Deserialize, Serialize};
-
-/// JWT claims for a GitHub App JWT: `iss` is the App id, `iat` is
-/// backdated 60 s for clock skew, `exp` is at most 10 minutes after
-/// `iat` (GitHub's limit).
-#[derive(Debug, Serialize, Deserialize)]
-struct AppJwtClaims {
-    iss: String,
-    iat: i64,
-    exp: i64,
-}
+use serde::Deserialize;
 
 /// What GitHub returns for an installation access token.
 #[derive(Debug, Deserialize)]
@@ -33,232 +25,192 @@ pub struct InstallationTokenResponse {
     pub repository_selection: Option<String>,
 }
 
-/// Sign a GitHub App JWT (RS256, 9-minute lifetime) with the
-/// broker's private key. The key never leaves this function.
-pub fn app_jwt(config: &BrokerConfig) -> Result<String, RepoNyxError> {
-    let now = chrono::Utc::now().timestamp();
-    let claims = AppJwtClaims {
-        iss: config.app_id.clone(),
-        iat: now - 60,
-        exp: now + 540,
-    };
-    let key = jsonwebtoken::EncodingKey::from_rsa_pem(config.private_key_pem.expose().as_bytes())
-        .map_err(|e| {
-        RepoNyxError::new(
-            ErrorCode::InternalError,
-            "broker private key is not a valid RSA PEM key",
-        )
-        .with_details(e.to_string())
-    })?;
-    jsonwebtoken::encode(
-        &jsonwebtoken::Header::new(jsonwebtoken::Algorithm::RS256),
-        &claims,
-        &key,
-    )
-    .map_err(|e| {
-        RepoNyxError::new(ErrorCode::InternalError, "cannot sign the GitHub App JWT")
-            .with_details(e.to_string())
-    })
+/// What the web returns for `POST /api/broker/mint`.
+#[derive(Debug, Deserialize)]
+struct WebMintResponse {
+    token: String,
+    #[serde(rename = "expiresAt")]
+    expires_at: chrono::DateTime<chrono::Utc>,
 }
 
-/// Mint an installation access token from GitHub: `POST
-/// /app/installations/{id}/access_tokens` with the App JWT. The
-/// response token is returned to the caller; it is never logged.
-pub async fn mint_installation_token(
+/// What the web returns for `GET /api/broker/installations/{id}`.
+#[derive(Debug, Deserialize)]
+struct WebInstallationResponse {
+    #[serde(rename = "accountLogin")]
+    account_login: String,
+}
+
+/// The web's error shape: `{ "error": { "code": "...", "data": {} } }`.
+#[derive(Debug, Deserialize)]
+struct WebErrorBody {
+    error: WebError,
+}
+
+#[derive(Debug, Deserialize)]
+struct WebError {
+    code: String,
+}
+
+async fn parse_web_error(response: reqwest::Response) -> (u16, Option<String>) {
+    let status = response.status().as_u16();
+    let code = response
+        .json::<WebErrorBody>()
+        .await
+        .ok()
+        .map(|body| body.error.code);
+    (status, code)
+}
+
+fn transport_error(err: reqwest::Error) -> RepoNyxError {
+    if err.is_timeout() {
+        RepoNyxError::new(ErrorCode::OperationTimedOut, "web request timed out")
+            .with_details(err.to_string())
+    } else {
+        RepoNyxError::new(
+            ErrorCode::NetworkUnavailable,
+            "cannot reach the web (reponyx.bond) to mint a token",
+        )
+        .with_details(err.to_string())
+    }
+}
+
+/// Mint an installation access token via the web: `POST
+/// {web_base}/api/broker/mint` with the user's session as a Bearer
+/// token. The web checks the installation is linked to that user,
+/// the device is not revoked, and the linked account is within the
+/// package limit — the broker trusts the web's answer and never sees
+/// the App key. The response token is returned to the caller; it is
+/// never logged.
+pub async fn mint_installation_token_via_web(
     http: &reqwest::Client,
-    config: &BrokerConfig,
+    web_base_url: &str,
+    session: &str,
     installation_id: &str,
+    device_identifier: &str,
 ) -> Result<InstallationTokenResponse, RepoNyxError> {
-    let jwt = app_jwt(config)?;
-    let url = format!(
-        "{}/app/installations/{}/access_tokens",
-        config.github_api_base.trim_end_matches('/'),
-        installation_id
-    );
+    let url = format!("{}/api/broker/mint", web_base_url.trim_end_matches('/'));
     let response = http
         .post(&url)
-        .header("Authorization", format!("Bearer {jwt}"))
-        .header("Accept", "application/vnd.github+json")
-        .header("X-GitHub-Api-Version", "2022-11-28")
+        .header("Authorization", format!("Bearer {session}"))
+        .json(&serde_json::json!({
+            "installationId": installation_id,
+            "deviceIdentifier": device_identifier,
+        }))
         .send()
         .await
-        .map_err(|e| {
-            if e.is_timeout() {
-                RepoNyxError::new(ErrorCode::OperationTimedOut, "GitHub API request timed out")
-                    .with_details(e.to_string())
-            } else {
-                RepoNyxError::new(ErrorCode::NetworkUnavailable, "cannot reach the GitHub API")
-                    .with_details(e.to_string())
-            }
-        })?;
+        .map_err(transport_error)?;
     let status = response.status();
     if status.is_success() {
-        return response
-            .json::<InstallationTokenResponse>()
-            .await
-            .map_err(|e| {
-                RepoNyxError::new(
+        return response.json::<WebMintResponse>().await.map_or_else(
+            |e| {
+                Err(RepoNyxError::new(
                     ErrorCode::InternalError,
-                    "GitHub API returned an unparsable token response",
+                    "web returned an unparsable token response",
                 )
-                .with_details(e.to_string())
-            });
+                .with_details(e.to_string()))
+            },
+            |minted| {
+                Ok(InstallationTokenResponse {
+                    token: minted.token,
+                    expires_at: minted.expires_at,
+                    permissions: serde_json::Value::Object(Default::default()),
+                    repository_selection: None,
+                })
+            },
+        );
     }
-    let body = response.text().await.unwrap_or_default();
-    let message = parse_error_message(&body);
-    Err(match status.as_u16() {
-        401 => RepoNyxError::new(
-            ErrorCode::InternalError,
-            "GitHub rejected the broker's App JWT",
-        )
-        .with_details(message),
-        403 => RepoNyxError::new(
+    let (status_code, code) = parse_web_error(response).await;
+    Err(match (status_code, code.as_deref()) {
+        (401, _) => RepoNyxError::new(
+            ErrorCode::WebSessionExpired,
+            "web session expired — log in again on the desktop",
+        ),
+        (403, Some("device_revoked")) => RepoNyxError::new(
+            ErrorCode::AuthenticationRevoked,
+            "device was revoked on the web — pair this device again",
+        ),
+        (403, Some("limit_exceeded")) => RepoNyxError::new(
             ErrorCode::InsufficientPermissions,
-            "GitHub App lacks permission to mint a token for this installation",
-        )
-        .with_details(message),
-        404 => RepoNyxError::new(ErrorCode::InvalidInput, "GitHub installation not found")
-            .with_details(message),
+            "package limit reached for linked accounts — upgrade or unlink an account",
+        ),
+        (404, _) => RepoNyxError::new(
+            ErrorCode::InvalidInput,
+            "GitHub App installation is not linked to your web account",
+        ),
+        (503, _) => RepoNyxError::new(
+            ErrorCode::InternalError,
+            "the web is not configured to mint tokens",
+        ),
         _ => RepoNyxError::new(
             ErrorCode::InternalError,
-            format!("GitHub token minting failed (HTTP {})", status.as_u16()),
-        )
-        .with_details(message),
+            format!("web token minting failed (HTTP {status_code})"),
+        ),
     })
 }
 
-/// List the App's installations with their account logins
-/// (`GET /app/installations`, App JWT auth), as
-/// installation-id → account-login. Best-effort: any failure
-/// (GitHub unreachable, bad JWT, unparsable body) returns an empty
-/// map — the installations list must never fail because GitHub is
-/// unreachable; callers fall back to the login recorded at install
-/// time (which is usually absent — the install callback does not
-/// carry it).
-pub async fn list_app_installations(
+/// Verify an installation id against the web: `Some(login)` only
+/// when the id is an installation of the shared App (audit B3 — the
+/// install callback must not record an arbitrary `installation_id`
+/// handed to it with a valid `state`). `None` when the web says the
+/// installation does not exist. A web failure is an error, not a
+/// `None`: the callback must fail closed when it cannot verify, so
+/// a forged callback cannot slip through during a web outage. A
+/// missing session fails the same way — the callback cannot verify
+/// without it.
+pub async fn verify_installation_via_web(
     http: &reqwest::Client,
-    config: &BrokerConfig,
-) -> std::collections::HashMap<String, String> {
-    match fetch_app_installations(http, config).await {
-        Ok(installations) => installations
-            .into_iter()
-            .map(|installation| (installation.id.to_string(), installation.account.login))
-            .collect(),
-        Err(_) => std::collections::HashMap::new(),
-    }
-}
-
-/// Verify an installation id against GitHub: true only when the id
-/// is an installation of THIS GitHub App (audit B3 — the install
-/// callback must not record an arbitrary `installation_id` handed
-/// to it with a valid `state`). Unlike
-/// [`list_app_installations`], a GitHub failure is an error, not an
-/// empty list: the callback must fail closed when it cannot verify,
-/// so a forged callback cannot slip through during a GitHub outage.
-pub async fn verify_app_installation(
-    http: &reqwest::Client,
-    config: &BrokerConfig,
+    web_base_url: &str,
+    session: Option<&str>,
     installation_id: &str,
-) -> Result<bool, RepoNyxError> {
-    let installations = fetch_app_installations(http, config).await?;
-    Ok(installations
-        .iter()
-        .any(|installation| installation.id.to_string() == installation_id))
-}
-
-#[derive(Deserialize)]
-struct AppInstallation {
-    id: u64,
-    account: AppInstallationAccount,
-}
-
-#[derive(Deserialize)]
-struct AppInstallationAccount {
-    login: String,
-}
-
-/// Fetch the App's installations from GitHub (`GET
-/// /app/installations`, App JWT auth). Transport and HTTP errors
-/// surface as [`RepoNyxError`]; callers decide whether to fail open
-/// ([`list_app_installations`]) or closed
-/// ([`verify_app_installation`]).
-async fn fetch_app_installations(
-    http: &reqwest::Client,
-    config: &BrokerConfig,
-) -> Result<Vec<AppInstallation>, RepoNyxError> {
-    let jwt = app_jwt(config)?;
+) -> Result<Option<String>, RepoNyxError> {
+    let Some(session) = session else {
+        return Err(RepoNyxError::new(
+            ErrorCode::WebSessionExpired,
+            "no web session — log in again on the desktop to verify the installation",
+        ));
+    };
     let url = format!(
-        "{}/app/installations",
-        config.github_api_base.trim_end_matches('/')
+        "{}/api/broker/installations/{installation_id}",
+        web_base_url.trim_end_matches('/')
     );
     let response = http
         .get(&url)
-        .header("Authorization", format!("Bearer {jwt}"))
-        .header("Accept", "application/vnd.github+json")
-        .header("X-GitHub-Api-Version", "2022-11-28")
+        .header("Authorization", format!("Bearer {session}"))
         .send()
         .await
-        .map_err(|e| {
-            if e.is_timeout() {
-                RepoNyxError::new(ErrorCode::OperationTimedOut, "GitHub API request timed out")
-                    .with_details(e.to_string())
-            } else {
-                RepoNyxError::new(ErrorCode::NetworkUnavailable, "cannot reach the GitHub API")
-                    .with_details(e.to_string())
-            }
-        })?;
+        .map_err(transport_error)?;
     let status = response.status();
-    if !status.is_success() {
-        let body = response.text().await.unwrap_or_default();
-        return Err(RepoNyxError::new(
-            ErrorCode::NetworkUnavailable,
-            format!(
-                "GitHub installations lookup failed (HTTP {})",
-                status.as_u16()
-            ),
-        )
-        .with_details(parse_error_message(&body)));
+    if status.is_success() {
+        return response
+            .json::<WebInstallationResponse>()
+            .await
+            .map_or_else(
+                |e| {
+                    Err(RepoNyxError::new(
+                        ErrorCode::InternalError,
+                        "web returned an unparsable installation response",
+                    )
+                    .with_details(e.to_string()))
+                },
+                |body| Ok(Some(body.account_login)),
+            );
     }
-    response.json::<Vec<AppInstallation>>().await.map_err(|e| {
-        RepoNyxError::new(
+    if status.as_u16() == 404 {
+        return Ok(None);
+    }
+    let (status_code, _) = parse_web_error(response).await;
+    Err(match status_code {
+        401 => RepoNyxError::new(
+            ErrorCode::WebSessionExpired,
+            "web session expired — log in again on the desktop",
+        ),
+        503 => RepoNyxError::new(
             ErrorCode::InternalError,
-            "GitHub API returned an unparsable installations response",
-        )
-        .with_details(e.to_string())
+            "the web is not configured to verify installations",
+        ),
+        _ => RepoNyxError::new(
+            ErrorCode::InternalError,
+            format!("web installation lookup failed (HTTP {status_code})"),
+        ),
     })
-}
-
-fn parse_error_message(body: &str) -> String {
-    #[derive(Deserialize)]
-    struct ErrorBody {
-        message: Option<String>,
-    }
-    if let Ok(ErrorBody {
-        message: Some(message),
-    }) = serde_json::from_str::<ErrorBody>(body)
-        && !message.is_empty()
-    {
-        return message;
-    }
-    body.chars().take(300).collect()
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::auth::sha256_hex;
-
-    #[test]
-    fn jwt_claims_are_well_formed() {
-        // Claims shape only; signing is covered by the broker
-        // integration tests with a throwaway key.
-        let claims = AppJwtClaims {
-            iss: "123456".to_string(),
-            iat: 1_700_000_000,
-            exp: 1_700_000_540,
-        };
-        assert_eq!(claims.exp - claims.iat, 540);
-        // The hash helper used for code/token storage is stable.
-        assert_eq!(sha256_hex("abc").len(), 64);
-    }
 }

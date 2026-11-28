@@ -34,6 +34,9 @@ const CODE_TO_MESSAGE_KEY: Record<string, string> = {
   internal_error: "internalError",
   unauthorized: "sessionExpired",
   not_configured: "notConfigured",
+  installation_not_linked: "installationNotLinked",
+  device_revoked: "deviceRevoked",
+  limit_exceeded: "limitExceeded",
 };
 
 /** Renders a structured API error ({code, data}) from errors.json, with the retry time filled in. */

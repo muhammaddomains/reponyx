@@ -9,24 +9,29 @@ vi.mock("@reponyx/api-client", () => ({
   createBrokerSetupState: vi.fn(),
   deletePatAccount: vi.fn(),
   getBrokerStatus: vi.fn(),
-  getSettings: vi.fn(),
   listAccounts: vi.fn(),
   listBrokerInstallations: vi.fn(),
-  pickBrokerKeyFile: vi.fn(),
   reconnectPatAccount: vi.fn(),
   removePatAccount: vi.fn(),
   replacePatAccount: vi.fn(),
   revokeDevicePairing: vi.fn(),
-  setSetting: vi.fn(),
   startPairing: vi.fn(),
   validateGithubAppAccount: vi.fn(),
   validatePatAccount: vi.fn(),
+  webLinkGithubAccount: vi.fn(),
+  webLinkPatAccount: vi.fn(),
+  webUnlinkPatAccount: vi.fn(),
 }));
 
 import {
   deletePatAccount,
   listAccounts,
+  listBrokerInstallations,
+  removePatAccount,
   validatePatAccount,
+  webLinkGithubAccount,
+  webLinkPatAccount,
+  webUnlinkPatAccount,
 } from "@reponyx/api-client";
 import type { Account } from "@reponyx/shared";
 
@@ -82,6 +87,18 @@ function renderAccounts(accounts: Account[]) {
 beforeEach(() => {
   vi.clearAllMocks();
   vi.mocked(listAccounts).mockResolvedValue([]);
+  vi.mocked(listBrokerInstallations).mockResolvedValue([]);
+  vi.mocked(webLinkGithubAccount).mockResolvedValue({
+    id: "019c0000-0000-7000-8000-000000000004",
+    login: "octocat",
+    authKind: "app",
+  });
+  vi.mocked(webLinkPatAccount).mockResolvedValue({
+    id: "019c0000-0000-7000-8000-000000000005",
+    login: "octocat",
+    authKind: "pat",
+  });
+  vi.mocked(webUnlinkPatAccount).mockResolvedValue(undefined);
 });
 
 describe("Accounts page — Connected accounts tab", () => {
@@ -168,7 +185,7 @@ describe("Accounts page — Connected accounts tab", () => {
 });
 
 describe("Accounts page — Delete account", () => {
-  it("deletes the account after confirmation and shows a notice", async () => {
+  it("deletes the account after confirmation, unlinks it from the web, and shows a notice", async () => {
     renderAccounts([patAccount({ status: "revoked" })]);
     vi.mocked(deletePatAccount).mockResolvedValue(true);
     fireEvent.click(
@@ -184,6 +201,27 @@ describe("Accounts page — Delete account", () => {
     expect(
       await screen.findByText("Deleted the account octocat."),
     ).toBeInTheDocument();
+    expect(webUnlinkPatAccount).toHaveBeenCalledWith("octocat");
+  });
+
+  it("keeps the delete when the web unlink fails, and says so", async () => {
+    renderAccounts([patAccount({ status: "revoked" })]);
+    vi.mocked(deletePatAccount).mockResolvedValue(true);
+    vi.mocked(webUnlinkPatAccount).mockRejectedValue(
+      new Error("could not reach the web"),
+    );
+    fireEvent.click(
+      await screen.findByRole("button", { name: "Delete account" }),
+    );
+    const dialog = screen.getByRole("alertdialog", {
+      name: "Delete account",
+    });
+    fireEvent.click(
+      within(dialog).getByRole("button", { name: "Delete account" }),
+    );
+    expect(
+      await screen.findByText(/Deleted the account octocat, but the web link could not be removed/),
+    ).toBeInTheDocument();
   });
 
   it("does nothing when the confirmation is dismissed", async () => {
@@ -196,6 +234,85 @@ describe("Accounts page — Delete account", () => {
     });
     fireEvent.click(within(dialog).getByRole("button", { name: "Cancel" }));
     expect(deletePatAccount).not.toHaveBeenCalled();
+    expect(webUnlinkPatAccount).not.toHaveBeenCalled();
     expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument();
+  });
+});
+
+describe("Accounts page — Remove PAT", () => {
+  it("removes the PAT after confirmation and unlinks it from the web", async () => {
+    renderAccounts([patAccount()]);
+    vi.mocked(removePatAccount).mockResolvedValue(patAccount());
+    fireEvent.click(await screen.findByRole("button", { name: "Remove" }));
+    const dialog = screen.getByRole("alertdialog", {
+      name: "Remove PAT account",
+    });
+    fireEvent.click(within(dialog).getByRole("button", { name: "Remove" }));
+    expect(removePatAccount).toHaveBeenCalledWith(patAccount().id);
+    expect(
+      await screen.findByText("Removed the PAT for octocat."),
+    ).toBeInTheDocument();
+    expect(webUnlinkPatAccount).toHaveBeenCalledWith("octocat");
+  });
+});
+
+describe("Accounts page — web link reconcile (W4)", () => {
+  const pairedInstallation = {
+    installationId: "777",
+    setupAction: "install",
+    accountLogin: "octocat",
+    installedAt: "2026-11-24T00:00:00Z",
+    pairedDevice: "device-1",
+  };
+
+  it("links every paired installation and PAT account on load", async () => {
+    vi.mocked(listBrokerInstallations).mockResolvedValue([
+      pairedInstallation,
+    ]);
+    renderAccounts([patAccount(), appAccount()]);
+    await screen.findByText("octocat");
+    expect(webLinkGithubAccount).toHaveBeenCalledWith("777");
+    expect(webLinkPatAccount).toHaveBeenCalledWith("octocat");
+  });
+
+  it("skips installations that are not paired", async () => {
+    vi.mocked(listBrokerInstallations).mockResolvedValue([
+      { ...pairedInstallation, pairedDevice: null },
+    ]);
+    renderAccounts([patAccount()]);
+    await screen.findByText("octocat");
+    expect(webLinkGithubAccount).not.toHaveBeenCalled();
+    expect(webLinkPatAccount).toHaveBeenCalledWith("octocat");
+  });
+
+  it("surfaces a limit failure as a notice and keeps the account syncing locally", async () => {
+    vi.mocked(listBrokerInstallations).mockResolvedValue([
+      pairedInstallation,
+    ]);
+    vi.mocked(webLinkGithubAccount).mockRejectedValue({
+      code: "limit_exceeded",
+      message: "You have reached your package limit for linked accounts",
+    });
+    renderAccounts([patAccount()]);
+    expect(
+      await screen.findByText(
+        /Some accounts could not be linked to the web — octocat: limit_exceeded/,
+      ),
+    ).toBeInTheDocument();
+  });
+
+  it("stays silent when the web is unreachable", async () => {
+    vi.mocked(listBrokerInstallations).mockResolvedValue([
+      pairedInstallation,
+    ]);
+    vi.mocked(webLinkGithubAccount).mockRejectedValue({
+      code: "WebUnreachable",
+      message: "Could not reach reponyx.bond",
+    });
+    renderAccounts([patAccount()]);
+    await screen.findByText("octocat");
+    expect(
+      screen.queryByText(/could not be linked to the web/),
+    ).not.toBeInTheDocument();
   });
 });

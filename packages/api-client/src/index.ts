@@ -43,6 +43,7 @@ import {
   storageOverviewSchema,
   syncHistorySchema,
   syncJobSchema,
+  webLinkedAccountSchema,
   webLoginSchema,
   webSessionStatusSchema,
 } from "@reponyx/shared";
@@ -78,6 +79,7 @@ import type {
   StorageOverview,
   SyncHistory,
   SyncJob,
+  WebLinkedAccount,
   WebLogin,
   WebSessionStatus,
 } from "@reponyx/shared";
@@ -187,15 +189,6 @@ export async function getPatExpiryStatus(
   return patExpirySchema.parse(
     await invokeCommand("get_pat_expiry_status_command", { accountId }),
   );
-}
-
-/** Open the native file picker for the GitHub App private-key file.
- *  Returns the chosen path, or `null` when the user cancels. */
-export async function pickBrokerKeyFile(): Promise<string | null> {
-  return z
-    .string()
-    .nullable()
-    .parse(await invokeCommand("pick_broker_key_file_command"));
 }
 
 export async function getBrokerStatus(): Promise<BrokerStatus> {
@@ -702,4 +695,34 @@ export async function webExchangeDesktopCode(code: string): Promise<WebLogin> {
   return webLoginSchema.parse(
     await invokeCommand("web_exchange_desktop_code_command", { code }),
   );
+}
+
+/** Link a paired GitHub App installation to the signed-in web
+ *  account (W4). Idempotent — linking an already-linked
+ *  installation returns it. */
+export async function webLinkGithubAccount(
+  installationId: string,
+): Promise<WebLinkedAccount> {
+  return webLinkedAccountSchema.parse(
+    await invokeCommand("web_link_github_account_command", {
+      installationId,
+    }),
+  );
+}
+
+/** Link a PAT account to the signed-in web account, by its GitHub
+ *  login. No token ever travels — the link records the login only. */
+export async function webLinkPatAccount(
+  login: string,
+): Promise<WebLinkedAccount> {
+  return webLinkedAccountSchema.parse(
+    await invokeCommand("web_link_pat_account_command", { login }),
+  );
+}
+
+/** Unlink a PAT account from the signed-in web account, by its
+ *  GitHub login. Best-effort from the caller's side: a link that
+ *  never existed (or belongs to another user) is already gone. */
+export async function webUnlinkPatAccount(login: string): Promise<void> {
+  await invokeCommand("web_unlink_pat_account_command", { login });
 }

@@ -42,7 +42,7 @@ use reponyx_github_provider::GitHubProvider;
 use reponyx_github_provider::broker::{BrokerClient, BrokerTokenSource};
 use serde::Serialize;
 use std::sync::Arc;
-use tauri::{AppHandle, Manager, State};
+use tauri::{AppHandle, State};
 use uuid::Uuid;
 
 /// Error shape returned to the frontend: `{ code, message }`, using
@@ -208,18 +208,16 @@ pub struct PairingDto {
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct BrokerStatusDto {
+    /// The broker can be started: a setup token resolves (it is
+    /// generated per install when missing) or a broker `.env`
+    /// file supplies it. Zero-config since W4 — no App id or key
+    /// path is needed.
     pub configured: bool,
     pub reachable: bool,
     pub base_url: String,
-    /// A GitHub App id is saved in settings (`broker.app_id`).
-    pub app_id_configured: bool,
-    /// A private-key file path is saved in settings
-    /// (`broker.private_key_path`).
-    pub private_key_configured: bool,
     /// A broker `.env` file exists that can supply the broker's
     /// configuration on its own (repo checkout in dev, or a
-    /// hand-made `<data_dir>/.env`). When this is true the two
-    /// settings above are not needed.
+    /// hand-made `<data_dir>/.env`).
     pub env_file_configured: bool,
 }
 
@@ -480,33 +478,18 @@ pub async fn get_broker_status_command(
     // failure still reports reachable:false below.
     crate::broker::ensure_broker_best_effort(&app).await;
     // "Configured" now means the broker can be started: a `.env`
-    // file covers everything, or the App id + key path are saved.
-    // The setup token is never part of it — it resolves itself
-    // (.env file, else the OS store, else generated per install),
-    // so there is no token state left to report.
+    // file covers the setup token, or the token resolves itself
+    // (.env file, else the OS store, else generated per install) —
+    // so there is no App id or key path left to report. The
+    // ensure above already resolved (and if needed generated) the
+    // token, so this is true unless the credential store failed.
     let env_file_configured = crate::broker::broker_env_file_present();
-    let (app_id_configured, private_key_configured) =
-        match app.state::<Option<reponyx_database::Database>>().as_ref() {
-            Some(database) => (
-                matches!(
-                    get_setting(&database.pool, "broker.app_id").await,
-                    Ok(Some(setting)) if !setting.value.trim().is_empty()
-                ),
-                matches!(
-                    get_setting(&database.pool, "broker.private_key_path").await,
-                    Ok(Some(setting)) if !setting.value.trim().is_empty()
-                ),
-            ),
-            None => (false, false),
-        };
-    let configured = env_file_configured || (app_id_configured && private_key_configured);
+    let configured = env_file_configured || ensure_broker_setup_token(&auth).is_ok();
     let reachable = broker_client(&auth)?.health().await.unwrap_or(false);
     Ok(BrokerStatusDto {
         configured,
         reachable,
         base_url: auth.broker_base_url.clone(),
-        app_id_configured,
-        private_key_configured,
         env_file_configured,
     })
 }
@@ -520,31 +503,6 @@ fn generate_setup_token() -> String {
     let mut bytes = [0u8; 32];
     rand::rng().fill(&mut bytes);
     bytes.iter().map(|b| format!("{b:02x}")).collect()
-}
-
-/// Open the native file picker for the GitHub App private-key file
-/// (`.pem`). Returns the chosen path, or `None` when the user
-/// cancels. The file's contents are never read — the path alone is
-/// stored as a setting, and the broker reads the key when it
-/// starts. Runs on a blocking thread: the dialog stays open as
-/// long as the user takes, and must not hold an async worker.
-#[tauri::command]
-pub async fn pick_broker_key_file_command(app: AppHandle) -> CommandResult<Option<String>> {
-    use tauri_plugin_dialog::DialogExt;
-    let handle = app.clone();
-    let picked = tokio::task::spawn_blocking(move || {
-        handle
-            .dialog()
-            .file()
-            .add_filter("PEM private key", &["pem"])
-            .set_title("Choose the GitHub App private-key file")
-            .blocking_pick_file()
-    })
-    .await
-    .map_err(|e| invalid_input(format!("key file picker failed: {e}")))?;
-    Ok(picked
-        .and_then(|path| path.into_path().ok())
-        .map(|path| path.to_string_lossy().into_owned()))
 }
 
 #[tauri::command]

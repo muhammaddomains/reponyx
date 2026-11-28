@@ -3,13 +3,17 @@ import { useNavigate } from "react-router";
 import {
   deletePatAccount,
   listAccounts,
+  listBrokerInstallations,
   reconnectPatAccount,
   removePatAccount,
   replacePatAccount,
   validateGithubAppAccount,
   validatePatAccount,
+  webLinkGithubAccount,
+  webLinkPatAccount,
+  webUnlinkPatAccount,
 } from "@reponyx/api-client";
-import type { Account } from "@reponyx/shared";
+import type { Account, BrokerInstallation } from "@reponyx/shared";
 import { Badge, Button, Card, ConfirmDialog } from "@reponyx/ui";
 import AccountsTabs from "../components/AccountsTabs";
 
@@ -94,10 +98,71 @@ export default function Accounts() {
     setAccounts(await listAccounts());
   }, []);
 
+  // Reconcile: link every paired broker installation and every
+  // PAT account to the web account, so the dashboard count moves
+  // for accounts added before W4 (or while offline). The link is
+  // idempotent — already-linked accounts return at once. A limit
+  // failure is surfaced; an offline or expired session is silent
+  // (the next page load retries).
+  const reconcileLinks = useCallback(async () => {
+    let installations: BrokerInstallation[];
+    let accounts: Account[];
+    try {
+      [installations, accounts] = await Promise.all([
+        listBrokerInstallations(),
+        listAccounts(),
+      ]);
+    } catch {
+      // Broker or database unreachable (offline) — the next load
+      // retries.
+      return;
+    }
+    const failures: string[] = [];
+    const link = async (label: string, attempt: () => Promise<unknown>) => {
+      try {
+        await attempt();
+      } catch (e: unknown) {
+        const record = e as { code?: unknown };
+        const code = typeof record?.code === "string" ? record.code : "";
+        if (code === "WebUnreachable" || code === "unauthorized") {
+          throw e;
+        }
+        failures.push(`${label}: ${commandMessage(e)}`);
+      }
+    };
+    try {
+      for (const installation of installations) {
+        if (!installation.pairedDevice) continue;
+        await link(
+          installation.accountLogin ?? installation.installationId,
+          () => webLinkGithubAccount(installation.installationId),
+        );
+      }
+      for (const account of accounts) {
+        if (account.authenticationMethod !== "fine_grained_pat") continue;
+        await link(account.username, () =>
+          webLinkPatAccount(account.username),
+        );
+      }
+    } catch {
+      // Offline or logged out mid-reconcile — the next load
+      // retries.
+      return;
+    }
+    if (failures.length > 0) {
+      setNotice(
+        `Some accounts could not be linked to the web — ${failures.join("; ")}. They still sync locally.`,
+      );
+    }
+  }, []);
+
   useEffect(() => {
     let cancelled = false;
     setLoading(true);
     refresh()
+      .then(() => {
+        if (!cancelled) void reconcileLinks();
+      })
       .catch((e: unknown) => {
         if (!cancelled) setError(commandMessage(e));
       })
@@ -107,7 +172,7 @@ export default function Accounts() {
     return () => {
       cancelled = true;
     };
-  }, [refresh]);
+  }, [refresh, reconcileLinks]);
 
   async function run<T>(action: () => Promise<T>, done?: (value: T) => void) {
     setError(null);
@@ -378,10 +443,24 @@ export default function Accounts() {
                         confirmLabel: "Remove",
                         action: () =>
                           void run(
-                            () => removePatAccount(account.id),
-                            () =>
+                            async () => {
+                              await removePatAccount(account.id);
+                              // Unlink from the web (best-effort): a
+                              // failure leaves the web link in
+                              // place — it can be removed from the
+                              // web dashboard — but must not undo
+                              // the local remove.
+                              try {
+                                await webUnlinkPatAccount(account.username);
+                                return null;
+                              } catch (e: unknown) {
+                                return `Removed the PAT for ${account.username}, but the web link could not be removed (${commandMessage(e)}). Remove it from the web dashboard.`;
+                              }
+                            },
+                            (note) =>
                               setNotice(
-                                `Removed the PAT for ${account.username}.`,
+                                note ??
+                                  `Removed the PAT for ${account.username}.`,
                               ),
                           ),
                       })
@@ -399,10 +478,21 @@ export default function Accounts() {
                         confirmLabel: "Delete account",
                         action: () =>
                           void run(
-                            () => deletePatAccount(account.id),
-                            () =>
+                            async () => {
+                              await deletePatAccount(account.id);
+                              // Unlink from the web (best-effort):
+                              // see the Remove handler above.
+                              try {
+                                await webUnlinkPatAccount(account.username);
+                                return null;
+                              } catch (e: unknown) {
+                                return `Deleted the account ${account.username}, but the web link could not be removed (${commandMessage(e)}). Remove it from the web dashboard.`;
+                              }
+                            },
+                            (note) =>
                               setNotice(
-                                `Deleted the account ${account.username}.`,
+                                note ??
+                                  `Deleted the account ${account.username}.`,
                               ),
                           ),
                       })

@@ -3141,7 +3141,7 @@ repos re-discovered; syncs queued 03:15–03:27 MST).
   -p reponyx-desktop --target x86_64-pc-windows-gnu` clean in
   17.66s).
 
-## 2026-11-28 live-refresh batch + discovery revert (local only, not pushed)
+## 2026-11-28 live-refresh batch + discovery revert (pushed as snapshot `e217f4b5`, sync 80, 2026-11-28 ~04:30 MST; deploy+CI check ran 04:50 MST — all green, CI #111)
 
 User reports 2026-11-28 04:07–04:10 MST, after sync 79 shipped:
 syncs now complete (both repos synced 03:54 + 03:56 MST) and
@@ -3220,3 +3220,72 @@ itself.
   callback they mirror (TDZ — whole Repositories file failed),
   and `act` was imported from `vitest` instead of
   `@testing-library/react`.
+
+## Web platform — W4 broker ↔ web (2026-11-28, branch `feature/admin-control-plane`, local only, not pushed)
+
+- **Plan approved 2026-11-28 05:02:37 MST** (user: "Haan, W4 plan
+  approve — banao" + "bs theek hai ye b 2no kr do"). All three open
+  questions decided YES: Free limit 6 (applied by direct DB update
+  2026-11-28 ~05:00 MST, verified BEFORE 2/2 → AFTER 6/2),
+  BrokerSetup form removal, App-sync-needs-web behaviour.
+- **Web side:** `POST /api/broker/mint` (jose RS256; session →
+  linked-to-user → GitHub lists it → device not revoked → rank
+  within package limit, oldest-first; audit `broker.mint`),
+  `GET /api/broker/installations/[id]`, `POST/DELETE
+  /api/me/github-accounts` (app: verify via App key, 409
+  `already_linked`, idempotent; pat: login only), `DELETE
+  /api/devices/[id]` + dashboard Revoke button. New queries
+  (`findInstallationByGithubId`, `findLinkedAccountById`,
+  `findLinkedAccountByProviderAccount`, `linkInstallation`,
+  `linkPatAccount`, `unlinkLinkedAccount`, `findDeviceByKey`,
+  `linkedAccountRank`). i18n keys `installationNotLinked` /
+  `deviceRevoked` / `limitExceeded` (all 4 errors.json files) +
+  dashboard `revoke` / `revokedSuccess`. Tests:
+  `apps/web/test/broker.test.ts`, 12 tests (link+mints, mint
+  without link 404, another user's mint 404, verify 200/404,
+  mint after GitHub-side uninstall 404, revoked device 403,
+  limit 403 at Free=2 in the test DB, idempotent link, rank
+  oldest-mints/newest-refused, PAT link+unlink, unlink App
+  removes the link, mint without App config 503).
+- **Broker side:** no key anymore. `tokens.rs` is a web client
+  (`mint_installation_token_via_web`, `verify_installation_via_web`);
+  signing functions + `jsonwebtoken` dep deleted. `BrokerConfig`
+  drops app_id / private_key_pem / github_api_base, gains
+  `web_base_url` (`REPONYX_WEB_URL`, default reponyx.bond).
+  Session read per web call from the credential store
+  (`BrokerState::new_with_store` test seam, memory store in
+  tests). Mint cache + device gate unchanged. `WebSessionExpired`
+  error code added (`crates/core`). Broker tests rewritten
+  (wiremock now mocks the WEB, not GitHub; +2 new tests:
+  mint/callback without a session fail closed 401).
+- **Desktop side:** spawn passes only `REPONYX_WEB_URL` + setup
+  token (`BrokerSpawnConfig` drops App id / key path;
+  `is_complete` = token or env file). Setup form removed
+  (`BrokerSetup.tsx`, `pick_broker_key_file_command` deleted);
+  `broker.app_id` / `broker.private_key_path` settings stay
+  stored but ignored. New commands `web_link_github_account_command`,
+  `web_link_pat_account_command`,
+  `web_unlink_pat_account_command` (+ api-client + shared
+  `WebLinkedAccount`). Linking: after pairing, after PAT add, and
+  on every Accounts-page load (reconcile covers paired
+  installations AND PAT accounts — a PAT link that failed while
+  offline is retried on the next load). PAT remove/delete unlinks
+  best-effort. `already_linked` added to desktop
+  `errorMessageKey`; `web_error` gains the four new codes.
+- **Behaviour change (by design):** App sync needs the web
+  reachable after the cached token expires (~1 h grace); PAT sync
+  untouched. The web never sees repo contents, PATs, or tokens.
+- **Verified:** fmt clean; clippy `-D warnings` clean; cargo test
+  (excl. desktop) 479 passed, 0 failed (was 478: −1 deleted JWT
+  unit test, +2 new no-session tests); web tests 48/48; i18n
+  validate 166 keys, 0 failures; desktop frontend 15 files,
+  138/138 (was 130, +8 new tests); typecheck clean; lint clean;
+  vite + next build clean; local Semgrep 0 findings;
+  `check-no-private-key.sh` passed; MinGW desktop check passes.
+  Prettier: the 10 flagged desktop/shared/api-client files are
+  pre-existing state (dirty at HEAD too) and outside the repo's
+  `format:check` scope — left alone, not reformatted.
+- **Not pushed yet (needs approval).** Live test after the push:
+  user pulls, rebuilds, logs in, Accounts page links the 6
+  installations, dashboard 0/6 → 6/6, Sync now on a web-minted
+  token.

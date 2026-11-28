@@ -31,8 +31,9 @@ use tauri::State;
 
 /// The web's base URL. `REPONYX_WEB_URL` overrides it for local
 /// development (a dev server on localhost); production is always
-/// `https://reponyx.bond`.
-fn web_base_url() -> String {
+/// `https://reponyx.bond`. Shared with the broker spawn config —
+/// the broker must talk to the same web the desktop logged into.
+pub(crate) fn web_base_url() -> String {
     std::env::var("REPONYX_WEB_URL")
         .ok()
         .filter(|value| !value.trim().is_empty())
@@ -138,6 +139,12 @@ fn web_error(body: &WebErrorBody) -> CommandError {
         "email_taken" => "An account with this email already exists",
         "oauth_failed" => "Could not sign you in with that provider — try again",
         "not_configured" => "The service is not configured yet",
+        "installation_not_linked" => "That GitHub App installation is not linked to your account",
+        "device_revoked" => "This device was revoked — pair it again to sync",
+        "limit_exceeded" => {
+            "You have reached your package limit for linked accounts — upgrade or unlink an account"
+        }
+        "already_linked" => "That account is already linked to another RepoNyx account",
         _ => "Something went wrong — try again",
     };
     let retry_at = body
@@ -642,4 +649,167 @@ pub async fn web_exchange_desktop_code_command(
     let json = post_login_like(&client, &base, "/api/auth/desktop/exchange", &body).await?;
     let ok: LoginOkResponse = serde_json::from_value(json).map_err(|_| unreachable())?;
     finish_login(&auth, database, ok.session.token, ok.user).await
+}
+
+// -- Linked GitHub accounts (W4) ----------------------------------------
+
+/// A linked GitHub account as the web returns it (the POST
+/// `/api/me/github-accounts` response's `account` row, mapped to
+/// camelCase). The id is the web row id — the unlink command
+/// needs it, and the frontend never has to guess it.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WebLinkedAccountDto {
+    pub id: String,
+    pub login: String,
+    pub auth_kind: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct LinkedAccountResponse {
+    account: LinkedAccountRow,
+}
+
+/// The web's `linked_github_accounts` row (snake_case on the
+/// wire); fields the desktop does not need are ignored.
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "snake_case")]
+struct LinkedAccountRow {
+    id: String,
+    login: String,
+    auth_kind: String,
+}
+
+fn require_session(auth: &AuthState) -> CommandResult<String> {
+    read_session(auth)?.ok_or_else(|| CommandError {
+        code: "unauthorized".to_string(),
+        message: "Your session expired — please log in again".to_string(),
+        retry_at: None,
+    })
+}
+
+/// A web call with the session as a Bearer token. `body` is the
+/// JSON request body for a POST (None for DELETE). A non-2xx
+/// response becomes the web's error code via [`web_error`].
+async fn authed_web_call(
+    client: &reqwest::Client,
+    base: &str,
+    token: &str,
+    method: &str,
+    path: &str,
+    body: Option<serde_json::Value>,
+) -> Result<serde_json::Value, CommandError> {
+    let mut request = match method {
+        "POST" => client.post(format!("{base}{path}")),
+        "DELETE" => client.delete(format!("{base}{path}")),
+        _ => client.get(format!("{base}{path}")),
+    }
+    .bearer_auth(token);
+    if let Some(body) = body {
+        request = request.json(&body);
+    }
+    let res = request.send().await.map_err(|_| unreachable())?;
+    let status = res.status();
+    let json: serde_json::Value = res.json().await.map_err(|_| unreachable())?;
+    if !status.is_success() {
+        let body: WebErrorBody = serde_json::from_value(json).map_err(|_| unreachable())?;
+        return Err(web_error(&body));
+    }
+    Ok(json)
+}
+
+async fn link_github_account(
+    auth: &AuthState,
+    body: serde_json::Value,
+) -> CommandResult<WebLinkedAccountDto> {
+    let token = require_session(auth)?;
+    let client = web_client()?;
+    let base = web_base_url();
+    let json = authed_web_call(
+        &client,
+        &base,
+        &token,
+        "POST",
+        "/api/me/github-accounts",
+        Some(body),
+    )
+    .await?;
+    let response: LinkedAccountResponse =
+        serde_json::from_value(json).map_err(|_| unreachable())?;
+    Ok(WebLinkedAccountDto {
+        id: response.account.id,
+        login: response.account.login,
+        auth_kind: response.account.auth_kind,
+    })
+}
+
+/// Link a paired GitHub App installation to the signed-in web
+/// account. Idempotent: linking an already-linked installation
+/// returns it. The web enforces the package limit (403
+/// `limit_exceeded`) and the one-user rule (409 `already_linked`).
+#[tauri::command]
+pub async fn web_link_github_account_command(
+    auth: State<'_, AuthState>,
+    installation_id: String,
+) -> CommandResult<WebLinkedAccountDto> {
+    link_github_account(
+        &auth,
+        serde_json::json!({ "authKind": "app", "installationId": installation_id }),
+    )
+    .await
+}
+
+/// Link a PAT account to the signed-in web account, by its GitHub
+/// login. No token ever travels — the link records the login
+/// only. Idempotent, same limits as the App link.
+#[tauri::command]
+pub async fn web_link_pat_account_command(
+    auth: State<'_, AuthState>,
+    login: String,
+) -> CommandResult<WebLinkedAccountDto> {
+    link_github_account(
+        &auth,
+        serde_json::json!({ "authKind": "pat", "login": login }),
+    )
+    .await
+}
+
+/// Unlink a PAT account from the signed-in web account, by its
+/// GitHub login. The web's DELETE takes the row id, so this
+/// re-links idempotently first to learn it, then deletes it. A
+/// link that fails with `limit_exceeded` means the account was
+/// never linked (a linked one returns the existing row without
+/// a limit check), and `already_linked` means the link belongs
+/// to another user — either way there is nothing of ours to
+/// delete, so both return Ok.
+#[tauri::command]
+pub async fn web_unlink_pat_account_command(
+    auth: State<'_, AuthState>,
+    login: String,
+) -> CommandResult<()> {
+    let linked = match link_github_account(
+        &auth,
+        serde_json::json!({ "authKind": "pat", "login": login }),
+    )
+    .await
+    {
+        Ok(linked) => linked,
+        Err(err) if err.code == "limit_exceeded" || err.code == "already_linked" => {
+            return Ok(());
+        }
+        Err(err) => return Err(err),
+    };
+    let token = require_session(&auth)?;
+    let client = web_client()?;
+    let base = web_base_url();
+    authed_web_call(
+        &client,
+        &base,
+        &token,
+        "DELETE",
+        &format!("/api/me/github-accounts/{}", linked.id),
+        None,
+    )
+    .await?;
+    Ok(())
 }

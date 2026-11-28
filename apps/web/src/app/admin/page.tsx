@@ -37,6 +37,9 @@ export default async function AdminPage() {
         <a href="/admin/packages" className={link}>
           {t("packages")}
         </a>
+        <a href="/admin/billing" className={link}>
+          {t("billing")}
+        </a>
       </div>
     </main>
   );

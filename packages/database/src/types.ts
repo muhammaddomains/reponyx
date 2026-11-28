@@ -102,8 +102,40 @@ export interface SubscriptionRow {
   package_id: string;
   status: "active" | "expired" | "cancelled";
   expires_at: string | null;
+  /** Billing provider that owns this subscription, if any (migration 0006). */
+  provider: string | null;
+  provider_subscription_id: string | null;
+  provider_customer_id: string | null;
   created_at: string;
   updated_at: string;
+}
+
+/** One billing provider, admin-managed (migration 0006). */
+export interface BillingProviderRow {
+  provider: string;
+  is_active: boolean;
+  /** Country codes the provider serves, or null = worldwide. */
+  countries: string[] | null;
+  created_at: string;
+  updated_at: string;
+}
+
+/** The provider's price/product id for a package (migration 0006). */
+export interface PackageProviderPriceRow {
+  id: string;
+  package_id: string;
+  provider: string;
+  provider_price_id: string;
+  created_at: string;
+  updated_at: string;
+}
+
+/** A processed webhook event, for idempotency (migration 0006). */
+export interface BillingEventRow {
+  id: string;
+  provider: string;
+  event_id: string;
+  received_at: string;
 }
 
 export interface AuditLogRow {

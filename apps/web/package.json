@@ -12,6 +12,7 @@
   },
   "dependencies": {
     "@reponyx/auth": "workspace:*",
+    "@reponyx/billing": "workspace:*",
     "@reponyx/database": "workspace:*",
     "@reponyx/email": "workspace:*",
     "@reponyx/i18n": "workspace:*",

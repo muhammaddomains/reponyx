@@ -1,0 +1,6 @@
+{
+  "compilerOptions": { "types": ["node"] },
+  "exclude": ["node_modules", "test"],
+  "extends": "@reponyx/config/typescript/base.json",
+  "include": ["src"]
+}

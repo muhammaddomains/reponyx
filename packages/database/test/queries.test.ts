@@ -15,15 +15,23 @@ import {
   deleteLinkedProvider,
   findPackageById,
   findLinkedProviderByProviderUserId,
+  findPackageProviderPrice,
   findUserByEmail,
   findValidVerificationToken,
+  listBillingProviders,
   listLinkedProvidersForUser,
+  listPackageProviderPrices,
   listUsersAdmin,
+  recordBillingEvent,
   recordRegistrationAttempt,
   replaceBackupCodes,
   revokeSession,
+  setBillingProviderActive,
+  setBillingProviderCountries,
+  setPackageProviderPrice,
   setTotpPendingSecret,
   setUserPackage,
+  setUserSubscription,
   updatePackage,
   upsertDevice,
   upsertLinkedProvider,
@@ -317,4 +325,106 @@ test("adminStats returns parsed totals", async () => {
     activeDevices: 1,
     twoFactorUsers: 1,
   });
+});
+
+test("billing providers list and toggle", async () => {
+  const db = new FakeDbClient();
+  db.on("listBillingProviders", () => [
+    { provider: "stripe", is_active: false, countries: null },
+    { provider: "paypal", is_active: true, countries: ["US", "GB"] },
+  ]);
+  const providers = await listBillingProviders(db);
+  assert.equal(providers.length, 2);
+  assert.equal(providers[1]?.countries?.[0], "US");
+
+  db.on("setBillingProviderActive", (params) => [
+    { provider: params[0], is_active: params[1], countries: null },
+  ]);
+  const toggled = await setBillingProviderActive(db, "stripe", true);
+  assert.equal(toggled.is_active, true);
+
+  db.on("setBillingProviderCountries", (params) => [
+    {
+      provider: params[0],
+      is_active: true,
+      countries: params[1] ? JSON.parse(params[1] as string) : null,
+    },
+  ]);
+  const scoped = await setBillingProviderCountries(db, "paypal", ["US"]);
+  assert.deepEqual(scoped.countries, ["US"]);
+  const worldwide = await setBillingProviderCountries(db, "stripe", null);
+  assert.equal(worldwide.countries, null);
+});
+
+test("package provider prices round-trip", async () => {
+  const db = new FakeDbClient();
+  db.on("listPackageProviderPrices", () => [
+    { package_id: "p1", provider: "stripe", provider_price_id: "price_1" },
+  ]);
+  assert.equal((await listPackageProviderPrices(db)).length, 1);
+
+  db.on("findPackageProviderPrice", (params) => [
+    {
+      package_id: params[0],
+      provider: params[1],
+      provider_price_id: "price_1",
+    },
+  ]);
+  const found = await findPackageProviderPrice(db, "p1", "stripe");
+  assert.equal(found?.provider_price_id, "price_1");
+
+  db.on("setPackageProviderPrice", (params) => [
+    {
+      package_id: params[0],
+      provider: params[1],
+      provider_price_id: params[2],
+    },
+  ]);
+  const saved = await setPackageProviderPrice(db, "p1", "stripe", "price_2");
+  assert.equal(saved.provider_price_id, "price_2");
+  assert.match(
+    db.calls[2].text,
+    /ON CONFLICT \(package_id, provider\) DO UPDATE/
+  );
+});
+
+test("recordBillingEvent is true once, then false for a retry", async () => {
+  const db = new FakeDbClient();
+  let seen = 0;
+  db.on("recordBillingEvent", () => {
+    seen += 1;
+    return seen === 1
+      ? [{ id: "e1", provider: "stripe", event_id: "evt_1" }]
+      : [];
+  });
+  assert.equal(await recordBillingEvent(db, "stripe", "evt_1"), true);
+  assert.equal(await recordBillingEvent(db, "stripe", "evt_1"), false);
+});
+
+test("setUserSubscription upserts the subscription with provider ids", async () => {
+  const db = new FakeDbClient();
+  db.on("setUserSubscription", (params) => [
+    {
+      user_id: params[0],
+      package_id: params[1],
+      status: params[2],
+      expires_at: params[3],
+      provider: params[4],
+      provider_subscription_id: params[5],
+      provider_customer_id: params[6],
+    },
+  ]);
+  const sub = await setUserSubscription(db, {
+    userId: "u1",
+    packageId: "p1",
+    status: "active",
+    expiresAt: "2027-01-01T00:00:00.000Z",
+    provider: "stripe",
+    providerSubscriptionId: "sub_1",
+    providerCustomerId: "cus_1",
+  });
+  assert.equal(sub.status, "active");
+  assert.equal(sub.provider, "stripe");
+  assert.equal(sub.provider_subscription_id, "sub_1");
+  assert.match(db.calls[0].text, /ON CONFLICT \(user_id\) DO UPDATE/);
 });

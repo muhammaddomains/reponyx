@@ -9,6 +9,7 @@ export const WEB_DOMAINS = [
   "errors",
   "admin",
   "security",
+  "billing",
 ] as const;
 export const DESKTOP_DOMAINS = ["common", "errors", "auth"] as const;
 export type WebDomain = (typeof WEB_DOMAINS)[number];

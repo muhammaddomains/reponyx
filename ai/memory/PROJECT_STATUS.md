@@ -3375,6 +3375,57 @@ itself.
   server-side (GitHub generates PKCS#1 `.pem` files — every
   user would hit this) instead of requiring PKCS#8.
 
+## W6a — billing, Stripe end-to-end (implemented 2026-11-28, local only, not pushed yet)
+
+User order (2026-11-28 ~07:45 MST): "phir w6" — the plan §9 timing
+approval. The business-side prerequisites (provider accounts, tax
+setup) are the user's to do when configuring providers: the code
+ships inert — no provider can sell until its env credentials exist
+and the admin enables it, and no real charge is possible until then.
+Prices are 0 in the seed; the admin sets the price + the provider
+price ID per package before anything can be sold.
+
+- **Foundation (`packages/billing`, new):** `BillingProvider`
+  interface (checkout session, webhook verify, event normalize,
+  event id) + registry for all five providers with env-config
+  detection (plan §9 contract), `availableProvidersForCountry`
+  (admin toggle + env + country scope, null = worldwide), `buyerCountry`
+  (Vercel header, else Cloudflare header, else the buyer picks),
+  `resolveSubscriptionState` (live → active to period end;
+  cancel-at-period-end → active to period end; immediate cancel →
+  cancelled; checkout → active, no expiry yet). Gumroad registered
+  only, never at checkout.
+- **Stripe (`stripe` 23.2.0, latest stable):** Checkout Sessions in
+  subscription mode (metadata carries userId + packageId + price id;
+  existing Stripe customer id reused) + webhook verification via
+  `constructEvent` (offline HMAC). `POST /api/billing/checkout`
+  (refuses Free, price 0, no price mapping, unavailable provider)
+  and `POST /api/billing/webhook/stripe` (signature-checked,
+  idempotent via `billing_events`; checkout activates, subscription
+  events update status + expiry; audited).
+- **Migration 0006** (`0006_billing`): subscription provider ids +
+  `billing_providers` (all five seeded inactive) +
+  `package_provider_prices` + `billing_events`. Must be applied to
+  the live DB after the push (DATABASE_URL pasted again, transient
+  use).
+- **Pages:** `/pricing` (public, subscribe buttons, provider picker
+  when several are available), `/billing/success`, `/billing/cancel`,
+  `/admin/billing` (provider toggles + country scopes + price ids;
+  enablement gated on env credentials; keys never shown).
+  i18n domain `billing` (en + ur) + 4 error keys.
+- **Verified:** fmt clean; clippy `-D warnings` clean; cargo test
+  (excl. desktop) 479/479 (no Rust changes); billing 17/17 (new);
+  database 20/20 (was 16, +4); web 53/53 (was 49, +4 billing);
+  desktop frontend 140/140 (unchanged); typecheck clean; lint clean;
+  vite + next build clean; i18n 269 keys, 0 failures; Semgrep 0
+  (85 rules, 219 files); prettier clean except the pre-existing
+  `DashboardLiveRefresh.tsx` (unchanged from W4-full, left alone).
+- **Not pushed yet (needs approval). Remaining W6 work (W6b):**
+  PayPal, Polar and Freemius checkout + webhooks through the same
+  `BillingProvider` interface. Needs the user's provider accounts +
+  keys to test live; sandbox keys let the webhooks be tested end to
+  end before going live.
+
 ## W5 — packages + limits + admin dashboard + TOTP enrollment (implemented 2026-11-28, pushed as snapshot `5706323e`, sync 84, 2026-11-28 ~07:59 MST)
 
 - **Admin dashboard (`/admin`):** totals (users, linked accounts,
@@ -3396,8 +3447,10 @@ itself.
   code. The login 2FA step also accepts a backup code (spent on
   success) — 6 digits means TOTP, anything else is a backup code.
 - **Migration 0005** (`0005_totp_backup_codes`): pending secret
-  column + backup-codes table. Must be applied to the live DB after
-  the push (DATABASE_URL pasted again, transient use).
+  column + backup-codes table. Applied to the live DB 2026-11-28
+  ~08:17 MST (verified: schema_migrations 0001–0005,
+  `users.totp_pending_secret` column, `totp_backup_codes` table,
+  0 rows).
 - **Verified:** fmt clean; clippy `-D warnings` clean; cargo test
   (excl. desktop) 479/479; auth 17/17; database 16/16; web 49/49
   (new `admin.test.ts`: guard → enrollment → admin routes →
@@ -3406,17 +3459,15 @@ itself.
   next build clean; i18n 232 keys, 0 failures; Semgrep 0
   (85 rules, 211 files); prettier clean. No Rust/desktop changes.
 - **Pushed as snapshot `5706323e` (sync 84), 2026-11-28 ~07:59 MST.
-  Deploy+CI check cron `sync84-deploy-ci-check` fires ~08:18 MST.
-  Migration 0005 still to be applied to the live DB (needs
-  DATABASE_URL pasted again, transient use).**
+  Deploy+CI check cron `sync84-deploy-ci-check` fires ~08:18 MST.**
 
-## W4-full — real-time two-way app ↔ web sync (implemented 2026-11-28, local only, not pushed yet)
+## W4-full — real-time two-way app ↔ web sync (implemented 2026-11-28, pushed as snapshot `dd08ed53`, sync 85, 2026-11-28 ~08:20 MST)
 
 User requirement (2026-11-28 ~07:45 MST): the app fetches this user's
 package + limits from the web, and the web gets the app's data in real
 time — both stay in sync in real time. Order: W4 full → W5 → W6 → W7.
 W5 was pushed first on the user's say-so ("g w5 push kr do", sync 84,
-`5706323e`); W4-full is built on top of it and ships next (sync 85).
+`5706323e`); W4-full shipped next as sync 85 (`dd08ed53`).
 
 - **Desktop live sync (`App.tsx`):** while signed in, `refreshStatus()`
   runs every 60s and on window focus — the same call the startup effect

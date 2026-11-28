@@ -42,6 +42,10 @@ const CODE_TO_MESSAGE_KEY: Record<string, string> = {
   two_factor_already_enabled: "twoFactorAlreadyEnabled",
   no_pending_2fa: "noPending2fa",
   two_factor_not_enabled: "twoFactorNotEnabled",
+  billing_not_configured: "billingNotConfigured",
+  package_not_for_sale: "packageNotForSale",
+  package_not_found: "packageNotFound",
+  provider_not_available: "providerNotAvailable",
 };
 
 /** Renders a structured API error ({code, data}) from errors.json, with the retry time filled in. */

@@ -12,12 +12,14 @@ import authEn from "@reponyx/i18n/locales/en/web/auth.json";
 import dashboardEn from "@reponyx/i18n/locales/en/web/dashboard.json";
 import errorsEn from "@reponyx/i18n/locales/en/web/errors.json";
 import adminEn from "@reponyx/i18n/locales/en/web/admin.json";
+import billingEn from "@reponyx/i18n/locales/en/web/billing.json";
 import securityEn from "@reponyx/i18n/locales/en/web/security.json";
 import commonUr from "@reponyx/i18n/locales/ur/web/common.json";
 import authUr from "@reponyx/i18n/locales/ur/web/auth.json";
 import dashboardUr from "@reponyx/i18n/locales/ur/web/dashboard.json";
 import errorsUr from "@reponyx/i18n/locales/ur/web/errors.json";
 import adminUr from "@reponyx/i18n/locales/ur/web/admin.json";
+import billingUr from "@reponyx/i18n/locales/ur/web/billing.json";
 import securityUr from "@reponyx/i18n/locales/ur/web/security.json";
 
 // Register once at module load; reads are then synchronous.
@@ -28,12 +30,14 @@ registerTranslations("en", "web", "auth", authEn);
 registerTranslations("en", "web", "dashboard", dashboardEn);
 registerTranslations("en", "web", "errors", errorsEn);
 registerTranslations("en", "web", "admin", adminEn);
+registerTranslations("en", "web", "billing", billingEn);
 registerTranslations("en", "web", "security", securityEn);
 registerTranslations("ur", "web", "common", commonUr);
 registerTranslations("ur", "web", "auth", authUr);
 registerTranslations("ur", "web", "dashboard", dashboardUr);
 registerTranslations("ur", "web", "errors", errorsUr);
 registerTranslations("ur", "web", "admin", adminUr);
+registerTranslations("ur", "web", "billing", billingUr);
 registerTranslations("ur", "web", "security", securityUr);
 
 export async function getRequestLocale(): Promise<Locale> {
@@ -73,5 +77,9 @@ export async function getErrorStrings(): Promise<Record<string, string>> {
     twoFactorAlreadyEnabled: t("twoFactorAlreadyEnabled"),
     noPending2fa: t("noPending2fa"),
     twoFactorNotEnabled: t("twoFactorNotEnabled"),
+    billingNotConfigured: t("billingNotConfigured"),
+    packageNotForSale: t("packageNotForSale"),
+    packageNotFound: t("packageNotFound"),
+    providerNotAvailable: t("providerNotAvailable"),
   };
 }

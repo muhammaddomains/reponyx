@@ -2,11 +2,14 @@ import type { DbClient } from "./client";
 import type {
   AdminUserRow,
   AuditLogRow,
+  BillingEventRow,
+  BillingProviderRow,
   DeviceRow,
   EmailVerificationTokenRow,
   InstallationRow,
   LinkedGithubAccountRow,
   LinkedProviderRow,
+  PackageProviderPriceRow,
   PackageRow,
   PasswordResetTokenRow,
   SessionRow,
@@ -1049,5 +1052,153 @@ export async function setUserPackage(
   );
   const row = rows[0];
   if (!row) throw new Error("setUserPackage returned no row");
+  return row;
+}
+
+// --- billing (W6, migration 0006) ---
+
+export async function listBillingProviders(
+  client: DbClient
+): Promise<BillingProviderRow[]> {
+  return client.query<BillingProviderRow>(
+    `/* listBillingProviders */ SELECT * FROM billing_providers ORDER BY provider ASC`
+  );
+}
+
+export async function setBillingProviderActive(
+  client: DbClient,
+  provider: string,
+  isActive: boolean
+): Promise<BillingProviderRow> {
+  const rows = await client.query<BillingProviderRow>(
+    `/* setBillingProviderActive */
+     UPDATE billing_providers SET is_active = $2, updated_at = now()
+     WHERE provider = $1 RETURNING *`,
+    [provider, isActive]
+  );
+  const row = rows[0];
+  if (!row) throw new Error("setBillingProviderActive returned no row");
+  return row;
+}
+
+export async function setBillingProviderCountries(
+  client: DbClient,
+  provider: string,
+  countries: string[] | null
+): Promise<BillingProviderRow> {
+  const rows = await client.query<BillingProviderRow>(
+    `/* setBillingProviderCountries */
+     UPDATE billing_providers SET countries = $2::jsonb, updated_at = now()
+     WHERE provider = $1 RETURNING *`,
+    [provider, countries === null ? null : JSON.stringify(countries)]
+  );
+  const row = rows[0];
+  if (!row) throw new Error("setBillingProviderCountries returned no row");
+  return row;
+}
+
+export async function listPackageProviderPrices(
+  client: DbClient
+): Promise<PackageProviderPriceRow[]> {
+  return client.query<PackageProviderPriceRow>(
+    `/* listPackageProviderPrices */ SELECT * FROM package_provider_prices ORDER BY provider ASC`
+  );
+}
+
+export async function findPackageProviderPrice(
+  client: DbClient,
+  packageId: string,
+  provider: string
+): Promise<PackageProviderPriceRow | null> {
+  const rows = await client.query<PackageProviderPriceRow>(
+    `/* findPackageProviderPrice */
+     SELECT * FROM package_provider_prices
+     WHERE package_id = $1 AND provider = $2`,
+    [packageId, provider]
+  );
+  return rows[0] ?? null;
+}
+
+export async function setPackageProviderPrice(
+  client: DbClient,
+  packageId: string,
+  provider: string,
+  providerPriceId: string
+): Promise<PackageProviderPriceRow> {
+  const rows = await client.query<PackageProviderPriceRow>(
+    `/* setPackageProviderPrice */
+     INSERT INTO package_provider_prices (package_id, provider, provider_price_id)
+     VALUES ($1, $2, $3)
+     ON CONFLICT (package_id, provider) DO UPDATE
+       SET provider_price_id = EXCLUDED.provider_price_id, updated_at = now()
+     RETURNING *`,
+    [packageId, provider, providerPriceId]
+  );
+  const row = rows[0];
+  if (!row) throw new Error("setPackageProviderPrice returned no row");
+  return row;
+}
+
+/**
+ * Records a webhook event id. Returns true when this is the first time
+ * the event is seen; false when it was already recorded (a retry) and
+ * the caller must acknowledge without re-applying the effect.
+ */
+export async function recordBillingEvent(
+  client: DbClient,
+  provider: string,
+  eventId: string
+): Promise<boolean> {
+  const rows = await client.query<BillingEventRow>(
+    `/* recordBillingEvent */
+     INSERT INTO billing_events (provider, event_id) VALUES ($1, $2)
+     ON CONFLICT (provider, event_id) DO NOTHING RETURNING *`,
+    [provider, eventId]
+  );
+  return rows.length > 0;
+}
+
+/**
+ * The webhook write path: sets (or replaces) the user's subscription
+ * from a provider event — package, status, expiry and provider ids.
+ * A null expiresAt means the subscription does not expire.
+ */
+export async function setUserSubscription(
+  client: DbClient,
+  args: {
+    userId: string;
+    packageId: string;
+    status: "active" | "expired" | "cancelled";
+    expiresAt: string | null;
+    provider: string;
+    providerSubscriptionId: string | null;
+    providerCustomerId: string | null;
+  }
+): Promise<SubscriptionRow> {
+  const rows = await client.query<SubscriptionRow>(
+    `/* setUserSubscription */
+     INSERT INTO subscriptions
+       (user_id, package_id, status, expires_at, provider,
+        provider_subscription_id, provider_customer_id)
+     VALUES ($1, $2, $3, $4, $5, $6, $7)
+     ON CONFLICT (user_id) DO UPDATE
+       SET package_id = EXCLUDED.package_id, status = EXCLUDED.status,
+           expires_at = EXCLUDED.expires_at, provider = EXCLUDED.provider,
+           provider_subscription_id = EXCLUDED.provider_subscription_id,
+           provider_customer_id = EXCLUDED.provider_customer_id,
+           updated_at = now()
+     RETURNING *`,
+    [
+      args.userId,
+      args.packageId,
+      args.status,
+      args.expiresAt,
+      args.provider,
+      args.providerSubscriptionId,
+      args.providerCustomerId,
+    ]
+  );
+  const row = rows[0];
+  if (!row) throw new Error("setUserSubscription returned no row");
   return row;
 }

@@ -1,0 +1,8 @@
+# SQL migrations must always check out with LF line endings.
+# sqlx checksums the whole migration file (SHA-384 over its bytes),
+# so a CRLF checkout changes the checksum and the database refuses
+# to open with "migration N was previously applied but has been
+# modified" (seen 2026-11-28: the user's Windows clone had CRLF
+# migrations while _sqlx_migrations held LF checksums for v1-v4
+# and a CRLF checksum for v5).
+*.sql text eol=lf

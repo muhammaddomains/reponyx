@@ -2977,6 +2977,40 @@ clippy `-D warnings` clean, cargo test (excl. desktop) 477
 passed, 0 failed (was 476, +1 new test), local Semgrep 0
 findings. Push approved as sync 76.
 
+**Resolved 2026-11-28 ~01:32 MST — the cause was CRLF line
+endings, not the comment rename:** with the details fix live,
+the agent printed `migration 1 was previously applied but has
+been modified`. sqlx checksums each migration file (SHA-384
+over its bytes). The user's working tree had CRLF in all 142
+lines of `0001_init.sql`; the DB's `_sqlx_migrations` held LF
+hashes for v1–v4 (v1 `EEA96A7C…` matches the LF file exactly)
+and a CRLF hash for v5 (`3B1DD982…` == SHA-384 of the CRLF
+0005, recorded from a CRLF build during Phase 5). Fix: the 5
+migration files converted to LF, the stored v5 checksum updated
+to the LF hash `E41BCF61…` (file content unchanged apart from
+line endings, so the applied schema already matches), and
+`git config core.autocrlf false`. **Lesson (own goal): the
+first conversion one-liner
+`open(f,'wb').write(open(f,'rb').read()…)` emptied all 5 files
+— `open(f,'wb')` truncates before the `read()` runs (reproduced
+locally: 0 bytes vs 4 bytes with read-first). The files were
+restored with `git checkout -- migrations/sqlite/` (verified
+`CRLF: 0 bytes: 5849`). Agent then printed `database opened`
+and runs: scheduler materialized 3 jobs. **New open issues
+from the same run:** (1) the desktop build fails in
+`tauri-build` (build.rs:35) — `The process cannot access the
+file because it is being used by another process. (os error
+32)` — a stale cargo/rustc from a killed run likely still
+holds `target/debug/build/reponyx-desktop/`; fix is to end
+leftover cargo/rustc processes and retry, or
+`cargo clean -p reponyx-desktop`. (2) All 3 fresh sync jobs
+failed permanently with `AuthenticationExpired` right after
+the scheduler created them — which accounts/repos is not in
+the log; check the Accounts page (Validate) once the app is
+up. **Prevention (local commit `5bd2f68`, not yet pushed):**
+repo `.gitattributes` pins `*.sql text eol=lf` so no future
+clone can check out CRLF migrations.
+
 ## Accounts page restructure — DONE (2026-11-27, branch `feature/admin-control-plane`, local only)
 
 - The user approved the plan ("1 page pe 2 tab wala ... sai

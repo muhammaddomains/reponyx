@@ -5,6 +5,13 @@ All notable changes to RepoNyx are documented here. Format follows
 
 ## [Unreleased]
 
+### Fixed — database opens again: migration checksum mismatch was CRLF line endings (2026-11-28, branch `feature/admin-control-plane`, local only)
+
+- **Root cause:** sqlx checksums each migration file (SHA-384 over its bytes), and the user's Windows clone had CRLF in all 142 lines of `0001_init.sql` while `_sqlx_migrations` held LF hashes for v1–v4 and a CRLF hash for v5. The agent failed with `migration 1 was previously applied but has been modified` (surfaced by the sync-76 details fix). The earlier comment-rename theory was wrong: v1's stored checksum matches the current LF file exactly.
+- **Fix:** the 5 migration files converted to LF; the stored v5 checksum updated to the LF hash (file content unchanged apart from line endings, so the applied schema already matches); `git config core.autocrlf false`. The first conversion one-liner emptied all 5 files (`open(f,'wb')` truncates before the `read()` runs — reproduced locally); they were restored with `git checkout -- migrations/sqlite/` (verified `CRLF: 0 bytes: 5849`). The agent then printed `database opened` and runs (scheduler materialized 3 jobs).
+- **Prevention:** repo `.gitattributes` pins `*.sql text eol=lf` (local commit `5bd2f68`, not yet pushed).
+- **Still open from the same run:** the desktop build fails in `tauri-build` with a file lock (os error 32), and all 3 fresh sync jobs failed permanently with `AuthenticationExpired` (accounts not yet identified).
+
 ### Fixed — error logs now show the underlying cause (2026-11-28, branch `feature/admin-control-plane`, local only)
 
 - **`RepoNyxError` Display now includes `details`** when present: `[{code}] {message}: {details}` instead of dropping them. The `details` field already carried the sqlx / I/O message (via `map_error`), but the thiserror format string never rendered it — so the agent's 2026-11-28 `dev:all` failure printed only "[DatabaseError] database operation failed" and hid whether the open failed on a lock, a checksum mismatch or a migration query. The `thiserror` dependency is removed from `reponyx-core` (manual `Display` + `Error` impls; `Cargo.lock` updated). New unit test `display_includes_details_when_present`.
